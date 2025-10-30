@@ -61,7 +61,7 @@ python main.py
 python main.py --date 2025-10-25
 
 # Scrape date range
-python main.py --start-date 2025-10-25 --end-date 2025-10-27
+python main.py --start-date 2025-09-01 --end-date 2025-10-28
 
 # Scrape all pages without date filtering (for testing)
 python main.py --date-range all

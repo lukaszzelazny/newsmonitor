@@ -156,7 +156,7 @@ def main():
     for provider in providers:
         try:
             if start_date and end_date:
-                scraper.scrape_range(provider, start_date, end_date)
+                scraper.scrape_provider_range(provider, start_date, end_date)
             else:
                 stats = scraper.scrape_provider(provider, target_date)
                 
@@ -178,6 +178,8 @@ def main():
 
 if __name__ == '__main__':
     main()
+
+
 
 
 

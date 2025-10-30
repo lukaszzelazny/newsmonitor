@@ -22,15 +22,20 @@ class PAPProvider(BaseProvider):
     
     def get_articles_for_page(self, page: int) -> List[NewsArticle]:
         """Scrape articles from a specific page."""
-        # First try to get direct news from the URL
-        articles = self._scrape_from_url(f"{self.base_url}?page={page}")
+        # First get direct news from the URL
+        direct_articles = self._scrape_from_url(f"{self.base_url}?page={page}")
+        # Also scrape subcategories to increase coverage
+        sub_articles = self._scrape_from_subcategories(page)
+
+        # Deduplicate by URL
+        seen_urls = set()
+        merged: List[NewsArticle] = []
+        for art in direct_articles + sub_articles:
+            if art.url not in seen_urls:
+                seen_urls.add(art.url)
+                merged.append(art)
         
-        # If no articles found, the page might be a category listing
-        # Try to find and scrape from subcategories
-        if not articles:
-            articles = self._scrape_from_subcategories(page)
-        
-        return articles
+        return merged
     
     def _scrape_from_url(self, url: str) -> List[NewsArticle]:
         """Scrape articles directly from a URL."""
@@ -47,14 +52,14 @@ class PAPProvider(BaseProvider):
             for link in all_links:
                 href = link.get('href', '')
                 title = link.get_text(strip=True)
-                
+
                 # Only process actual news articles
-                if '/wiadomosci/' in href and '/kategoria/' not in href and '/wiadomosci/' not in href.split('/')[1:]:
-                    if len(title) > 20 and len(title.split()) >= 3:
+                if href and '/kategoria/' not in href and re.search(r'/wiadomosci/', href):
+                    if title and len(title) >= 15 and len(title.split()) >= 3:
                         # Convert relative URL to absolute
                         if not href.startswith('http'):
                             href = f"https://biznes.pap.pl{href}"
-                        
+
                         article = NewsArticle(
                             title=title,
                             url=href,
@@ -86,16 +91,21 @@ class PAPProvider(BaseProvider):
             subcategory_links = soup.find_all('a', href=lambda x: x and '/kategoria/' in x and self.base_url not in x)
             
             # Visit each subcategory to get actual news
-            for link in subcategory_links[:5]:  # Limit to first 5 subcategories to avoid too many requests
+            # Visit more subcategories to improve coverage, but cap to avoid excess requests
+            for link in subcategory_links[:10]:
                 subcategory_url = link['href']
                 if not subcategory_url.startswith('http'):
                     subcategory_url = f"https://biznes.pap.pl{subcategory_url}"
-                
+                # Ensure we request the same page index for subcategories (if supported)
+                if 'page=' not in subcategory_url:
+                    sep = '&' if '?' in subcategory_url else '?'
+                    subcategory_url = f"{subcategory_url}{sep}page={page}"
+
                 print(f"  Scraping from subcategory: {subcategory_url}")
                 sub_articles = self._scrape_from_url(subcategory_url)
                 articles.extend(sub_articles)
                 
-                if len(articles) >= 20:  # Limit total articles
+                if len(articles) >= 100:  # Limit total articles per page
                     break
             
             return articles
@@ -257,7 +267,8 @@ class PAPProvider(BaseProvider):
                         page_numbers.append(int(page_num.group(1)))
                 
                 if page_numbers:
-                    return max(page_numbers) + 1
+                    # Ensure we check sufficiently deep pages; min 50 to cover ranges
+                    return max(max(page_numbers) + 1, 50)
             
             # Default to checking first 50 pages if pagination not found
             return 50
