@@ -68,62 +68,58 @@ def main():
         description='News scraper application',
         formatter_class=argparse.RawDescriptionHelpFormatter
     )
-    
+
     parser.add_argument(
-        '--date',
-        type=str,
-        help='Specific date to scrape (YYYY-MM-DD)'
+        'pages',
+        type=int,
+        nargs='?',
+        default=None,
+        help='Number of pages to scrape (from 0 to pages-1), e.g., 50 will scrape pages 0-49'
     )
-    
+
     parser.add_argument(
-        '--start-date',
-        type=str,
-        help='Start date for date range (YYYY-MM-DD)'
+        '--from',
+        dest='page_from',
+        type=int,
+        default=0,
+        help='Start page number (default: 0)'
     )
-    
+
     parser.add_argument(
-        '--end-date',
-        type=str,
-        help='End date for date range (YYYY-MM-DD)'
+        '--to',
+        dest='page_to',
+        type=int,
+        default=None,
+        help='End page number (inclusive)'
     )
-    
-    parser.add_argument(
-        '--date-range',
-        choices=['all'],
-        help='Scrape all dates (no filtering)'
-    )
-    
+
     args = parser.parse_args()
-    
+
     # Load configuration
     config = Config()
-    
-    # Determine target date(s)
-    target_date = None
-    start_date = None
-    end_date = None
-    
-    if args.date_range == 'all':
-        # No date filtering
-        target_date = None
-    elif args.date:
-        target_date = datetime.strptime(args.date, '%Y-%m-%d').date()
-    elif args.start_date and args.end_date:
-        start_date = datetime.strptime(args.start_date, '%Y-%m-%d').date()
-        end_date = datetime.strptime(args.end_date, '%Y-%m-%d').date()
-    elif args.start_date:
-        target_date = datetime.strptime(args.start_date, '%Y-%m-%d').date()
-    elif args.end_date:
-        target_date = datetime.strptime(args.end_date, '%Y-%m-%d').date()
-    elif config.start_date and config.end_date:
-        start_date = config.start_date
-        end_date = config.end_date
-    elif config.end_date:
-        target_date = config.end_date
-    else:
-        # Default: yesterday
-        target_date = config.get_yesterday_date()
-    
+
+    # Determine page range
+    page_from = args.page_from
+    page_to = args.page_to
+
+    # If single number provided, use it as page count from 0
+    if args.pages is not None:
+        page_from = 0
+        page_to = args.pages - 1
+    # If --to provided without --from, use default from (0)
+    elif page_to is None:
+        # Default: scrape 50 pages (0-49)
+        page_from = 0
+        page_to = 49
+
+    # Validate range
+    if page_from < 0:
+        print("✗ Error: --from must be >= 0")
+        return
+    if page_to < page_from:
+        print("✗ Error: --to must be >= --from")
+        return
+
     print("="*80)
     print("NEWS MONITOR - SCRAPING APPLICATION")
     print("="*80)
@@ -131,48 +127,39 @@ def main():
     print(f"\nConfiguration:")
     print(f"  Database: {config.db_path}")
     print(f"  Providers: {len(config.providers)}")
-    
-    if target_date:
-        print(f"  Target date: {target_date}")
-    elif start_date and end_date:
-        print(f"  Date range: {start_date} to {end_date}")
-    else:
-        print(f"  Date range: All")
-    
+    print(f"  Page range: {page_from} to {page_to} ({page_to - page_from + 1} pages)")
+
     # Initialize database
     db = Database(config.db_path)
-    
+
     # Create providers
     providers = ProviderFactory.create_providers(config)
-    
+
     if not providers:
         print("\n✗ No providers configured or available")
         return
-    
+
     # Initialize scraper
     scraper = Scraper(db)
-    
+
     # Scrape from all providers
     for provider in providers:
         try:
-            if start_date and end_date:
-                scraper.scrape_provider_range(provider, start_date, end_date)
-            else:
-                stats = scraper.scrape_provider(provider, target_date)
-                
-                print(f"\nProvider: {stats['provider']}")
-                print(f"  Total checked: {stats['total_checked']}")
-                print(f"  New articles: {stats['new_articles']}")
-                print(f"  Skipped (already exists): {stats['skipped_articles']}")
+            stats = scraper.scrape_provider(provider, page_from, page_to)
+
+            print(f"\nProvider: {stats['provider']}")
+            print(f"  Total checked: {stats['total_checked']}")
+            print(f"  New articles: {stats['new_articles']}")
+            print(f"  Skipped (already exists): {stats['skipped_articles']}")
         except Exception as e:
             print(f"\n✗ Error processing provider {provider.name}: {e}")
-    
+
     # Print summary
     scraper.print_summary()
-    
+
     # Close database
     db.close()
-    
+
     print("\n✓ Scraping completed!")
 
 

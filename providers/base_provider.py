@@ -23,7 +23,7 @@ class BaseProvider(ABC):
     # Rozszerzone wzorce szumu do usunięcia
     NOISE_PATTERNS = [
         # Prawa autorskie - różne warianty
-        r'Wszelkie materiały.*?prawami autorskimi.*?\.(?:\s|$)',
+        r'Wszelkie materiały.*?(?:\n|$)',
         r'Materiał chroniony prawem autorskim.*?\.(?:\s|$)',
         r'©.*?Wszelkie prawa zastrzeżone.*?\.(?:\s|$)',
         r'Kopiowanie.*?bez zgody.*?zabronione.*?\.(?:\s|$)',

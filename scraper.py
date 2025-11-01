@@ -15,93 +15,77 @@ class Scraper:
         self.skipped_count = 0
         self.errors = []
     
-    def scrape_provider(self, provider: BaseProvider, target_date: Optional[date] = None) -> dict:
+    def scrape_provider(self, provider: BaseProvider, page_from: int = 0, page_to: int = 49) -> dict:
         """
-        Scrape articles from a provider.
-        
+        Scrape articles from a provider within a page range.
+
         Args:
             provider: News provider instance
-            target_date: Optional target date to filter articles
-        
+            page_from: Start page number (inclusive)
+            page_to: End page number (inclusive)
+
         Returns:
             Dictionary with scraping statistics
         """
         print(f"\n{'='*60}")
         print(f"Scraping from: {provider.name}")
         print(f"Base URL: {provider.base_url}")
+        print(f"Page range: {page_from} to {page_to}")
         print(f"{'='*60}")
-        
+
         total_articles = 0
         new_articles = 0
         skipped_articles = 0
-        
+
         try:
-            # Get total pages
-            total_pages = provider.get_total_pages(target_date)
-            print(f"Total pages to check: {total_pages}")
-            
-            # Iterate through pages
-            for page_num in range(total_pages):
-                print(f"\nProcessing page {page_num + 1}/{total_pages}...")
-                
+            total_pages = page_to - page_from + 1
+            print(f"Total pages to scrape: {total_pages}")
+
+            # Iterate through specified page range
+            for page_num in range(page_from, page_to + 1):
+                print(f"\nProcessing page {page_num} ({page_num - page_from + 1}/{total_pages})...")
+
                 # Get articles from current page
                 articles = provider.get_articles_for_page(page_num)
-                
+
                 if not articles:
                     print(f"No articles found on page {page_num}")
-                    break
-                
+                    continue
+
                 # Process each article
                 for article in articles:
                     total_articles += 1
-                    
+
                     # Check if already exists
                     if self.db.exists(article.url):
                         skipped_articles += 1
                         print(f"  ✓ Skipped (already exists): {article.title[:60]}")
                         continue
-                    
+
                     # Fetch article content and date
                     print(f"  → Fetching: {article.title[:60]}")
                     article.content = provider.clean_content(provider.get_article_content(article))
-                    
-                    # Filter by date if target_date is specified (after getting date from content)
-                    if target_date:
-                        if not article.date or article.date != target_date:
-                            skipped_articles += 1
-                            print(f"    ✓ Skipped (date mismatch: {article.date})")
-                            continue
-                    
+
                     if article.content:
                         # Save to database
                         self.db.add_article(article)
                         new_articles += 1
-                        print(f"    ✓ Saved")
+                        date_str = f" ({article.date})" if article.date else ""
+                        print(f"    ✓ Saved{date_str}")
                     else:
                         print(f"    ✗ Failed to fetch content")
-                
-                # Early stop heuristic: we paginate from newest to oldest.
-                # If the latest date on this page is already older than target_date,
-                # next pages will be even older, so we can stop.
-                if target_date and articles:
-                    dates_found = sorted({a.date for a in articles if a.date}, reverse=True)
-                    if dates_found:
-                        latest_on_page = dates_found[0]
-                        if latest_on_page and latest_on_page < target_date:
-                            print(f"\nReached dates older than target {target_date} (latest on page: {latest_on_page}). Stopping.")
-                            break
-        
+
         except Exception as e:
             print(f"\n✗ Error scraping from {provider.name}: {e}")
             self.errors.append(f"{provider.name}: {str(e)}")
-        
+
         stats = {
             'provider': provider.name,
             'total_checked': total_articles,
             'new_articles': new_articles,
             'skipped_articles': skipped_articles
         }
-        
+
         return stats
     
     def scrape_provider_range(self, provider: BaseProvider, start_date: date, end_date: date) -> dict:

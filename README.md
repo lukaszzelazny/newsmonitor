@@ -6,7 +6,7 @@ A modular Python application for scraping and storing news articles from multipl
 
 - **Modular Architecture**: Interface-based design allowing easy addition of new news providers
 - **Database Storage**: Stores scraped articles with automatic duplicate detection
-- **Date Range Support**: Scrape specific date ranges or automatically fetch yesterday's news
+- **Page Range Support**: Scrape specific page ranges from news sources
 - **Scheduled Scraping**: Configure daily automated scraping (default: 5:00 AM)
 - **Provider Configuration**: Manage news sources via .env file
 
@@ -40,31 +40,29 @@ python3 -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
 
-# 2. Run a test scrape (without date filtering)
-python3 main.py --date-range all
+# 2. Run a test scrape (first 5 pages)
+python3 main.py 5
 
 # 3. View what was scraped
 python3 view_news_simple.py
 ```
-
-**Note**: The scraper works, but currently doesn't extract dates from articles, so date filtering won't work yet. Use `--date-range all` to scrape everything.
 
 ## Usage
 
 ### Command Line Interface
 
 ```bash
-# Scrape yesterday's news (automatic date detection)
+# Scrape default range (pages 0-49, 50 pages total)
 python main.py
 
-# Scrape specific date
-python main.py --date 2025-10-25
+# Scrape first N pages (from 0 to N-1)
+python main.py 50
 
-# Scrape date range
-python main.py --start-date 2025-09-01 --end-date 2025-10-28
+# Scrape specific page range
+python main.py --from 0 --to 10
 
-# Scrape all pages without date filtering (for testing)
-python main.py --date-range all
+# Scrape starting from specific page to another
+python main.py --from 10 --to 100
 ```
 
 ### Architecture
@@ -101,7 +99,6 @@ python3 view_news.py date 2025-10-25
 - `DB_PATH` - Path to SQLite database file
 - `SCRAPE_HOUR` - Hour for scheduled scraping (0-23)
 - `SCRAPE_MINUTE` - Minute for scheduled scraping (0-59)
-- `START_DATE` / `END_DATE` - Optional date range filters
 
 ## Database Schema
 
