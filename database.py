@@ -71,8 +71,9 @@ class TickerSentiment(Base):
     analysis_id = Column(Integer, ForeignKey('analysis_result.id', ondelete='CASCADE'), nullable=False)
     ticker = Column(String(32), ForeignKey('tickers.ticker', ondelete='SET NULL'), nullable=True)
     sector = Column(String(100), nullable=True)
-    impact = Column(String(16), nullable=True)  # 'positive' | 'negative' | 'neutral'
-    score = Column(Float, nullable=True)  # e.g. -1.0 .. 1.0
+    impact = Column(Float, nullable=True)
+    occasion = Column(String(100), nullable=True)
+    confidence = Column(Float, nullable=True)  # e.g. -1.0 .. 1.0
 
     # Relations
     analysis = relationship('AnalysisResult', backref='ticker_sentiments')
@@ -90,14 +91,37 @@ class SectorSentiment(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     analysis_id = Column(Integer, ForeignKey('analysis_result.id', ondelete='CASCADE'), nullable=False)
     sector = Column(String(100), nullable=True)
-    impact = Column(String(16), nullable=True)
-    score = Column(Float, nullable=True)
+    impact = Column(Float, nullable=True)
+    confidence = Column(Float, nullable=True)
 
     # Relations
     analysis = relationship('AnalysisResult', backref='sector_sentiments')
 
     def __repr__(self):
         return f"<SectorSentiment(id={self.id}, analysis_id={self.analysis_id}, sector='{self.sector}')>"
+
+
+class BrokerageAnalysis(Base):
+    """Brokerage house analysis and price targets."""
+
+    __tablename__ = 'brokerage_analysis'
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    analysis_id = Column(Integer, ForeignKey('analysis_result.id', ondelete='CASCADE'), nullable=False)
+    ticker = Column(String(32), ForeignKey('tickers.ticker', ondelete='SET NULL'), nullable=True)
+    brokerage_house = Column(String(200), nullable=False)
+    price_old = Column(String(50), nullable=True)
+    price_new = Column(String(50), nullable=True)
+    price_recommendation = Column(String(50), nullable=True)
+    price_comment = Column(String, nullable=True)
+    created_at = Column(DateTime, default=datetime.now, nullable=False)
+
+    # Relations
+    analysis = relationship('AnalysisResult', backref='brokerage_analyses')
+    ticker_ref = relationship('Ticker', backref='brokerage_analyses', foreign_keys=[ticker])
+
+    def __repr__(self):
+        return f"<BrokerageAnalysis(id={self.id}, brokerage_house='{self.brokerage_house}', ticker='{self.ticker}')>"
 
 
 class Database:

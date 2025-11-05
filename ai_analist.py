@@ -3,40 +3,84 @@ import json
 from openai import OpenAI
 from dotenv import load_dotenv
 from collections import defaultdict
-from database import Database, NewsArticle, AnalysisResult, TickerSentiment, Ticker, SectorSentiment
+from database import Database, NewsArticle, AnalysisResult, TickerSentiment, Ticker, SectorSentiment, BrokerageAnalysis
 import pandas as pd
 
 load_dotenv()
 
 client = OpenAI(api_key=os.getenv('OPENAI_API', ''))
 PROMPT_NEWS = """
-Jesteś analitykiem giełdowym specjalizującym się w rynku GPW i dużych spółkach amerykańskich.
-Twoim zadaniem jest ocenić pojedynczy news pod kątem jego potencjalnego wpływu na kursy akcji.
+Jesteś doświadczonym analitykiem giełdowym.
+Twoim zadaniem jest analizować wiadomości ekonomiczne, giełdowe i biznesowe
+(np. z serwisu PAP Biznes) oraz oceniać ich potencjalne znaczenie rynkowe.
 
-Oceń poniższy news i zwróć wynik w formacie JSON.
+Zasady analizy:
+1. **Rozpoznaj typ wiadomości**:
+   - 🏢 Spółka (dotyczy konkretnego podmiotu lub kilku spółek)
+   - 🏭 Sektor (dotyczy branży, np. banki, energetyka, gaming)
+   - 💰 Debiut / IPO (informacja o wejściu spółki na giełdę)
+   - 📊 Makro / Rynek (dotyczy ogólnych zjawisk gospodarczych)
+   - 📉 Niepowiązana / neutralna (nie ma znaczenia dla rynku)
 
-Zasady oceny:
-1. "impact" – liczba od -1.0 do +1.0 (wpływ na kurs, gdzie -1.0 to bardzo negatywny, +1.0 to bardzo pozytywny),
-2. "confidence" – 0.0–1.0 (pewność oceny),
-3. "sector" – sektor gospodarki,
-4. "related_tickers" – lista powiązanych spółek z tą konkretną wiadomością,
-5. "type" – "okazja krótkoterminowa" / "średnioterminowa" / "długoterminowa",
-6. "reason" – krótkie uzasadnienie.
+2. **Zidentyfikuj tickery**:
+   - Jeżeli wiadomość dotyczy konkretnych spółek, zwróć jeden główny ticker oraz ewentualnie inne powiązane.
+   - Jeśli brak – zwróć pustą listę: `"related_tickers": []`.
 
+3. **Zwróć szczególną uwagę na wyceny podawane przez domy maklerskie (DM)**:
+   - Jeśli występuje nowa wycena, wypisz:
+     - nazwę domu maklerskiego,
+     - starą wycenę,
+     - nową wycenę,
+     - zmianę procentową,
+     - rekomendację (np. „kupuj”, „neutralnie”, „sprzedaj”),
+     - krótki komentarz.
+   - Jeśli nie ma danych o wycenach – wpisz wartości `null`.
+
+4. **Oceń wpływ wiadomości**:
+   - Jeśli wiadomość dotyczy spółki lub spółek:
+     - `"ticker_impact"` – liczba od -1.0 do +1.0 (wpływ na kurs, gdzie -1.0 = bardzo negatywny, +1.0 = bardzo pozytywny)
+     - `"confidence"` – 0.0–1.0 (pewność oceny)
+     - `"occasion"` – `"krótkoterminowa"`, `"średnioterminowa"` lub `"długoterminowa"`
+     - `"sector"` – nazwa sektora
+     - `"sector_impact"` – `null`
+   - Jeśli wiadomość nie zawiera tickerów, ale dotyczy sektora:
+     - `"sector"` – nazwa sektora
+     - `"sector_impact"` – liczba od -1.0 do +1.0
+     - `"confidence"` – 0.0–1.0
+     - `"occasion"` – `null`
+     - `"ticker_impact"` – `null`
+   - Jeśli wiadomość jest neutralna:
+     - Wszystkie pola wpływu (`ticker_impact`, `sector_impact`, `confidence`, `occasion`, `sector`) mają wartość `null`.
+
+5. **Dodaj krótkie uzasadnienie** w polu `"reason"` – jedno lub dwa zdania.
+
+---
+
+### Wejście:
 News:
 "{headline}"
 "{lead}"
 
-Zwróć wyłącznie JSON:
+### Oczekiwany wynik:
+Zwróć wyłącznie **poprawny JSON** w formacie:
+
 {{
-  "impact": <liczba>,
-  "confidence": <liczba>,
-  "sector": "<nazwa sektora>",
+  "typ": "<Sektor / Spółka / Makro / IPO / Neutralna>",
   "related_tickers": ["..."],
-  "type": "<typ okazji>",
-  "reason": "<krótkie wyjaśnienie>"
+  "sector": "<nazwa sektora lub null>",
+  "ticker_impact": <liczba lub null>,
+  "sector_impact": <liczba lub null>,
+  "confidence": <liczba lub null>,
+  "occasion": "<typ okazji lub null>",
+  "reason": "<krótkie wyjaśnienie>",
+  "brokerage_house": "<nazwa domu maklerskiego lub null>",
+  "price_old": "<stara wycena lub null>",
+  "price_new": "<nowa wycena lub null>",
+  "price_recomendation": "<rekomendacja lub null>",
+  "price_comment": "<komentarz do wyceny lub null>"
 }}
 """
+
 
 def analyze_news(headline, lead):
     """
@@ -73,7 +117,7 @@ def get_unanalyzed_articles(db: Database):
         # Wybierz artykuły, które nie mają wpisu w analysis_result
         articles = session.query(NewsArticle).outerjoin(
             AnalysisResult, NewsArticle.id == AnalysisResult.news_id
-        ).filter(AnalysisResult.id == None).all()
+        ).filter(AnalysisResult.id == None).order_by(NewsArticle.id.desc()).all()
         return articles
     finally:
         session.close()
@@ -152,13 +196,23 @@ def save_analysis_results(db: Database, news_id: int, analysis_json: str):
         session.flush()  # Aby uzyskać ID
         print(f"DEBUG: Utworzono AnalysisResult z ID={analysis_result.id}")
 
-        # Utwórz wpisy w ticker_sentiment dla każdego powiązanego tickera
+        # Pobierz pola z JSON
         related_tickers = analysis_data.get('related_tickers', [])
-        impact_value = analysis_data.get('impact', 0.0)
-        confidence_value = analysis_data.get('confidence', 0.0)
-        sector = analysis_data.get('sector', '')
+        ticker_impact = analysis_data.get('ticker_impact')
+        sector_impact = analysis_data.get('sector_impact')
+        confidence_value = analysis_data.get('confidence')
+        sector = analysis_data.get('sector')
+        occasion = analysis_data.get('occasion')
 
-        print(f"DEBUG: related_tickers={related_tickers}, impact={impact_value}, confidence={confidence_value}, sector={sector}")
+        # Pola dla analiz domów maklerskich
+        brokerage_house = analysis_data.get('brokerage_house')
+        price_old = analysis_data.get('price_old')
+        price_new = analysis_data.get('price_new')
+        price_recommendation = analysis_data.get('price_recomendation')
+        price_comment = analysis_data.get('price_comment')
+
+        print(f"DEBUG: related_tickers={related_tickers}, ticker_impact={ticker_impact}, "
+              f"sector_impact={sector_impact}, confidence={confidence_value}, sector={sector}, occasion={occasion}")
 
         # Najpierw dodaj tickery do słownika (jeśli nie istnieją)
         for ticker_symbol in related_tickers:
@@ -174,28 +228,48 @@ def save_analysis_results(db: Database, news_id: int, analysis_json: str):
             else:
                 print(f"DEBUG: Ticker {ticker_symbol} już istnieje w słowniku")
 
-        # Teraz utwórz ticker_sentiments
-        for ticker_symbol in related_tickers:
-            print(f"DEBUG: Dodaję ticker_sentiment dla {ticker_symbol} z impact={impact_value}, confidence={confidence_value}")
-            ticker_sentiment = TickerSentiment(
-                analysis_id=analysis_result.id,
-                ticker=ticker_symbol,
-                sector=sector,
-                impact=str(impact_value),  # Wartość impact jako string
-                score=confidence_value  # Confidence (0.0-1.0) zapisane w kolumnie score
-            )
-            session.add(ticker_sentiment)
+        # Utwórz ticker_sentiments (tylko jeśli ticker_impact nie jest null)
+        if related_tickers and ticker_impact is not None:
+            for ticker_symbol in related_tickers:
+                print(f"DEBUG: Dodaję ticker_sentiment dla {ticker_symbol} z ticker_impact={ticker_impact}, "
+                      f"confidence={confidence_value}, occasion={occasion}")
+                ticker_sentiment = TickerSentiment(
+                    analysis_id=analysis_result.id,
+                    ticker=ticker_symbol,
+                    sector=sector,
+                    impact=ticker_impact,  # Float z ticker_impact
+                    confidence=confidence_value,  # Confidence (0.0-1.0)
+                    occasion=occasion  # Typ okazji
+                )
+                session.add(ticker_sentiment)
 
-        # Dodaj sector_sentiment
-        if sector:
-            print(f"DEBUG: Dodaję sector_sentiment dla sektora: {sector} z impact={impact_value}, confidence={confidence_value}")
+        # Dodaj sector_sentiment (tylko jeśli sector_impact nie jest null)
+        if sector and sector_impact is not None:
+            print(f"DEBUG: Dodaję sector_sentiment dla sektora: {sector} z sector_impact={sector_impact}, "
+                  f"confidence={confidence_value}")
             sector_sentiment = SectorSentiment(
                 analysis_id=analysis_result.id,
                 sector=sector,
-                impact=str(impact_value),  # Wartość impact jako string
-                score=confidence_value  # Confidence (0.0-1.0) zapisane w kolumnie score
+                impact=sector_impact,  # Float z sector_impact
+                confidence=confidence_value  # Confidence (0.0-1.0)
             )
             session.add(sector_sentiment)
+
+        # Dodaj BrokerageAnalysis (tylko jeśli brokerage_house nie jest puste/null)
+        if brokerage_house:
+            # Jeśli jest brokerage_house, powinien być co najmniej jeden ticker
+            ticker_for_brokerage = related_tickers[0] if related_tickers else None
+            print(f"DEBUG: Dodaję BrokerageAnalysis: {brokerage_house} dla {ticker_for_brokerage}")
+            brokerage_analysis = BrokerageAnalysis(
+                analysis_id=analysis_result.id,
+                ticker=ticker_for_brokerage,
+                brokerage_house=brokerage_house,
+                price_old=price_old,
+                price_new=price_new,
+                price_recommendation=price_recommendation,
+                price_comment=price_comment
+            )
+            session.add(brokerage_analysis)
 
         session.commit()
         print(f"DEBUG: Commit wykonany pomyślnie")
@@ -372,7 +446,7 @@ def get_sector_report(db: Database):
             if sentiment.sector and sentiment.impact is not None:
                 try:
                     impact_value = float(sentiment.impact)
-                    confidence_value = sentiment.score if sentiment.score is not None else 1.0
+                    confidence_value = sentiment.confidence if sentiment.confidence is not None else 1.0
 
                     news_list.append({
                         "sector": sentiment.sector,
@@ -410,7 +484,7 @@ def get_ticker_report(db: Database):
             if sentiment.ticker and sentiment.impact is not None:
                 try:
                     impact_value = float(sentiment.impact)
-                    confidence_value = sentiment.score if sentiment.score is not None else 1.0
+                    confidence_value = sentiment.confidence if sentiment.confidence is not None else 1.0
                     weighted = impact_value * confidence_value
                     tickers[sentiment.ticker].append(weighted)
                 except (ValueError, TypeError):
