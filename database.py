@@ -5,7 +5,7 @@ from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, relationship
 from datetime import datetime, date as date_type
 from typing import Optional
-
+from sqlalchemy.sql import func
 Base = declarative_base()
 
 
@@ -122,6 +122,16 @@ class BrokerageAnalysis(Base):
 
     def __repr__(self):
         return f"<BrokerageAnalysis(id={self.id}, brokerage_house='{self.brokerage_house}', ticker='{self.ticker}')>"
+
+class NewsNotAnalyzed(Base):
+    __tablename__ = 'news_not_analyzed'
+    id = Column(Integer, primary_key=True)
+    news_id = Column(Integer, ForeignKey('news_articles.id'), nullable=False)
+    reason = Column(String, nullable=False)
+    relevance_score = Column(Float)
+    created_at = Column(DateTime, server_default=func.now())
+
+    article = relationship("NewsArticle", backref="not_analyzed_records")
 
 
 class Database:

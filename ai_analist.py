@@ -1,14 +1,186 @@
 import os
 import json
+import numpy as np
 from openai import OpenAI
 from dotenv import load_dotenv
 from collections import defaultdict
-from database import Database, NewsArticle, AnalysisResult, TickerSentiment, Ticker, SectorSentiment, BrokerageAnalysis
-import pandas as pd
+from database import Database, NewsArticle, AnalysisResult, TickerSentiment, Ticker, \
+    SectorSentiment, BrokerageAnalysis
+from sklearn.metrics.pairwise import cosine_similarity
+from sqlalchemy import text
 
 load_dotenv()
 
 client = OpenAI(api_key=os.getenv('OPENAI_API', ''))
+
+def load_patterns(filepath='patterns.json', name="relevant_patterns"):
+    """Wczytuje atrybut 'relevant_patterns' z pliku JSON"""
+    try:
+        with open(filepath, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+            if name in data:
+                return data[name]
+            else:
+                print(f"Brak klucza {name} w {filepath}, używam domyślnych wzorców")
+                return None
+    except FileNotFoundError:
+        print(f"Brak pliku {filepath}, używam domyślnych wzorców")
+        return None
+
+
+# Wzorcowe frazy dla różnych kategorii istotnych newsów
+RELEVANT_PATTERNS = load_patterns(name="revelant_patterns")
+# Nieistotne wzorce
+IRRELEVANT_PATTERNS = load_patterns(name="irrevelant_patterns")
+
+
+def get_embedding(text: str, model: str = "text-embedding-3-large"):
+    """
+    Pobiera embedding dla danego tekstu.
+
+    Args:
+        text: Tekst do embedowania
+        model: Model embeddings
+
+    Returns:
+        Lista float - wektor embedingu
+    """
+    text = text.replace("\n", " ").strip()
+    if not text:
+        return None
+
+    try:
+        response = client.embeddings.create(input=[text], model=model)
+        return response.data[0].embedding
+    except Exception as e:
+        print(f"Błąd podczas generowania embeddingu: {e}")
+        return None
+
+
+def calculate_relevance_score(news_embedding, pattern_embeddings):
+    """
+    Oblicza score istotności na podstawie podobieństwa cosine.
+
+    Args:
+        news_embedding: Embedding newsa
+        pattern_embeddings: Lista embeddings wzorców
+
+    Returns:
+        Float - maksymalne podobieństwo (0-1)
+    """
+    if news_embedding is None or not pattern_embeddings:
+        return 0.0
+
+    news_emb = np.array(news_embedding).reshape(1, -1)
+
+    max_similarity = 0.0
+    for pattern_emb in pattern_embeddings:
+        if pattern_emb is not None:
+            pattern_arr = np.array(pattern_emb).reshape(1, -1)
+            similarity = cosine_similarity(news_emb, pattern_arr)[0][0]
+            max_similarity = max(max_similarity, similarity)
+
+    return float(max_similarity)
+
+
+def is_news_relevant(headline: str, lead: str, threshold: float = 0.65):
+    """
+    Sprawdza czy news jest istotny przy użyciu embeddings.
+
+    Args:
+        headline: Tytuł artykułu
+        lead: Treść artykułu
+        threshold: Próg istotności (0-1)
+
+    Returns:
+        Tuple[bool, float, str] - (czy_istotny, score, powód)
+    """
+    # Połącz tytuł i lead
+    full_text = f"{headline}. {lead}"
+
+    # Pobierz embedding newsa
+    news_embedding = get_embedding(full_text)
+    if news_embedding is None:
+        return False, 0.0, "Błąd generowania embeddingu"
+
+    # Generuj embeddingi dla wzorców istotnych (cachowane w pamięci)
+    if not hasattr(is_news_relevant, '_relevant_cache'):
+        print("Generuję embeddingi wzorców istotnych...")
+        is_news_relevant._relevant_cache = {}
+        for category, patterns in RELEVANT_PATTERNS.items():
+            is_news_relevant._relevant_cache[category] = [
+                get_embedding(pattern) for pattern in patterns
+            ]
+
+    # Generuj embeddingi dla wzorców nieistotnych
+    if not hasattr(is_news_relevant, '_irrelevant_cache'):
+        print("Generuję embeddingi wzorców nieistotnych...")
+        is_news_relevant._irrelevant_cache = [
+            get_embedding(pattern) for pattern in IRRELEVANT_PATTERNS
+        ]
+
+    # Oblicz score dla kategorii istotnych
+    category_scores = {}
+    for category, embeddings in is_news_relevant._relevant_cache.items():
+        score = calculate_relevance_score(news_embedding, embeddings)
+        category_scores[category] = score
+
+    max_relevant_score = max(category_scores.values()) if category_scores else 0.0
+    best_category = max(category_scores,
+                        key=category_scores.get) if category_scores else None
+
+    # Oblicz score dla wzorców nieistotnych
+    irrelevant_score = calculate_relevance_score(
+        news_embedding,
+        is_news_relevant._irrelevant_cache
+    )
+
+    # Decyzja
+    if irrelevant_score > 0.70:
+        return False, irrelevant_score, f"Wykryto nieistotny wzorzec (score: {irrelevant_score:.3f})"
+
+    if max_relevant_score >= threshold:
+        return True, max_relevant_score, f"Kategoria: {best_category} (score: {max_relevant_score:.3f})"
+
+    return False, max_relevant_score, f"{max_relevant_score:.3f} < {threshold}, {best_category}"
+
+
+def save_not_analyzed(db: Database, news_id: int, reason: str, relevance_score: float):
+    """
+    Zapisuje informację o newsie, który nie został przeanalizowany.
+
+    Args:
+        db: Instancja Database
+        news_id: ID artykułu
+        reason: Powód nieprzeanalizowania
+        relevance_score: Score istotności
+    """
+    session = db.Session()
+    try:
+        # Sprawdź czy tabela news_not_analyzed istnieje, jeśli nie - utwórz
+        # (zakładam, że masz odpowiednią klasę modelu w database.py)
+
+
+        # Jeśli nie masz modelu, dodaj go do database.py jako:
+
+
+        # Na razie prosty zapis
+        session.execute(
+            text("""
+            INSERT OR IGNORE INTO news_not_analyzed (news_id, reason, relevance_score)
+            VALUES (:news_id, :reason, :relevance_score)
+            """),
+            {"news_id": news_id, "reason": reason, "relevance_score": relevance_score}
+        )
+        session.commit()
+        print(f"✓ Zapisano do news_not_analyzed: ID={news_id}, powód: {reason}")
+    except Exception as e:
+        session.rollback()
+        print(f"✗ Błąd zapisu do news_not_analyzed: {e}")
+    finally:
+        session.close()
+
+
 PROMPT_NEWS = """
 Jesteś doświadczonym analitykiem giełdowym.
 Twoim zadaniem jest analizować wiadomości ekonomiczne, giełdowe i biznesowe
@@ -32,7 +204,7 @@ Zasady analizy:
      - starą wycenę,
      - nową wycenę,
      - zmianę procentową,
-     - rekomendację (np. „kupuj”, „neutralnie”, „sprzedaj”),
+     - rekomendację (np. „kupuj", „neutralnie", „sprzedaj"),
      - krótki komentarz.
    - Jeśli nie ma danych o wycenach – wpisz wartości `null`.
 
@@ -102,12 +274,13 @@ def analyze_news(headline, lead):
     return response.choices[0].message.content
 
 
-def get_unanalyzed_articles(db: Database):
+def get_unanalyzed_articles(db: Database, exclude_not_analyzed: bool = True):
     """
     Pobiera artykuły, które nie mają jeszcze analizy.
 
     Args:
         db: Instancja Database
+        exclude_not_analyzed: Czy wykluczyć artykuły z tabeli news_not_analyzed (domyślnie True)
 
     Returns:
         Lista obiektów NewsArticle
@@ -115,13 +288,21 @@ def get_unanalyzed_articles(db: Database):
     session = db.Session()
     try:
         # Wybierz artykuły, które nie mają wpisu w analysis_result
-        articles = session.query(NewsArticle).outerjoin(
+        query = session.query(NewsArticle).outerjoin(
             AnalysisResult, NewsArticle.id == AnalysisResult.news_id
-        ).filter(AnalysisResult.id == None).order_by(NewsArticle.id.desc()).all()
+        ).filter(AnalysisResult.id == None)
+
+        # Opcjonalnie wykluczamy artykuły z news_not_analyzed
+        if exclude_not_analyzed:
+            from database import NewsNotAnalyzed
+            query = query.outerjoin(
+                NewsNotAnalyzed, NewsArticle.id == NewsNotAnalyzed.news_id
+            ).filter(NewsNotAnalyzed.id == None)
+
+        articles = query.order_by(NewsArticle.id.desc()).all()
         return articles
     finally:
         session.close()
-
 
 def get_article_by_id(db: Database, article_id: int):
     """
@@ -211,12 +392,14 @@ def save_analysis_results(db: Database, news_id: int, analysis_json: str):
         price_recommendation = analysis_data.get('price_recomendation')
         price_comment = analysis_data.get('price_comment')
 
-        print(f"DEBUG: related_tickers={related_tickers}, ticker_impact={ticker_impact}, "
-              f"sector_impact={sector_impact}, confidence={confidence_value}, sector={sector}, occasion={occasion}")
+        print(
+            f"DEBUG: related_tickers={related_tickers}, ticker_impact={ticker_impact}, "
+            f"sector_impact={sector_impact}, confidence={confidence_value}, sector={sector}, occasion={occasion}")
 
         # Najpierw dodaj tickery do słownika (jeśli nie istnieją)
         for ticker_symbol in related_tickers:
-            existing_ticker = session.query(Ticker).filter(Ticker.ticker == ticker_symbol).first()
+            existing_ticker = session.query(Ticker).filter(
+                Ticker.ticker == ticker_symbol).first()
             if not existing_ticker:
                 print(f"DEBUG: Dodaję nowy ticker do słownika: {ticker_symbol}")
                 new_ticker = Ticker(
@@ -231,8 +414,9 @@ def save_analysis_results(db: Database, news_id: int, analysis_json: str):
         # Utwórz ticker_sentiments (tylko jeśli ticker_impact nie jest null)
         if related_tickers and ticker_impact is not None:
             for ticker_symbol in related_tickers:
-                print(f"DEBUG: Dodaję ticker_sentiment dla {ticker_symbol} z ticker_impact={ticker_impact}, "
-                      f"confidence={confidence_value}, occasion={occasion}")
+                print(
+                    f"DEBUG: Dodaję ticker_sentiment dla {ticker_symbol} z ticker_impact={ticker_impact}, "
+                    f"confidence={confidence_value}, occasion={occasion}")
                 ticker_sentiment = TickerSentiment(
                     analysis_id=analysis_result.id,
                     ticker=ticker_symbol,
@@ -245,8 +429,9 @@ def save_analysis_results(db: Database, news_id: int, analysis_json: str):
 
         # Dodaj sector_sentiment (tylko jeśli sector_impact nie jest null)
         if sector and sector_impact is not None:
-            print(f"DEBUG: Dodaję sector_sentiment dla sektora: {sector} z sector_impact={sector_impact}, "
-                  f"confidence={confidence_value}")
+            print(
+                f"DEBUG: Dodaję sector_sentiment dla sektora: {sector} z sector_impact={sector_impact}, "
+                f"confidence={confidence_value}")
             sector_sentiment = SectorSentiment(
                 analysis_id=analysis_result.id,
                 sector=sector,
@@ -259,7 +444,8 @@ def save_analysis_results(db: Database, news_id: int, analysis_json: str):
         if brokerage_house:
             # Jeśli jest brokerage_house, powinien być co najmniej jeden ticker
             ticker_for_brokerage = related_tickers[0] if related_tickers else None
-            print(f"DEBUG: Dodaję BrokerageAnalysis: {brokerage_house} dla {ticker_for_brokerage}")
+            print(
+                f"DEBUG: Dodaję BrokerageAnalysis: {brokerage_house} dla {ticker_for_brokerage}")
             brokerage_analysis = BrokerageAnalysis(
                 analysis_id=analysis_result.id,
                 ticker=ticker_for_brokerage,
@@ -284,23 +470,16 @@ def save_analysis_results(db: Database, news_id: int, analysis_json: str):
         session.close()
 
 
-# przykładowe dane z wyników PROMPT 1
-data = [
-    {"sector": "surowce", "impact": 4, "confidence": 0.9},
-    {"sector": "surowce", "impact": 3, "confidence": 0.8},
-    {"sector": "banki", "impact": -2, "confidence": 0.7},
-    {"sector": "energetyka", "impact": 1, "confidence": 0.6},
-    {"sector": "technologie", "impact": 3, "confidence": 0.8}
-]
-
-def analyze_articles(db: Database, mode: str = 'unanalyzed', article_id: int = None):
+def analyze_articles(db: Database, mode: str = 'unanalyzed', article_id: int = None,
+                     relevance_threshold: float = 0.59):
     """
-    Główna funkcja do analizy artykułów.
+    Główna funkcja do analizy artykułów z wstępną filtracją istotności.
 
     Args:
         db: Instancja Database
         mode: 'id' (dla konkretnego ID) lub 'unanalyzed' (dla nieprzeanalizowanych)
         article_id: ID artykułu (wymagane gdy mode='id')
+        relevance_threshold: Próg istotności dla embeddings (0-1)
 
     Returns:
         Dict z informacją o przetworzonych artykułach
@@ -317,7 +496,8 @@ def analyze_articles(db: Database, mode: str = 'unanalyzed', article_id: int = N
             print(f"Znaleziono artykuł: {article.title[:80]}")
         else:
             print(f"Nie znaleziono artykułu o ID={article_id}")
-            return {"status": "error", "message": f"Nie znaleziono artykułu o ID={article_id}"}
+            return {"status": "error",
+                    "message": f"Nie znaleziono artykułu o ID={article_id}"}
     elif mode == 'unanalyzed':
         print("Szukam nieprzeanalizowanych artykułów...")
         articles = get_unanalyzed_articles(db)
@@ -327,7 +507,8 @@ def analyze_articles(db: Database, mode: str = 'unanalyzed', article_id: int = N
 
     if not articles:
         print("Brak artykułów do analizy")
-        return {"status": "success", "message": "Brak artykułów do analizy", "analyzed": 0}
+        return {"status": "success", "message": "Brak artykułów do analizy",
+                "analyzed": 0}
 
     results = []
     for article in articles:
@@ -336,7 +517,8 @@ def analyze_articles(db: Database, mode: str = 'unanalyzed', article_id: int = N
 
             # Sprawdź czy artykuł już został przeanalizowany
             if is_article_analyzed(db, article.id):
-                print(f"⊘ Artykuł ID={article.id} został już wcześniej przeanalizowany - pomijam")
+                print(
+                    f"⊘ Artykuł ID={article.id} został już wcześniej przeanalizowany - pomijam")
                 results.append({
                     "article_id": article.id,
                     "title": article.title,
@@ -345,13 +527,38 @@ def analyze_articles(db: Database, mode: str = 'unanalyzed', article_id: int = N
                 })
                 continue
 
-            # Analizuj artykuł
-            print(f"Wysyłam zapytanie do OpenAI...")
+            # NOWE: Wstępna analiza istotności
+            print(f"[1/3] Sprawdzam istotność newsa...")
+            is_relevant, relevance_score, relevance_reason = is_news_relevant(
+                article.title,
+                article.content or "",
+                threshold=relevance_threshold
+            )
+
+            print(
+                f"    Istotność: {'TAK' if is_relevant else 'NIE'} (score: {relevance_score:.3f})")
+            print(f"    Powód: {relevance_reason}")
+
+            if not is_relevant:
+                # Zapisz do news_not_analyzed
+                save_not_analyzed(db, article.id, relevance_reason, relevance_score)
+                results.append({
+                    "article_id": article.id,
+                    "title": article.title,
+                    "status": "skipped",
+                    "reason": "not_relevant",
+                    "relevance_score": relevance_score,
+                    "details": relevance_reason
+                })
+                continue
+
+            # Analizuj artykuł (tylko jeśli jest istotny)
+            print(f"[2/3] Wysyłam zapytanie do OpenAI...")
             analysis_json = analyze_news(article.title, article.content or "")
-            print(f"Otrzymano odpowiedź: {analysis_json[:200]}...")
+            print(f"    Otrzymano odpowiedź: {analysis_json[:100]}...")
 
             # Zapisz wyniki
-            print(f"Zapisuję wyniki do bazy danych...")
+            print(f"[3/3] Zapisuję wyniki do bazy danych...")
             analysis_id = save_analysis_results(db, article.id, analysis_json)
             print(f"✓ Pomyślnie zapisano analizę (analysis_id={analysis_id})")
 
@@ -359,7 +566,8 @@ def analyze_articles(db: Database, mode: str = 'unanalyzed', article_id: int = N
                 "article_id": article.id,
                 "analysis_id": analysis_id,
                 "title": article.title,
-                "status": "success"
+                "status": "success",
+                "relevance_score": relevance_score
             })
         except Exception as e:
             print(f"✗ BŁĄD podczas analizy artykułu ID={article.id}: {str(e)}")
@@ -374,15 +582,26 @@ def analyze_articles(db: Database, mode: str = 'unanalyzed', article_id: int = N
 
     success_count = sum(1 for r in results if r['status'] == 'success')
     skipped_count = sum(1 for r in results if r['status'] == 'skipped')
+    not_relevant_count = sum(1 for r in results if r.get('reason') == 'not_relevant')
     error_count = sum(1 for r in results if r['status'] == 'error')
+
+    print(f"\n{'=' * 60}")
+    print(f"PODSUMOWANIE:")
+    print(f"  Przeanalizowane:     {success_count}")
+    print(f"  Pominięte (już były): {skipped_count - not_relevant_count}")
+    print(f"  Odrzucone (nieistotne): {not_relevant_count}")
+    print(f"  Błędy:               {error_count}")
+    print(f"{'=' * 60}\n")
 
     return {
         "status": "completed",
         "analyzed": success_count,
-        "skipped": skipped_count,
+        "skipped": skipped_count - not_relevant_count,
+        "not_relevant": not_relevant_count,
         "errors": error_count,
         "results": results
     }
+
 
 def calculate_trends(news_list):
     """
@@ -490,32 +709,32 @@ def get_ticker_report(db: Database):
                 except (ValueError, TypeError):
                     continue
 
-        # Liczymy średni trend dla każdego tickera
-        summary = []
-        for ticker, weights in tickers.items():
-            avg = sum(weights) / len(weights)
+                # Liczymy średni trend dla każdego tickera
+                summary = []
+                for ticker, weights in tickers.items():
+                    avg = sum(weights) / len(weights)
 
-            # Klasyfikacja trendu
-            if avg > 0.15:
-                momentum = "pozytywny"
-            elif avg < -0.15:
-                momentum = "negatywny"
-            else:
-                momentum = "neutralny"
+                    # Klasyfikacja trendu
+                    if avg > 0.15:
+                        momentum = "pozytywny"
+                    elif avg < -0.15:
+                        momentum = "negatywny"
+                    else:
+                        momentum = "neutralny"
 
-            summary.append({
-                "ticker": ticker,
-                "trend_score": round(avg, 3),
-                "momentum": momentum,
-                "count": len(weights)
-            })
+                    summary.append({
+                        "ticker": ticker,
+                        "trend_score": round(avg, 3),
+                        "momentum": momentum,
+                        "count": len(weights)
+                    })
 
-        # Sortowanie po sile trendu
-        summary.sort(key=lambda x: x["trend_score"], reverse=True)
-        return summary
+                # Sortowanie po sile trendu
+                summary.sort(key=lambda x: x["trend_score"], reverse=True)
+                return summary
+
     finally:
         session.close()
-
 
 def generate_report(db: Database):
     """
