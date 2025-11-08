@@ -143,61 +143,71 @@ class StrefaInwestorowProvider(BaseProvider):
             # Try multiple possible selectors for Strefa Inwestorów structure
             content_elem = None
 
-            # Strefa Inwestorów używa Drupala - szukajmy właściwych klas
-            # Najpierw spróbuj bardzo specyficznych selektorów dla treści artykułu
-            for selector in [
-                ('div', {'class': 'field--name-field-body'}),
-                ('div', {'class': 'field--name-body'}),
-                ('div', {'class': 'field-name-body'}),
-                ('div', {'property': 'content:encoded'}),
-                ('div', {'class': 'node__content'}),
-                ('div', {'class': 'field--type-text-with-summary'}),
-            ]:
-                content_elem = soup.find(selector[0], selector[1])
+            # Step 1: Try to find the main content div using specific Drupal-related classes or IDs.
+            # This list is ordered by specificity and likelihood of containing the main article text.
+            content_selectors = [
+                # Most common Drupal content fields
+                {'name': 'div', 'attrs': {'class': 'field--name-field-body'}},
+                {'name': 'div', 'attrs': {'class': 'field--name-body'}},
+                {'name': 'div', 'attrs': {'class': 'field-name-body'}}, # Older Drupal versions
+                {'name': 'div', 'attrs': {'property': 'content:encoded'}}, # Schema.org content
+                {'name': 'div', 'attrs': {'class': 'node__content'}}, # Generic node content wrapper
+                {'name': 'div', 'attrs': {'class': 'field--type-text-with-summary'}}, # Text field with summary
+                # More general content containers
+                {'name': 'div', 'attrs': {'class': 'article-content'}}, # Common article content class
+                {'name': 'div', 'attrs': {'class': 'post-content'}}, # Common post content class
+                {'name': 'div', 'attrs': {'class': 'entry-content'}}, # Common entry content class
+                {'name': 'div', 'attrs': {'class': 'td-post-content'}}, # Specific to some themes
+                {'name': 'div', 'attrs': {'class': 'td-pb-span8'}}, # Specific to some themes (often wraps content)
+                {'name': 'div', 'attrs': {'class': 'td-post-content-wrap'}}, # Specific to some themes
+                {'name': 'div', 'attrs': {'id': 'content'}}, # Generic ID for content
+                {'name': 'main'}, # HTML5 main element
+            ]
+
+            content_elem = None
+            for selector in content_selectors:
+                content_elem = soup.find(selector['name'], selector['attrs'])
                 if content_elem:
-                    print(f"Found content using: {selector}")
+                    print(f"Found content using specific selector: {selector['name']} with {selector['attrs']}")
                     break
 
-            # Jeśli nie znaleziono, szukaj po atrybucie class zawierającym "field"
+            # Step 2: If not found, try to find an <article> tag and then look for content within it.
             if not content_elem:
-                content_elem = soup.find('div', class_=lambda x: x and 'field--name' in ' '.join(x) if isinstance(x, list) else 'field--name' in str(x))
-                if content_elem:
-                    print(f"Found content using field--name class")
-
-            # Spróbuj znaleźć główny article node
-            if not content_elem:
-                article = soup.find('article')
-                if article:
-                    # W article szukaj diva z treścią
-                    content_elem = article.find('div', class_=lambda x: x and ('content' in str(x).lower() or 'body' in str(x).lower()))
+                article_tag = soup.find('article')
+                if article_tag:
+                    # Look for common content divs within the article tag
+                    content_elem = article_tag.find('div', class_=lambda x: x and ('content' in str(x).lower() or 'body' in str(x).lower() or 'text' in str(x).lower()))
                     if not content_elem:
-                        content_elem = article
-                    print(f"Found content in article tag")
+                        content_elem = article_tag # If no specific div, use the article tag itself
+                    print(f"Found content within <article> tag.")
 
-            # Ostateczna deskwa ratunku - znajdź div z ID node-
+            # Step 3: Last resort - find a div with an ID starting with 'node-' (common Drupal node ID)
             if not content_elem:
                 content_elem = soup.find('div', id=lambda x: x and x.startswith('node-'))
                 if content_elem:
-                    print(f"Found content using node- id")
+                    print(f"Found content using 'node-' ID.")
 
+            # Step 4: If still no content element, log an error and return empty.
             if not content_elem:
-                print("ERROR: Could not find content container!")
+                print(f"ERROR: Could not find content container for URL: {article.url}")
                 return ""
 
-            print(f"Content element: {content_elem.name}, id={content_elem.get('id')}, classes={content_elem.get('class', [])}")
-            # Remove unwanted elements - MINIMAL removal to preserve content
-            # Only remove scripts and styles - nothing else!
-            for elem in content_elem.find_all(['script', 'style']):
-                elem.decompose()
+            print(f"Content element identified: {content_elem.name}, id={content_elem.get('id')}, classes={content_elem.get('class', [])}")
 
-            # Remove unwanted elements - MINIMAL removal to preserve content
-            # Only remove scripts and styles - nothing else!
-            for elem in content_elem.find_all(['script', 'style']):
-                elem.decompose()
+            # Remove unwanted elements (scripts, styles, and potentially ads/social share buttons)
+            # This should be done *after* identifying the main content_elem to avoid removing too much.
+            for unwanted_tag in content_elem.find_all(['script', 'style', 'aside', 'nav', 'footer', 'header']):
+                unwanted_tag.decompose()
+
+            # Also remove common ad/social share divs that might be inside the content
+            for ad_div in content_elem.find_all('div', class_=lambda x: x and any(c in x for c in ['ad', 'share', 'social', 'related-posts', 'wp-block-columns'])):
+                ad_div.decompose()
+
+            # Initialize table_texts list
+            table_texts = []
 
             # Special handling for tables - check if there are actual <table> tags
             tables = content_elem.find_all('table')
-            table_texts = []
             if tables:
                 print(f"Found {len(tables)} HTML tables")
                 # Process each table to ensure we get all cell data
@@ -227,36 +237,52 @@ class StrefaInwestorowProvider(BaseProvider):
             if table_texts:
                 full_text = full_text + '\n\n' + '\n\n'.join(table_texts)
 
-            print(f"Full text length after cleanup: {len(full_text)}")
+            # Get text content from the identified content element
+            # Use get_text with a separator to ensure paragraphs are distinct
+            full_text = content_elem.get_text(separator='\n', strip=True)
 
-            if not full_text or len(full_text) < 50:
-                print("ERROR: No content found or content too short!")
-                print("Trying to get all text from soup...")
-                # Last resort - get all visible text from page
+            # If we extracted tables separately, append them to ensure they're included
+            if table_texts:
+                full_text = full_text + '\n\n' + '\n\n'.join(table_texts)
+
+            print(f"Full text length after initial cleanup: {len(full_text)}")
+
+            # Fallback if the primary content element yielded too little text
+            if not full_text or len(full_text) < 100: # Increased threshold for "too short"
+                print("WARNING: Content from specific element is too short. Trying to get all visible text from page.")
+                # Remove scripts and styles from the entire soup before getting all text
                 for elem in soup.find_all(['script', 'style']):
                     elem.decompose()
                 full_text = soup.get_text(separator='\n', strip=True)
-                print(f"Full page text length: {len(full_text)}")
+                print(f"Full page text length (fallback): {len(full_text)}")
 
-            # Split into lines and filter - minimal filtering to preserve tables
+            # Split into lines for further processing
             lines = full_text.split('\n')
-            print(f"Total lines before filtering: {len(lines)}")
-            filtered_lines = []
+            print(f"Total lines before final filtering: {len(lines)}")
+            processed_lines = []
 
-            # Words that indicate navigation/footer/menu (to skip)
+            # Define phrases that indicate non-content sections (e.g., navigation, footer, ads)
+            # Make this list more comprehensive and case-insensitive.
+            # Removed 'pap biznes', '(pap)', 'pap' from skip_phrases as they can be part of legitimate content.
             skip_phrases = [
                 'przejdź do treści', 'menu', 'nawigacja', 'strona główna',
-                'twitter feed', 'najpopularniejsze tagi', 'footer',
-                'polityka prywatności', 'copyrights', 'strefainwestorow.pl',
-                'strefa global', 'w zielonej strefie', 'rekomendacje',
-                'czytaj więcej', 'konta użytkownika', 'główna nawigacja',
-                'debiut, ipo', 'blog inwestorski'
+                'twitter feed', 'najpopularniejsze tagi', 'footer', 'polityka prywatności',
+                'copyrights', 'strefainwestorow.pl', 'strefa global', 'w zielonej strefie',
+                'rekomendacje', 'czytaj więcej', 'konta użytkownika', 'główna nawigacja',
+                'debiut, ipo', 'blog inwestorski', 'reklama', 'partnerzy', 'newsletter',
+                'zobacz także', 'podobne artykuły', 'komentarze', 'udostępnij', 'źródło:',
+                'tagi:', 'autor:', 'data publikacji:', 'wszystkie prawa zastrzeżone',
+                'regulamin', 'kontakt', 'o nas', 'do góry', 'powrót', 'szukaj', 'wyszukaj',
+                'zaloguj', 'zarejestruj', 'subskrybuj', 'polub nas', 'obserwuj nas',
+                'zobacz również', 'więcej na ten temat', 'polecane artykuły', 'najnowsze wiadomości'
             ]
 
-            in_article_content = False
-            article_started = False
-
-            for i, line in enumerate(lines):
+            # A more robust filtering approach:
+            # 1. Remove empty lines and strip whitespace.
+            # 2. Filter out lines that are clearly navigation/footer/ads.
+            # 3. Keep lines that are reasonably long or part of a table.
+            # 4. Introduce a minimum content length check after filtering.
+            for line in lines:
                 line = line.strip()
 
                 if not line:
@@ -264,60 +290,39 @@ class StrefaInwestorowProvider(BaseProvider):
 
                 line_lower = line.lower()
 
-                # Skip navigation/menu lines
+                # Skip lines that are very short and likely not content (e.g., single words, numbers)
+                # unless they contain alphanumeric characters or are part of a table.
+                if len(line) < 5 and not any(char.isalpha() for char in line) and not ('|' in line):
+                    continue
+
+                # Skip lines containing known non-content phrases
                 if any(phrase in line_lower for phrase in skip_phrases):
                     continue
 
-                # Detect start of actual article (after title)
-                # Look for "Poniżej przedstawiamy" or similar intro text
-                if not article_started and len(line) > 30 and ('poniżej' in line_lower or 'przedstawiamy' in line_lower):
-                    article_started = True
-                    in_article_content = True
+                # Heuristic to identify potential table lines (contains '|')
+                is_table_line_current = '|' in line
 
-                # If we see "(PAP Biznes)" we might be at the end
-                if '(pap biznes)' in line_lower or '(pap)' in line_lower:
-                    filtered_lines.append(line)
-                    in_article_content = False
-                    # Don't break - there might be more content
-                    continue
+                # Keep the line if it's a table line or if it's reasonably long (e.g., > 15 characters)
+                # The threshold is lowered to be more inclusive for shorter but meaningful sentences.
+                if is_table_line_current or len(line) > 15:
+                    # Avoid adding consecutive duplicate lines
+                    if not processed_lines or line != processed_lines[-1]:
+                        processed_lines.append(line)
 
-                # Skip very short lines before article starts
-                if not article_started and len(line) < 20:
-                    continue
+            content = '\n\n'.join(processed_lines)
+            print(f"Final content length after filtering: {len(content)}")
+            print(f"Lines kept: {len(processed_lines)}")
 
-                # Once in article, be more permissive
-                if article_started or in_article_content:
-                    # Check next and previous lines for table context
-                    next_line = lines[i+1].strip() if i+1 < len(lines) else ""
-                    prev_line = lines[i-1].strip() if i > 0 else ""
-
-                    # Keep line if:
-                    # 1. It contains table separator |
-                    # 2. It's reasonably long (>10 chars)
-                    # 3. It's near a table line
-                    is_table_line = '|' in line
-                    is_near_table = '|' in next_line or '|' in prev_line
-                    is_long_enough = len(line) > 10
-                    is_table_context = is_near_table and len(line) > 3
-
-                    should_keep = is_table_line or is_long_enough or is_table_context
-
-                    # Avoid consecutive duplicates
-                    if should_keep and (not filtered_lines or line != filtered_lines[-1]):
-                        filtered_lines.append(line)
-
-            content = '\n\n'.join(filtered_lines)
-            print(f"Final content length: {len(content)}")
-            print(f"Lines kept: {len(filtered_lines)}")
-
-            if '|' in content:
-                table_lines = [l for l in filtered_lines if '|' in l]
-                print(f"Table lines found: {len(table_lines)}")
+            # Final check: if filtered content is too short, use the raw full_text as a fallback.
+            # This is crucial for articles that are inherently short (e.g., brief news flashes).
+            if len(content) < 100 and len(full_text) > 100: # If filtered content is very short but raw text was substantial
+                print("WARNING: Filtered content is too short. Returning raw full_text as a fallback.")
+                content = full_text
+            elif not content and full_text: # If filtering removed everything, but full_text had content
+                print("WARNING: Filtering removed all content. Returning raw full_text as a fallback.")
+                content = full_text
 
             return content
-
-            print("ERROR: No content element found at all!")
-            return ""
 
         except requests.RequestException as e:
             print(f"Error fetching article content from {article.url}: {e}")
