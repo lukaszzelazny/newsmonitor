@@ -57,6 +57,8 @@ class BaseProvider(ABC):
         
         r'Udostępnij.*?(?:\n|$)',
         r'Podziel się.*?(?:\n|$)',
+        r'konsensus\s+tworzony\s+jest\s+na\s+podstawie\s+prognoz\s+biur\s+maklerskich.*pap\s+biznes'
+
     ]
     
     def __init__(self, name: str, base_url: str):

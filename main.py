@@ -9,6 +9,7 @@ from config import Config
 from database import Database
 from scraper import Scraper
 from providers.pap_provider import PAPProvider
+from providers.strefa_investorow_provider import StrefaInwestorowProvider
 from providers.base_provider import BaseProvider
 
 
@@ -35,6 +36,8 @@ class ProviderFactory:
         
         if provider_name == 'pap':
             return PAPProvider(base_url)
+        elif provider_name == 'strefa_inwestorow':
+            return StrefaInwestorowProvider()
         else:
             raise ValueError(f"Unknown provider: {provider_name}")
     
