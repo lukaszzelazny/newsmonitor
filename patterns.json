@@ -31,7 +31,16 @@
       "kapitał własny",
       "ROE",
       "ROA",
-      "ROI"
+      "ROI",
+      "Poniżej przedstawiamy wyniki Grenevii w trzecim kwartale 2025 roku i ich odniesienie do konsensusu PAP Biznes oraz poprzednich wyników.",
+      "Grupa Inter Cars miała w październiku 2.082,8 mln zł przychodów, co oznacza wzrost rdr o 7,6 proc. - podała spółka w komunikacie.",
+      "Grupa LPP zanotowała w III kwartale, czyli w okresie sierpień-październik 2025 r., 23 proc. wzrost dynamiki przychodów w walutach stałych. Sprzedaż LFL w III kwartale wzrosła o 4,3 proc. - podała spółka w komunikacie.",
+      "Artifex Mundi szacuje, że trzecim kwartale 2025 roku miał 5,1 mln zł zysku netto, co stanowi spadek o 32 proc. w porównaniu do analogicznego okresu poprzedniego roku - podała spółka w komunikacie. Przychody w tym okresie wyniosły 21,8 mln zł i były niższe o 17 proc. rdr.",
+      "CCC rewiduje w dół założenia na rok obrotowy 2025. Zakłada 11,3-11,5 mld zł przychodów i 1,7-1,8 mld zł EBITDA - podała spółka w komunikacie.",
+      "Lubawa wstępnie szacuje, że jej skonsolidowany zysk netto po trzech kwartałach w 2025 roku spadł o 2,6 proc. rdr do 72,5 mln zł - poinformowała spółka w komunikacie.",
+      "Zysk netto grupy BNP Paribas BP w III kwartale 2025 r. wzrósł do 695,5 mln zł z 635,5 mln zł rok wcześniej - poinformował bank w raporcie. Zysk okazał się 6,2 proc. poniżej oczekiwań analityków, którzy prognozowali, że wyniesie on 741,2 mln zł. Nowa strategia banku zostanie zaprezentowana 11 grudnia 2025 r."
+
+
     ],
     "company_actions": [
       "fuzja",
@@ -50,13 +59,24 @@
       "wykup akcji",
       "buyback",
       "wezwanie do sprzedaży",
-      "delisting",
-      "wycofanie z giełdy",
-      "kapituła obrotowy",
-      "program emisji obligacji",
-      "wykup obligacji", "Dzień dywidendy został wyznaczony na"
+      "cyber_Folks w niedalekiej przyszłości planuje akwizycje (M&A), a po obserwacji dynamik wzrostu w trzech kwartałach 2025 roku spółka widzi dalszy potencjał ich poprawiania"
     ],
-"brokerage": "Teksty opisujące raporty i rekomendacje biur maklerskich (DM BOŚ, mBank BM, Santander BM, Trigon DM itp.), \nw tym zmiany wycen, rekomendacje 'kupuj', 'sprzedaj', 'trzymaj', raporty analityczne, target price, \nupgrade, downgrade, buy, sell, hold. ",
+    "brokerage": [
+      "rekomendacja",
+      "wycena", "zysku netto", "zysk brutto", "przepływy pieniężne", "przychodów",
+      "cena docelowa", "DM BOŚ", "podniósł cenę docelową akcji",
+      "dom maklerski", "Analitycy Trigon DM", "Analitycy",
+      "kupuj", "EBITDA",
+      "sprzedaj",
+      "trzymaj",
+      "akumuluj",
+      "redukuj",
+      "podwyższenie rekomendacji", "podtrzymał rekomendację",
+      "obniżenie rekomendacji", "obniżył rekomendację",
+      "zmiana wyceny", "cenę docelową",
+      "raport analityczny", "wcześniejszymi szacunkami",
+      "Analitycy DM BOŚ w raporcie z 29 października podwyższyli cenę docelową akcji PKO BP w perspektywie 12 miesięcy do 107,4 zł z 65,7 zł wcześniej, podtrzymując dla nich rekomendację \"kupuj\"."
+    ],
     "contracts": [
       "najkorzystniejszą ofertą",
       "kontrakt", "portfele zleceń",
@@ -75,7 +95,9 @@
       "umowa ramowa",
       "realizacja kontraktu",
       "aneks do umowy",
-      "rozwiązanie umowy"
+      "rozwiązanie umowy",
+      "Konsorcjum z Torpolem (lider) i Mirbudem z najkorzystniejszą ofertą za maksymalnie 4,56 mld zł w przetargu PKP PLK, przy czym zakres podstawowy to ok. 2,65 mld zł - podały spółki w komunikacie. Każda ze spółek posiada 50 proc. udziałów konsorcjum."
+
     ],
     "management": [
       "zarząd",
@@ -133,7 +155,8 @@
       "bez dywidendy",
       "zawieszenie dywidendy",
       "polityka dywidendowa",
-      "payout ratio"
+      "payout ratio",
+      "Murapol zdecydował o wypłacie akcjonariuszom zaliczki na poczet dywidendy za 2025 rok w kwocie 119,952 mln zł, co daje 2,94 zł na akcję - podała spółka w komunikacie."
     ],
     "insider_trading": [
       "transakcje osób zarządzających",
@@ -187,6 +210,17 @@
     "FUNDUSZ DŁUGU KORPORACYJNEGO", "w sprawie dopuszczenia do obrotu giełdowego",
     "Zarządu Giełdy Papierów Wartościowych", "Wartość indeksów na zamknięciu sesji",
     "notowania obligacji na okaziciela serii", "Wskaźniki referencyjne",
-    "Aktualne wskaźniki giełdowe", "Powołanie Członków Rady Nadzorczej"
+    "Aktualne wskaźniki giełdowe", "Powołanie Członków Rady Nadzorczej",
+    "Uchwała Nr 1423/2025 Zarządu Giełdy Papierów Wartościowych w Warszawie S.A. z dnia 7 listopada 2025 r. w sprawie dopuszczenia i wprowadzenia do obrotu giełdowego na Głównym Rynku GPW akcji zwykłych na okaziciela serii K spółki NANOGROUP S.A.,",
+    "Komunikat Giełdy Papierów Wartościowych w Warszawie S.A. z dnia 7 listopada 2025 r. (CATALYST)",
+    "Uchwała Nr 1426/2025 Zarządu Giełdy Papierów Wartościowych w Warszawie S.A. z dnia 7 listopada 2025 r. w sprawie wprowadzenia do obrotu giełdowego na Catalyst hipotecznych listów zastawnych na okaziciela serii 3 wyemitowanych przez ING BANK HIPOTECZNY S.A."
+  ],
+  "negative_keywords": [
+    "Komunikat Giełdy Papierów Wartościowych", "GPW: komunikat"
+  ],
+
+  "summary_patterns": [
+    "Skrót wiadomości"
   ]
 }
+

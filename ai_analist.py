@@ -32,7 +32,9 @@ def load_patterns(filepath='patterns.json', name="relevant_patterns"):
 RELEVANT_PATTERNS = load_patterns(name="revelant_patterns")
 # Nieistotne wzorce
 IRRELEVANT_PATTERNS = load_patterns(name="irrevelant_patterns")
+NEGATIVE_KEYWORDS = load_patterns(name="negative_keywords")
 
+NEWS_SUMMARY_PATTERN = load_patterns(name="summary_patterns")
 
 def get_embedding(text: str, model: str = "text-embedding-3-large"):
     """
@@ -81,6 +83,31 @@ def calculate_relevance_score(news_embedding, pattern_embeddings):
             max_similarity = max(max_similarity, similarity)
 
     return float(max_similarity)
+
+
+def contains_pattern(pattern: list, title: str, content: str) -> tuple[bool, str]:
+    """
+    Sprawdza czy news zawiera słowa kluczowe z listy pattern.
+    
+    Args:
+        title: Tytuł artykułu
+        content: Treść artykułu
+    
+    Returns:
+        Tuple[bool, str] - (czy_zawiera, znalezione_słowo_kluczowe)
+    """
+    if not pattern:
+        return False, ""
+    
+    # Łączymy tytuł i treść w jeden tekst
+    full_text = f"{title} {content or ''}".lower()
+    
+    # Sprawdzamy każde słowo kluczowe
+    for keyword in pattern:
+        if keyword.lower() in full_text:
+            return True, keyword
+    
+    return False, ""
 
 
 def is_news_relevant(headline: str, lead: str, threshold: float = 0.65):
@@ -254,6 +281,119 @@ Zwróć wyłącznie **poprawny JSON** w formacie:
 """
 
 
+PROMPT_SUMMARY = """
+🧠 Prompt PRO — analiza podsumowania dnia (zbioru newsów)
+
+Jesteś doświadczonym analitykiem giełdowym.
+Twoim zadaniem jest analizować zbiorcze podsumowania wiadomości ekonomicznych, giełdowych i biznesowych (np. z serwisu PAP Biznes lub Strefa Inwestorów) i oceniać potencjalne znaczenie poszczególnych informacji rynkowych.
+
+Tekst, który otrzymasz, może zawierać wiele krótkich newsów lub streszczeń w jednym artykule. Każdy z nich potraktuj jako osobny wpis.
+Dla każdego fragmentu (newsa) zastosuj poniższe zasady analizy i zwróć listę obiektów JSON – po jednym dla każdej istotnej informacji.
+Zasady analizy:
+
+Rozpoznaj typ wiadomości:
+🏢 Spółka – dotyczy konkretnego podmiotu lub kilku spółek,
+🏭 Sektor – odnosi się do całej branży (np. banki, energetyka, gaming),
+💰 Debiut / IPO – informacja o wejściu spółki na giełdę,
+📊 Makro / Rynek – dotyczy zjawisk gospodarczych, wskaźników, polityki pieniężnej, cen surowców, decyzji NBP/FED itp.,
+📉 Niepowiązana / Neutralna – nie ma znaczenia dla rynku lub kursów akcji.
+
+Zidentyfikuj tickery:
+
+Jeżeli wiadomość dotyczy konkretnych spółek, wypisz ich tickery (np. "related_tickers": ["KGHM", "PZU"]).
+Jeśli brak — zwróć pustą listę: "related_tickers": [].
+Uwzględnij nowe wyceny od domów maklerskich (DM):
+Jeśli występuje informacja o rekomendacji lub zmianie wyceny, wypisz:
+
+"brokerage_house" – nazwa domu maklerskiego,
+"price_old" – stara wycena,
+"price_new" – nowa wycena,
+"price_recomendation" – np. "kupuj", "neutralnie", "sprzedaj",
+"price_comment" – krótki opis komentarza,
+"reason" – uzasadnienie wpływu tej zmiany.
+
+Jeśli brak danych o wycenach — wpisz wartości null.
+Oceń wpływ wiadomości:
+Jeśli dotyczy spółki/spółek:
+
+"ticker_impact" – liczba od -1.0 do +1.0,
+"confidence" – liczba od 0.0 do 1.0,
+"occasion" – "krótkoterminowa", "średnioterminowa", "długoterminowa",
+"sector" – nazwa sektora,
+"sector_impact" – null.
+
+Jeśli dotyczy całego sektora:
+"sector" – nazwa sektora,
+"sector_impact" – liczba od -1.0 do +1.0,
+"confidence" – liczba od 0.0 do 1.0,
+"occasion" – null,
+"ticker_impact" – null.
+
+Jeśli wiadomość neutralna:
+wszystkie pola wpływu (ticker_impact, sector_impact, confidence, occasion, sector) mają wartość null.
+Dodaj krótkie uzasadnienie ("reason") – jedno lub dwa zdania wyjaśniające, dlaczego dana informacja może (lub nie może) wpłynąć na rynek.
+Wejście:
+
+Podsumowanie dnia:
+{news_summary_text}
+
+Oczekiwany wynik:
+Zwróć wyłącznie poprawny JSON zawierający listę obiektów – każdy reprezentuje osobny news:
+
+[
+  {{
+    "typ": "Spółka",
+    "related_tickers": ["KGHM"],
+    "sector": "surowce",
+    "ticker_impact": 0.8,
+    "sector_impact": null,
+    "confidence": 0.9,
+    "occasion": "średnioterminowa",
+    "reason": "Ceny miedzi wzrosły po ograniczeniu eksportu z Chile, co sprzyja KGHM.",
+    "brokerage_house": null,
+    "price_old": null,
+    "price_new": null,
+    "price_recomendation": null,
+    "price_comment": null
+  }},
+  {{
+    "typ": "Sektor",
+    "related_tickers": [],
+    "sector": "banki",
+    "ticker_impact": null,
+    "sector_impact": -0.6,
+    "confidence": 0.8,
+    "occasion": null,
+    "reason": "NBP zapowiedział możliwość obniżki stóp, co ogranicza marże odsetkowe banków.",
+    "brokerage_house": null,
+    "price_old": null,
+    "price_new": null,
+    "price_recomendation": null,
+    "price_comment": null
+  }}
+]
+"""
+
+def analyze_summary(headline, lead):
+    """
+    Analizuje podsumowanie dnia (może zawierać wiele newsów) za pomocą OpenAI API.
+
+    Args:
+        headline: Tytuł artykułu
+        lead: Treść/lead artykułu (podsumowanie wielu newsów)
+
+    Returns:
+        JSON string z listą analiz (array)
+    """
+    news_summary_text = f"{headline}\n\n{lead}"
+    prompt = PROMPT_SUMMARY.format(news_summary_text=news_summary_text)
+
+    response = client.chat.completions.create(
+        model="gpt-4.1",
+        messages=[{"role": "user", "content": prompt}]
+    )
+    return response.choices[0].message.content
+
 def analyze_news(headline, lead):
     """
     Analizuje pojedynczy news za pomocą OpenAI API.
@@ -343,17 +483,110 @@ def is_article_analyzed(db: Database, article_id: int) -> bool:
         session.close()
 
 
+def _save_single_analysis(session, news_id: int, analysis_data: dict, analysis_result_id: int):
+    """
+    Pomocnicza funkcja do zapisu pojedynczej analizy.
+
+    Args:
+        session: Sesja SQLAlchemy
+        news_id: ID artykułu
+        analysis_data: Dict z danymi analizy
+        analysis_result_id: ID utworzonego rekordu AnalysisResult
+    """
+    # Pobierz pola z JSON
+    related_tickers = analysis_data.get('related_tickers', [])
+    ticker_impact = analysis_data.get('ticker_impact')
+    sector_impact = analysis_data.get('sector_impact')
+    confidence_value = analysis_data.get('confidence')
+    sector = analysis_data.get('sector')
+    occasion = analysis_data.get('occasion')
+
+    # Pola dla analiz domów maklerskich
+    brokerage_house = analysis_data.get('brokerage_house')
+    price_old = analysis_data.get('price_old')
+    price_new = analysis_data.get('price_new')
+    price_recommendation = analysis_data.get('price_recomendation')
+    price_comment = analysis_data.get('price_comment')
+
+    print(
+        f"DEBUG: related_tickers={related_tickers}, ticker_impact={ticker_impact}, "
+        f"sector_impact={sector_impact}, confidence={confidence_value}, sector={sector}, occasion={occasion}")
+
+    # Najpierw dodaj tickery do słownika (jeśli nie istnieją)
+    for ticker_symbol in related_tickers:
+        existing_ticker = session.query(Ticker).filter(
+            Ticker.ticker == ticker_symbol).first()
+        if not existing_ticker:
+            print(f"DEBUG: Dodaję nowy ticker do słownika: {ticker_symbol}")
+            new_ticker = Ticker(
+                ticker=ticker_symbol,
+                company_name=None,  # Może być uzupełnione później
+                sector=sector
+            )
+            session.add(new_ticker)
+        else:
+            print(f"DEBUG: Ticker {ticker_symbol} już istnieje w słowniku")
+
+    # Utwórz ticker_sentiments (tylko jeśli ticker_impact nie jest null)
+    if related_tickers and ticker_impact is not None:
+        for ticker_symbol in related_tickers:
+            print(
+                f"DEBUG: Dodaję ticker_sentiment dla {ticker_symbol} z ticker_impact={ticker_impact}, "
+                f"confidence={confidence_value}, occasion={occasion}")
+            ticker_sentiment = TickerSentiment(
+                analysis_id=analysis_result_id,
+                ticker=ticker_symbol,
+                sector=sector,
+                impact=ticker_impact,  # Float z ticker_impact
+                confidence=confidence_value,  # Confidence (0.0-1.0)
+                occasion=occasion  # Typ okazji
+            )
+            session.add(ticker_sentiment)
+
+    # Dodaj sector_sentiment (tylko jeśli sector_impact nie jest null)
+    if sector and sector_impact is not None:
+        print(
+            f"DEBUG: Dodaję sector_sentiment dla sektora: {sector} z sector_impact={sector_impact}, "
+            f"confidence={confidence_value}")
+        sector_sentiment = SectorSentiment(
+            analysis_id=analysis_result_id,
+            sector=sector,
+            impact=sector_impact,  # Float z sector_impact
+            confidence=confidence_value  # Confidence (0.0-1.0)
+        )
+        session.add(sector_sentiment)
+
+    # Dodaj BrokerageAnalysis (tylko jeśli brokerage_house nie jest puste/null)
+    if brokerage_house:
+        # Jeśli jest brokerage_house, powinien być co najmniej jeden ticker
+        ticker_for_brokerage = related_tickers[0] if related_tickers else None
+        print(
+            f"DEBUG: Dodaję BrokerageAnalysis: {brokerage_house} dla {ticker_for_brokerage}")
+        brokerage_analysis = BrokerageAnalysis(
+            analysis_id=analysis_result_id,
+            ticker=ticker_for_brokerage,
+            brokerage_house=brokerage_house,
+            price_old=price_old,
+            price_new=price_new,
+            price_recommendation=price_recommendation,
+            price_comment=price_comment
+        )
+        session.add(brokerage_analysis)
+
+
 def save_analysis_results(db: Database, news_id: int, analysis_json: str):
     """
     Zapisuje wyniki analizy do bazy danych.
+    Obsługuje zarówno pojedynczą analizę (obiekt JSON), jak i listę analiz (array JSON).
 
     Args:
         db: Instancja Database
         news_id: ID artykułu
-        analysis_json: JSON string z wynikiem analizy
+        analysis_json: JSON string z wynikiem analizy (obiekt lub array)
 
     Returns:
-        ID utworzonego rekordu AnalysisResult
+        ID utworzonego rekordu AnalysisResult (dla pojedynczej analizy)
+        lub lista ID (dla listy analiz)
     """
     session = db.Session()
     try:
@@ -368,98 +601,47 @@ def save_analysis_results(db: Database, news_id: int, analysis_json: str):
         print(f"DEBUG: Parsing JSON: {cleaned_json[:200]}...")
         analysis_data = json.loads(cleaned_json)
 
-        # Utwórz wpis w analysis_result
-        analysis_result = AnalysisResult(
-            news_id=news_id,
-            summary=cleaned_json
-        )
-        session.add(analysis_result)
-        session.flush()  # Aby uzyskać ID
-        print(f"DEBUG: Utworzono AnalysisResult z ID={analysis_result.id}")
+        # Sprawdź czy analysis_data jest listą (podsumowanie) czy pojedynczym obiektem (pojedynczy news)
+        if isinstance(analysis_data, list):
+            print(f"DEBUG: Wykryto listę analiz ({len(analysis_data)} elementów)")
+            # To jest lista analiz - podsumowanie dnia
+            analysis_ids = []
+            for idx, single_analysis in enumerate(analysis_data):
+                print(f"DEBUG: Przetwarzam analizę {idx + 1}/{len(analysis_data)}")
 
-        # Pobierz pola z JSON
-        related_tickers = analysis_data.get('related_tickers', [])
-        ticker_impact = analysis_data.get('ticker_impact')
-        sector_impact = analysis_data.get('sector_impact')
-        confidence_value = analysis_data.get('confidence')
-        sector = analysis_data.get('sector')
-        occasion = analysis_data.get('occasion')
-
-        # Pola dla analiz domów maklerskich
-        brokerage_house = analysis_data.get('brokerage_house')
-        price_old = analysis_data.get('price_old')
-        price_new = analysis_data.get('price_new')
-        price_recommendation = analysis_data.get('price_recomendation')
-        price_comment = analysis_data.get('price_comment')
-
-        print(
-            f"DEBUG: related_tickers={related_tickers}, ticker_impact={ticker_impact}, "
-            f"sector_impact={sector_impact}, confidence={confidence_value}, sector={sector}, occasion={occasion}")
-
-        # Najpierw dodaj tickery do słownika (jeśli nie istnieją)
-        for ticker_symbol in related_tickers:
-            existing_ticker = session.query(Ticker).filter(
-                Ticker.ticker == ticker_symbol).first()
-            if not existing_ticker:
-                print(f"DEBUG: Dodaję nowy ticker do słownika: {ticker_symbol}")
-                new_ticker = Ticker(
-                    ticker=ticker_symbol,
-                    company_name=None,  # Może być uzupełnione później
-                    sector=sector
+                # Utwórz osobny wpis w analysis_result dla każdej analizy
+                analysis_result = AnalysisResult(
+                    news_id=news_id,
+                    summary=json.dumps(single_analysis, ensure_ascii=False)
                 )
-                session.add(new_ticker)
-            else:
-                print(f"DEBUG: Ticker {ticker_symbol} już istnieje w słowniku")
+                session.add(analysis_result)
+                session.flush()  # Aby uzyskać ID
+                print(f"DEBUG: Utworzono AnalysisResult z ID={analysis_result.id}")
 
-        # Utwórz ticker_sentiments (tylko jeśli ticker_impact nie jest null)
-        if related_tickers and ticker_impact is not None:
-            for ticker_symbol in related_tickers:
-                print(
-                    f"DEBUG: Dodaję ticker_sentiment dla {ticker_symbol} z ticker_impact={ticker_impact}, "
-                    f"confidence={confidence_value}, occasion={occasion}")
-                ticker_sentiment = TickerSentiment(
-                    analysis_id=analysis_result.id,
-                    ticker=ticker_symbol,
-                    sector=sector,
-                    impact=ticker_impact,  # Float z ticker_impact
-                    confidence=confidence_value,  # Confidence (0.0-1.0)
-                    occasion=occasion  # Typ okazji
-                )
-                session.add(ticker_sentiment)
+                # Zapisz pojedynczą analizę
+                _save_single_analysis(session, news_id, single_analysis, analysis_result.id)
+                analysis_ids.append(analysis_result.id)
 
-        # Dodaj sector_sentiment (tylko jeśli sector_impact nie jest null)
-        if sector and sector_impact is not None:
-            print(
-                f"DEBUG: Dodaję sector_sentiment dla sektora: {sector} z sector_impact={sector_impact}, "
-                f"confidence={confidence_value}")
-            sector_sentiment = SectorSentiment(
-                analysis_id=analysis_result.id,
-                sector=sector,
-                impact=sector_impact,  # Float z sector_impact
-                confidence=confidence_value  # Confidence (0.0-1.0)
+            session.commit()
+            print(f"DEBUG: Commit wykonany pomyślnie - zapisano {len(analysis_ids)} analiz")
+            return analysis_ids  # Zwróć listę ID
+        else:
+            print(f"DEBUG: Wykryto pojedynczą analizę")
+            # To jest pojedyncza analiza
+            analysis_result = AnalysisResult(
+                news_id=news_id,
+                summary=cleaned_json
             )
-            session.add(sector_sentiment)
+            session.add(analysis_result)
+            session.flush()  # Aby uzyskać ID
+            print(f"DEBUG: Utworzono AnalysisResult z ID={analysis_result.id}")
 
-        # Dodaj BrokerageAnalysis (tylko jeśli brokerage_house nie jest puste/null)
-        if brokerage_house:
-            # Jeśli jest brokerage_house, powinien być co najmniej jeden ticker
-            ticker_for_brokerage = related_tickers[0] if related_tickers else None
-            print(
-                f"DEBUG: Dodaję BrokerageAnalysis: {brokerage_house} dla {ticker_for_brokerage}")
-            brokerage_analysis = BrokerageAnalysis(
-                analysis_id=analysis_result.id,
-                ticker=ticker_for_brokerage,
-                brokerage_house=brokerage_house,
-                price_old=price_old,
-                price_new=price_new,
-                price_recommendation=price_recommendation,
-                price_comment=price_comment
-            )
-            session.add(brokerage_analysis)
+            # Zapisz pojedynczą analizę
+            _save_single_analysis(session, news_id, analysis_data, analysis_result.id)
 
-        session.commit()
-        print(f"DEBUG: Commit wykonany pomyślnie")
-        return analysis_result.id
+            session.commit()
+            print(f"DEBUG: Commit wykonany pomyślnie")
+            return analysis_result.id
     except json.JSONDecodeError as e:
         session.rollback()
         raise ValueError(f"Nie można sparsować JSON: {e}")
@@ -529,11 +711,33 @@ def analyze_articles(db: Database, mode: str = 'unanalyzed', article_id: int = N
 
             # NOWE: Wstępna analiza istotności
             print(f"[1/3] Sprawdzam istotność newsa...")
-            is_relevant, relevance_score, relevance_reason = is_news_relevant(
-                article.title,
-                article.content or "",
-                threshold=relevance_threshold
-            )
+
+            # Sprawdź czy news zawiera negatywne słowa kluczowe
+            has_negative, negative_keyword = contains_pattern(NEGATIVE_KEYWORDS, article.title, article.content or "")
+            if has_negative:
+                reason = f"Zawiera negatywne słowo kluczowe: '{negative_keyword}'"
+                print(f"    ✗ Wykluczony: {reason}")
+                save_not_analyzed(db, article.id, reason, 0.0)
+                results.append({
+                    "article_id": article.id,
+                    "title": article.title,
+                    "status": "skipped",
+                    "reason": "negative_keyword",
+                    "relevance_score": 0.0,
+                    "details": reason
+                })
+                continue
+            has_summary, summary_keyword = contains_pattern(NEWS_SUMMARY_PATTERN,
+                                                              article.title,
+                                                              article.content or "")
+            if not has_summary:
+                is_relevant, relevance_score, relevance_reason = is_news_relevant(
+                    article.title,
+                    article.content or "",
+                    threshold=relevance_threshold
+                )
+            else:
+                is_relevant, relevance_score, relevance_reason = True, 1, "Podsumowanie dnia"
 
             print(
                 f"    Istotność: {'TAK' if is_relevant else 'NIE'} (score: {relevance_score:.3f})")
@@ -554,7 +758,10 @@ def analyze_articles(db: Database, mode: str = 'unanalyzed', article_id: int = N
 
             # Analizuj artykuł (tylko jeśli jest istotny)
             print(f"[2/3] Wysyłam zapytanie do OpenAI...")
-            analysis_json = analyze_news(article.title, article.content or "")
+            if has_summary:
+                analysis_json = analyze_summary(article.title, article.content or "")
+            else:
+                analysis_json = analyze_news(article.title, article.content or "")
             print(f"    Otrzymano odpowiedź: {analysis_json[:100]}...")
 
             # Zapisz wyniki
@@ -821,7 +1028,7 @@ if __name__ == "__main__":
             # Analiza nieprzeanalizowanych
             print("Analizuję nieprzeanalizowane artykuły...")
             result = analyze_articles(db, mode='unanalyzed')
-            print(result)
+            #print(result)
         elif sys.argv[1] == '--report':
             # Generuj raport
             report = generate_report(db)
@@ -835,5 +1042,3 @@ if __name__ == "__main__":
         print("  python ai_analist.py --id <article_id>  # Analizuj konkretny artykuł")
         print("  python ai_analist.py --unanalyzed       # Analizuj wszystkie nieprzeanalizowane")
         print("  python ai_analist.py --report           # Generuj raport trendów")
-
-
