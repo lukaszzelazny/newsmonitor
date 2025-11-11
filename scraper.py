@@ -87,7 +87,93 @@ class Scraper:
         }
 
         return stats
-    
+
+    def scrape_recommendations(self, provider: BaseProvider) -> dict:
+        """
+        Scrape brokerage recommendations from a provider.
+
+        Args:
+            provider: Recommendations provider instance
+
+        Returns:
+            Dictionary with scraping statistics
+        """
+        print(f"\n{'='*60}")
+        print(f"Scraping recommendations from: {provider.name}")
+        print(f"Base URL: {provider.base_url}")
+        print(f"{'='*60}")
+
+        total_recommendations = 0
+        new_recommendations = 0
+        skipped_recommendations = 0
+
+        try:
+            # Fetch the single page
+            html = provider.fetch_page(0)
+
+            if not html:
+                print("✗ Failed to fetch recommendations page")
+                return {
+                    'provider': provider.name,
+                    'total_recommendations': 0,
+                    'new_recommendations': 0,
+                    'skipped_recommendations': 0
+                }
+
+            # Parse recommendations
+            recommendations = provider.parse_articles(html)
+
+            if not recommendations:
+                print("No recommendations found")
+                return {
+                    'provider': provider.name,
+                    'total_recommendations': 0,
+                    'new_recommendations': 0,
+                    'skipped_recommendations': 0
+                }
+
+            print(f"\nFound {len(recommendations)} recommendations")
+
+            # Process each recommendation
+            for rec_data in recommendations:
+                total_recommendations += 1
+
+                # Generate unique identifier for this recommendation
+                external_id = rec_data.get('external_id')
+
+                # Check if already exists
+                if self.db.exists_recommendation(external_id):
+                    skipped_recommendations += 1
+                    print(f"  ✓ Skipped (already exists): {rec_data['title'][:60]}")
+                    continue
+
+                # Save to database
+                print(f"  → Processing: {rec_data['title'][:60]}")
+
+                try:
+                    rec_id = self.db.add_recommendation(rec_data)
+                    if rec_id:
+                        new_recommendations += 1
+                        print(f"    ✓ Saved (ID: {rec_id})")
+                    else:
+                        print(f"    ✗ Failed to save")
+                except Exception as e:
+                    print(f"    ✗ Error saving: {e}")
+                    self.errors.append(f"Recommendation {rec_data['title']}: {str(e)}")
+
+        except Exception as e:
+            print(f"\n✗ Error scraping recommendations: {e}")
+            self.errors.append(f"{provider.name}: {str(e)}")
+
+        stats = {
+            'provider': provider.name,
+            'total_recommendations': total_recommendations,
+            'new_recommendations': new_recommendations,
+            'skipped_recommendations': skipped_recommendations
+        }
+
+        return stats
+
     def scrape_provider_range(self, provider: BaseProvider, start_date: date, end_date: date) -> dict:
         """Scrape articles within an inclusive date range [start_date, end_date]."""
         print(f"\n{'='*60}")
@@ -119,7 +205,6 @@ class Scraper:
 
                     if self.db.exists(article.url):
                         skipped_articles += 1
-                        # print(f"  ✓ Skipped (already exists): {article.title[:60]}")
                         continue
 
                     # Fetch content and infer date
@@ -160,32 +245,28 @@ class Scraper:
     def scrape_range(self, provider: BaseProvider, start_date: date, end_date: date):
         """Scrape articles for a date range."""
         current_date = start_date
-        
+
         while current_date <= end_date:
             print(f"\n{'='*80}")
             print(f"Processing date: {current_date}")
             print(f"{'='*80}")
-            
+
             stats = self.scrape_provider(provider, current_date)
-            
+
             # Move to next date
             from datetime import timedelta
             current_date += timedelta(days=1)
-    
+
     def print_summary(self):
         """Print scraping summary."""
         print(f"\n{'='*60}")
         print("SCRAPING SUMMARY")
         print(f"{'='*60}")
-        
+
         if self.errors:
             print(f"\nErrors: {len(self.errors)}")
             for error in self.errors:
                 print(f"  - {error}")
-        
+
         print(f"\nFinished at: {datetime.now()}")
         print(f"{'='*60}")
-
-
-
-

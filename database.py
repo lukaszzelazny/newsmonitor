@@ -38,7 +38,7 @@ class AnalysisResult(Base):
     __tablename__ = 'analysis_result'
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    news_id = Column(Integer, ForeignKey('news_articles.id', ondelete='CASCADE'), nullable=False)
+    news_id = Column(Integer, ForeignKey('news_articles.id', ondelete='CASCADE'), nullable=True)
     summary = Column(String, nullable=True)
     created_at = Column(DateTime, default=datetime.now, nullable=False)
 
@@ -204,8 +204,100 @@ class Database:
         if self.engine:
             self.engine.dispose()
 
+    """
+    Add these methods to your Database class in database.py
+    """
+
+    def exists_recommendation(self, external_id: str) -> bool:
+        """
+        Check if a recommendation already exists by external_id.
+
+        Args:
+            external_id: Unique identifier for the recommendation
+
+        Returns:
+            True if recommendation exists, False otherwise
+        """
+        with self.Session() as session:
+            try:
+                result = session.query(BrokerageAnalysis).filter(
+                    BrokerageAnalysis.price_comment == external_id
+                    # Using price_comment to store external_id
+                ).first()
+                return result is not None
+            except Exception as e:
+                print(f"Error checking recommendation existence: {e}")
+                return False
 
 
+    def add_recommendation(self, rec_data: dict) -> Optional[int]:
+        """
+        Add a brokerage recommendation to the database.
 
+        Args:
+            rec_data: Dictionary containing recommendation data with keys:
+                     - ticker: Company ticker symbol
+                     - brokerage_house: Name of brokerage house
+                     - price_old: Old price target
+                     - price_new: New price target
+                     - price_recommendation: Recommendation (buy/sell/hold)
+                     - published_date: Publication date
+                     - external_id: Unique identifier
 
+        Returns:
+            ID of created recommendation or None on failure
+        """
+        session = self.Session()
+        try:
+            published_date = rec_data.get('published_date', datetime.now())
 
+            # Try to find existing NewsArticle by URL
+            news_article = session.query(NewsArticle).filter(NewsArticle.url == rec_data.get('url')).first()
+
+            # If not found, create a new NewsArticle placeholder
+            if not news_article:
+                news_article = NewsArticle(
+                    title=rec_data.get('title', 'No title'),
+                    content='',
+                    url=rec_data.get('url', ''),
+                    source=rec_data.get('source', 'unknown'),
+                    date=published_date.date() if hasattr(published_date, 'date') else None,
+                    scraped_at=datetime.now()
+                )
+                session.add(news_article)
+                session.flush()  # Get the ID
+
+            # Create AnalysisResult entry linked to news_article
+            analysis_result = AnalysisResult(
+                news_id=news_article.id,
+                summary=f"Recommendation from {rec_data.get('brokerage_house')}",
+                created_at=published_date
+            )
+
+            session.add(analysis_result)
+            session.flush()  # Get the ID
+
+            # Create BrokerageAnalysis entry
+            brokerage_analysis = BrokerageAnalysis(
+                analysis_id=analysis_result.id,
+                ticker=rec_data.get('ticker'),
+                brokerage_house=rec_data.get('brokerage_house'),
+                price_old=rec_data.get('price_old'),
+                price_new=rec_data.get('price_new'),
+                price_recommendation=rec_data.get('price_recommendation'),
+                price_comment=rec_data.get('external_id'),
+                # Store external_id in price_comment for uniqueness check
+                created_at=published_date
+            )
+
+            session.add(brokerage_analysis)
+            session.commit()
+
+            return brokerage_analysis.id
+
+        except Exception as e:
+            session.rollback()
+            print(f"Error adding recommendation: {e}")
+            import traceback
+            traceback.print_exc()
+            return None

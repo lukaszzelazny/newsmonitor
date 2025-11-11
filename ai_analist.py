@@ -653,7 +653,7 @@ def save_analysis_results(db: Database, news_id: int, analysis_json: str):
 
 
 def analyze_articles(db: Database, mode: str = 'unanalyzed', article_id: int = None,
-                     relevance_threshold: float = 0.59):
+                     relevance_threshold: float = 0.50):
     """
     Główna funkcja do analizy artykułów z wstępną filtracją istotności.
 
