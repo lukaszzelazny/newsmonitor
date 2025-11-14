@@ -7,3 +7,5 @@ python-dateutil>=2.8.0
 openai
 pandas
 scikit-learn
+
+schedule

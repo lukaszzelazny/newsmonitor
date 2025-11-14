@@ -9,11 +9,12 @@ from database import Database
 class Scraper:
     """Main scraper orchestrator."""
     
-    def __init__(self, db: Database):
+    def __init__(self, db: Database, telegram):
         self.db = db
         self.scraped_count = 0
         self.skipped_count = 0
         self.errors = []
+        self.telegram = telegram
     
     def scrape_provider(self, provider: BaseProvider, page_from: int = 0, page_to: int = 49) -> dict:
         """
@@ -151,6 +152,13 @@ class Scraper:
                 print(f"  → Processing: {rec_data['title'][:60]}")
 
                 try:
+                    self.telegram.send_brokerage_alert(brokerage_house=rec_data.get('brokerage_house'),
+                                                       price_old=rec_data.get('price_old').replace('zł', ''),
+                                                       price_new=rec_data.get('price_new').replace('zł', ''),
+                                                       recommendation=rec_data.get('price_recommendation'),
+                                                       ticker=rec_data.get('ticker'),
+                                                       title=rec_data.get('external_id')
+                                                       )
                     rec_id = self.db.add_recommendation(rec_data)
                     if rec_id:
                         new_recommendations += 1

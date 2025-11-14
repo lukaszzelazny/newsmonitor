@@ -653,7 +653,7 @@ def save_analysis_results(db: Database, news_id: int, analysis_json: str):
 
 
 def analyze_articles(db: Database, mode: str = 'unanalyzed', article_id: int = None,
-                     relevance_threshold: float = 0.50):
+                     relevance_threshold: float = 0.50, telegram=None):
     """
     Główna funkcja do analizy artykułów z wstępną filtracją istotności.
 
@@ -762,10 +762,22 @@ def analyze_articles(db: Database, mode: str = 'unanalyzed', article_id: int = N
                 analysis_json = analyze_summary(article.title, article.content or "")
             else:
                 analysis_json = analyze_news(article.title, article.content or "")
+                analysis_data = json.loads(analysis_json)
+                tickers = analysis_data.get('related_tickers', [])
+                if tickers:
+                    telegram.send_analysis_alert(ticker=','.join(tickers),
+                                                 title=article.title,
+                                                 reason=analysis_data.get('reason'),
+                                                 impact=analysis_data.get('ticker_inpact'),
+                                                 confidence=analysis_data.get('confidence')
+                                                 )
+                elif analysis_data.get('sector'):
+                    pass
             print(f"    Otrzymano odpowiedź: {analysis_json[:100]}...")
 
             # Zapisz wyniki
             print(f"[3/3] Zapisuję wyniki do bazy danych...")
+
             analysis_id = save_analysis_results(db, article.id, analysis_json)
             print(f"✓ Pomyślnie zapisano analizę (analysis_id={analysis_id})")
 
