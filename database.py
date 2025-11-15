@@ -1,5 +1,6 @@
 """Database models and operations."""
 
+import os
 from sqlalchemy import create_engine, Column, Integer, String, DateTime, Date, Index, ForeignKey, Float
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, relationship
@@ -137,9 +138,24 @@ class NewsNotAnalyzed(Base):
 class Database:
     """Database operations manager."""
     
-    def __init__(self, db_path: str):
+    def __init__(self):
         """Initialize database connection."""
-        self.engine = create_engine(f'sqlite:///{db_path}', echo=False)
+        host = os.getenv('DB_HOST', 'localhost')
+        port = os.getenv('DB_PORT', '5432')
+        user = os.getenv('DB_USER', 'stock')
+        password = os.getenv('DB_PASSWORD', 'stock')
+        database = os.getenv('DB_NAME', 'stock')
+        schema = os.getenv('DB_SCHEMA', 'stock')
+        
+        db_url = f'postgresql://{user}:{password}@{host}:{port}/{database}'
+        
+        self.engine = create_engine(
+            db_url,
+            echo=False,
+            connect_args={},
+            execution_options={"schema_translate_map": {schema: schema}}
+        )
+        Base.metadata.schema = schema
         Base.metadata.create_all(self.engine)
         self.Session = sessionmaker(bind=self.engine)
     
