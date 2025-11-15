@@ -591,11 +591,7 @@ def save_analysis_results(db: Database, news_id: int, analysis_json: str):
     session = db.Session()
     try:
         # Usuń potencjalny blok markdown z JSON
-        cleaned_json = analysis_json.strip()
-        if cleaned_json.startswith('```'):
-            # Znajdź początek i koniec bloku JSON
-            lines = cleaned_json.split('\n')
-            cleaned_json = '\n'.join(lines[1:-1]) if len(lines) > 2 else cleaned_json
+        cleaned_json = cleanJson(analysis_json)
 
         # Parsuj JSON
         print(f"DEBUG: Parsing JSON: {cleaned_json[:200]}...")
@@ -652,6 +648,15 @@ def save_analysis_results(db: Database, news_id: int, analysis_json: str):
         session.close()
 
 
+def cleanJson(analysis_json: str) -> str:
+    cleaned_json = analysis_json.strip()
+    if cleaned_json.startswith('```'):
+        # Znajdź początek i koniec bloku JSON
+        lines = cleaned_json.split('\n')
+        cleaned_json = '\n'.join(lines[1:-1]) if len(lines) > 2 else cleaned_json
+    return cleaned_json
+
+
 def analyze_articles(db: Database, mode: str = 'unanalyzed', article_id: int = None,
                      relevance_threshold: float = 0.50, telegram=None):
     """
@@ -690,9 +695,11 @@ def analyze_articles(db: Database, mode: str = 'unanalyzed', article_id: int = N
     if not articles:
         print("Brak artykułów do analizy")
         return {"status": "success", "message": "Brak artykułów do analizy",
+                "not_relevant" : 0,
                 "analyzed": 0}
 
     results = []
+    analysis_json = None
     for article in articles:
         try:
             print(f"\n=== Przetwarzam artykuł ID={article.id}: {article.title[:50]}...")
@@ -760,19 +767,49 @@ def analyze_articles(db: Database, mode: str = 'unanalyzed', article_id: int = N
             print(f"[2/3] Wysyłam zapytanie do OpenAI...")
             if has_summary:
                 analysis_json = analyze_summary(article.title, article.content or "")
+                analysis_datas = json.loads(cleanJson(analysis_json))
+                for analysis_data in analysis_datas:
+                    tickers = analysis_data.get('related_tickers', [])
+                    ticker_impact = analysis_data.get('ticker_impact')
+                    sector = analysis_data.get('sector')
+                    sector_impact = analysis_data.get('sector_impact')
+                    if tickers and ticker_impact and ticker_impact != 0:
+                        telegram.send_analysis_alert(ticker=','.join(tickers),
+                                                     title=article.title,
+                                                     reason=analysis_data.get('reason'),
+                                                     impact=ticker_impact,
+                                                     confidence=analysis_data.get(
+                                                         'confidence')
+                                                     )
+                    elif sector and sector_impact:
+                        telegram.send_sector_alert(sector=sector,
+                                                   title=article.title,
+                                                   reason=analysis_data.get('reason'),
+                                                   impact=sector_impact,
+                                                   confidence=analysis_data.get(
+                                                       'confidence')
+                                                   )
+
             else:
                 analysis_json = analyze_news(article.title, article.content or "")
-                analysis_data = json.loads(analysis_json)
+                analysis_data = json.loads(cleanJson(analysis_json))
                 tickers = analysis_data.get('related_tickers', [])
+                sector_impact = analysis_data.get('sector_impact')
+                sector = analysis_data.get('sector')
                 if tickers:
                     telegram.send_analysis_alert(ticker=','.join(tickers),
                                                  title=article.title,
                                                  reason=analysis_data.get('reason'),
-                                                 impact=analysis_data.get('ticker_inpact'),
+                                                 impact=analysis_data.get('ticker_impact'),
                                                  confidence=analysis_data.get('confidence')
                                                  )
-                elif analysis_data.get('sector'):
-                    pass
+                elif sector:
+                    telegram.send_sector_alert(sector=sector,
+                                                 title=article.title,
+                                                 reason=analysis_data.get('reason'),
+                                                 impact=sector_impact,
+                                                 confidence=analysis_data.get('confidence')
+                                                 )
             print(f"    Otrzymano odpowiedź: {analysis_json[:100]}...")
 
             # Zapisz wyniki
@@ -789,7 +826,7 @@ def analyze_articles(db: Database, mode: str = 'unanalyzed', article_id: int = N
                 "relevance_score": relevance_score
             })
         except Exception as e:
-            print(f"✗ BŁĄD podczas analizy artykułu ID={article.id}: {str(e)}")
+            print(f"✗ BŁĄD podczas analizy artykułu ID={article.id}, json={analysis_json}: {str(e)}")
             import traceback
             traceback.print_exc()
             results.append({
