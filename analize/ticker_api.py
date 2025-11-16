@@ -38,7 +38,7 @@ HTML_TEMPLATE = """
 </head>
 <body>
     <div id="root"></div>
-
+    
     <script type="text/babel">
         const { useState, useEffect } = React;
 
@@ -273,9 +273,10 @@ HTML_TEMPLATE = """
 
                                     {/* Summary */}
                                     {analysis.summary && (
-                                      <p className="text-sm text-gray-700 leading-relaxed">
-                                        {analysis.summary}
-                                      </p>
+                                      <div 
+                                        className="text-sm text-gray-700 leading-relaxed"
+                                        dangerouslySetInnerHTML={%raw%}{{ __html: analysis.summary }}{%endraw%}
+                                      />
                                     )}
                                   </div>
                                 </div>
@@ -298,12 +299,10 @@ HTML_TEMPLATE = """
 </html>
 """
 
-
 @app.route('/')
 def index():
     """Główna strona aplikacji"""
     return render_template_string(HTML_TEMPLATE)
-
 
 @app.route('/api/tickers')
 def get_tickers():
@@ -347,6 +346,53 @@ def get_tickers():
 
     return jsonify(tickers)
 
+def format_summary(summary_json):
+    """Konwertuje JSON summary na human-friendly opis"""
+    import json
+
+    try:
+        if isinstance(summary_json, str):
+            data = json.loads(summary_json)
+        else:
+            data = summary_json
+
+        # Podstawowy opis z reason
+        description = data.get('reason', 'Brak szczegółowego opisu.')
+
+        # Dodaj informacje o rekomendacji brokerskiej (jeśli są)
+        if data.get('brokerage_house'):
+            parts = [f"<strong>Dom maklerski {data['brokerage_house']}</strong>"]
+
+            if data.get('price_recomendation'):
+                parts.append(f"Rekomendacja: <strong>{data['price_recomendation']}</strong>")
+
+            if data.get('price_old') and data.get('price_new'):
+                parts.append(f"Zmiana ceny docelowej: {data['price_old']} → {data['price_new']}")
+            elif data.get('price_new'):
+                parts.append(f"Cena docelowa: {data['price_new']}")
+
+            if data.get('price_comment'):
+                parts.append(data['price_comment'])
+
+            description = '<br>'.join(parts)
+
+        # Dodaj informacje o typie i sektorze
+        metadata = []
+        if data.get('typ'):
+            metadata.append(f"Typ: {data['typ']}")
+        if data.get('sector'):
+            metadata.append(f"Sektor: {data['sector']}")
+        if data.get('occasion'):
+            metadata.append(f"Horyzont: {data['occasion']}")
+
+        if metadata:
+            description += f"<br><small class='text-gray-500'>({' | '.join(metadata)})</small>"
+
+        return description
+
+    except (json.JSONDecodeError, TypeError):
+        # Jeśli to nie jest JSON, zwróć jako tekst
+        return summary_json if summary_json else 'Brak opisu'
 
 @app.route('/api/analyses/<ticker>')
 def get_analyses(ticker):
@@ -384,11 +430,10 @@ def get_analyses(ticker):
                 'impact': float(row[4]) if row[4] else 0,
                 'confidence': float(row[5]) if row[5] else 0,
                 'occasion': row[6],
-                'summary': row[7]
+                'summary': format_summary(row[7])
             })
 
     return jsonify(analyses)
-
 
 if __name__ == '__main__':
     print("🚀 Uruchamiam dashboard...")
