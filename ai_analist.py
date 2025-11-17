@@ -184,18 +184,11 @@ def save_not_analyzed(db: Database, news_id: int, reason: str, relevance_score: 
     """
     session = db.Session()
     try:
-        # Sprawdź czy tabela news_not_analyzed istnieje, jeśli nie - utwórz
-        # (zakładam, że masz odpowiednią klasę modelu w database.py)
-
-
-        # Jeśli nie masz modelu, dodaj go do database.py jako:
-
-
-        # Na razie prosty zapis
         session.execute(
             text("""
-            INSERT OR IGNORE INTO news_not_analyzed (news_id, reason, relevance_score)
+            INSERT INTO news_not_analyzed (news_id, reason, relevance_score)
             VALUES (:news_id, :reason, :relevance_score)
+            ON CONFLICT (news_id) DO NOTHING
             """),
             {"news_id": news_id, "reason": reason, "relevance_score": relevance_score}
         )

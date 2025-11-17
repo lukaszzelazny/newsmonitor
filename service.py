@@ -42,7 +42,7 @@ class NewsScrapingService:
     def __init__(self):
         """Inicjalizacja serwisu."""
         self.config = Config()
-        self.db = Database(self.config.db_path)
+        self.db = Database()
         self.telegram = TelegramNotifier(
             token=os.getenv('TELEGRAM_BOT_TOKEN'),
             chat_id=os.getenv('TELEGRAM_CHAT_ID')
@@ -51,7 +51,6 @@ class NewsScrapingService:
         # Interwały czasowe (w minutach) z .env
         self.scrape_si_interval = int(os.getenv('SCRAPE_SI_INTERVAL', '30'))
         self.scrape_sir_interval = int(os.getenv('SCRAPE_SIR_INTERVAL', '30'))
-        self.analyze_interval = int(os.getenv('ANALYZE_INTERVAL', '35'))
         self.report_interval = int(os.getenv('REPORT_INTERVAL', '1440'))  # 24h
         self.patterns_refresh_interval = int(
             os.getenv('PATTERNS_REFRESH_INTERVAL', '1440'))  # 24h
@@ -66,7 +65,7 @@ class NewsScrapingService:
         logger.info(f"Baza danych: {self.config.db_path}")
         logger.info(f"Interwał SI (news): {self.scrape_si_interval} min")
         logger.info(f"Interwał SIR (rekomendacje): {self.scrape_sir_interval} min")
-        logger.info(f"Interwał analizy AI: {self.analyze_interval} min")
+        logger.info(f"Analiza AI: automatycznie po scrapowaniu")
         logger.info(f"Interwał raportu: {self.report_interval} min")
         logger.info(
             f"Interwał odświeżania wzorców: {self.patterns_refresh_interval} min")
@@ -104,6 +103,10 @@ class NewsScrapingService:
             # Wyślij powiadomienie jeśli są nowe artykuły
             if stats['new_articles'] > 0:
                 self.telegram.send_message(message)
+                
+                # Automatycznie uruchom analizę AI
+                logger.info("🤖 Uruchamiam analizę AI dla nowych artykułów...")
+                self.analyze_unanalyzed()
 
         except Exception as e:
             error_msg = f"❌ Błąd podczas scrapowania SI: {str(e)}"
@@ -289,15 +292,12 @@ class NewsScrapingService:
 
     def setup_schedule(self):
         """Konfiguruje harmonogram zadań."""
-        # Scrapowanie SI (news)
+        # Scrapowanie SI (news) - analiza uruchamia się automatycznie po scrapowaniu
         schedule.every(self.scrape_si_interval).minutes.do(self.scrape_si_news)
 
         # Scrapowanie SIR (rekomendacje)
         schedule.every(self.scrape_sir_interval).minutes.do(
             self.scrape_sir_recommendations)
-
-        # Analiza AI
-        schedule.every(self.analyze_interval).minutes.do(self.analyze_unanalyzed)
 
         # Raport dzienny
         schedule.every(self.report_interval).minutes.do(self.generate_daily_report)
@@ -317,7 +317,7 @@ class NewsScrapingService:
             f"⚙️ Konfiguracja:\n"
             f"• SI: co {self.scrape_si_interval} min\n"
             f"• SIR: co {self.scrape_sir_interval} min\n"
-            f"• AI: co {self.analyze_interval} min\n"
+            f"• AI: automatycznie po SI\n"
             f"• Raport: co {self.report_interval} min"
         )
 
@@ -326,10 +326,14 @@ class NewsScrapingService:
 
         # Wykonaj pierwsze zadania natychmiast
         logger.info("Wykonuję pierwsze zadania...")
-        self.scrape_si_news()
-        self.scrape_sir_recommendations()
-        time.sleep(60)  # Poczekaj minutę przed analizą
+        
+        # Najpierw przeanalizuj zaległe artykuły (jeśli są)
+        logger.info("Sprawdzam zaległe artykuły do analizy...")
         self.analyze_unanalyzed()
+        
+        # Następnie scrapuj nowe
+        self.scrape_si_news()  # To automatycznie uruchomi analizę jeśli będą nowe artykuły
+        self.scrape_sir_recommendations()
 
         # Główna pętla
         logger.info("✅ Serwis działa - oczekuję na zaplanowane zadania...")
