@@ -7,7 +7,7 @@ services:
     restart: unless-stopped
     volumes:
       # Montuj bazę danych (persistent storage)
-      - ./data:/app/data
+      # - ./data:/app/data
       # Montuj logi
       - ./logs:/app/logs
       # Montuj patterns.json - możesz go edytować z zewnątrz
@@ -16,6 +16,8 @@ services:
       - ./.env:/app/.env:ro
     environment:
       - TZ=Europe/Warsaw
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     networks:
       - news-network
     # Health check

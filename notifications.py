@@ -80,7 +80,7 @@ class TelegramNotifier:
         Returns:
             True jeśli wysłano pomyślnie
         """
-        if abs(impact) < 0.6:  # Wysyłaj tylko dla silnych sygnałów
+        if not impact:  # Wysyłaj tylko dla silnych sygnałów
             return False
 
         emoji = "🟢" if impact > 0 else "🔴"
@@ -111,7 +111,7 @@ class TelegramNotifier:
         Returns:
             True jeśli wysłano pomyślnie
         """
-        if abs(impact) < 0.6:  # Wysyłaj tylko dla silnych sygnałów
+        if not impact:  # Wysyłaj tylko dla silnych sygnałów
             return False
 
         emoji = "📈" if impact > 0 else "📉"
