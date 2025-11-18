@@ -30,31 +30,19 @@ def get_db_engine():
 engine, schema = get_db_engine()
 
 
-# Cache dla cen z Yahoo Finance (żeby nie pobierać za każdym razem)
+# Cache dla cen z Yahoo Finance
 @lru_cache(maxsize=1000)
 def get_current_price(ticker_symbol):
-    """
-    Pobiera aktualną cenę tickera z Yahoo Finance
-
-    Args:
-        ticker_symbol: Symbol tickera (np. 'CDR.WA' dla GPW, 'AAPL' dla US)
-
-    Returns:
-        float: Aktualna cena lub None jeśli nie znaleziono
-    """
+    """Pobiera aktualną cenę tickera z Yahoo Finance"""
     try:
-        # Polskie spółki mają suffix .WA (Warsaw)
         if len(ticker_symbol) <= 4 and ticker_symbol.isupper():
             yf_symbol = f"{ticker_symbol}.WA"
         else:
             yf_symbol = ticker_symbol
 
         ticker = yf.Ticker(yf_symbol)
-
-        # Spróbuj pobrać aktualną cenę
         info = ticker.info
 
-        # Różne możliwe klucze dla ceny
         price = (
             info.get('currentPrice') or
             info.get('regularMarketPrice') or
@@ -64,7 +52,6 @@ def get_current_price(ticker_symbol):
         if price:
             return float(price)
 
-        # Jeśli info nie działa, spróbuj historycznych danych
         hist = ticker.history(period='1d')
         if not hist.empty:
             return float(hist['Close'].iloc[-1])
@@ -82,17 +69,10 @@ def parse_price(price_str):
         return None
 
     try:
-        # Usuń białe znaki
         price_clean = str(price_str).strip()
-
-        # Usuń waluty (PLN, zł, USD, EUR itp.) i inne tekst
         price_clean = price_clean.replace('PLN', '').replace('zł', '').replace('USD', '').replace('EUR', '')
         price_clean = price_clean.replace('$', '').replace('€', '').strip()
-
-        # Zamień przecinek na kropkę (format polski -> międzynarodowy)
         price_clean = price_clean.replace(',', '.')
-
-        # Usuń wszystko oprócz cyfr i kropki
         price_clean = ''.join(c for c in price_clean if c.isdigit() or c == '.')
 
         if price_clean:
@@ -111,10 +91,8 @@ def format_summary(summary_json):
         else:
             data = summary_json
 
-        # Podstawowy opis z reason
         description = data.get('reason', 'Brak szczegółowego opisu.')
 
-        # Dodaj informacje o rekomendacji brokerskiej (jeśli są)
         if data.get('brokerage_house'):
             parts = [f"<strong>Dom maklerski {data['brokerage_house']}</strong>"]
 
@@ -131,7 +109,6 @@ def format_summary(summary_json):
 
             description = '<br>'.join(parts)
 
-        # Dodaj informacje o typie i sektorze
         metadata = []
         if data.get('typ'):
             metadata.append(f"Typ: {data['typ']}")
@@ -146,11 +123,10 @@ def format_summary(summary_json):
         return description
 
     except (json.JSONDecodeError, TypeError):
-        # Jeśli to nie jest JSON, zwróć jako tekst
         return summary_json if summary_json else 'Brak opisu'
 
 
-# HTML Template z React aplikacją
+# HTML Template z React aplikacją - NAPRAWIONY
 HTML_TEMPLATE = """
 <!DOCTYPE html>
 <html lang="pl">
@@ -159,14 +135,15 @@ HTML_TEMPLATE = """
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Analiza Sentymentu Tickerów</title>
     <script src="https://cdn.tailwindcss.com"></script>
-    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
-    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
 </head>
-<body>
+<body class="bg-gray-50">
     <div id="root"></div>
     
     <script type="text/babel">
+    {% raw %}
         const { useState, useEffect } = React;
 
         const TickerDashboard = () => {
@@ -472,7 +449,7 @@ HTML_TEMPLATE = """
                                           {analysis.summary && (
                                             <div 
                                               className="text-sm text-gray-700 leading-relaxed"
-                                              dangerouslySetInnerHTML={%raw%}{{ __html: analysis.summary }}{%endraw%}
+                                              dangerouslySetInnerHTML={{ __html: analysis.summary }}
                                             />
                                           )}
                                         </div>
@@ -563,7 +540,423 @@ HTML_TEMPLATE = """
           );
         };
 
-        ReactDOM.render(<TickerDashboard />, document.getElementById('root'));
+        // Renderowanie z error boundary
+        try {
+          const root = ReactDOM.createRoot(document.getElementById('root'));
+          root.render(<TickerDashboard />);
+        } catch (error) {
+          console.error('React render error:', error);
+          document.getElementById('root').innerHTML = '<div style="padding: 20px; color: red;">Błąd renderowania React: ' + error.message + '</div>';
+        }
+    </script>
+======= REPLACE
+    <script type="text/babel">
+    {% raw %}
+        const { useState, useEffect } = React;
+
+        const TickerDashboard = () => {
+          const [tickers, setTickers] = useState([]);
+          const [selectedTicker, setSelectedTicker] = useState(null);
+          const [analyses, setAnalyses] = useState([]);
+          const [brokerageAnalyses, setBrokerageAnalyses] = useState([]);
+          const [loading, setLoading] = useState(false);
+          const [searchTerm, setSearchTerm] = useState('');
+          const [days, setDays] = useState(30);
+          const [sortBy, setSortBy] = useState('mentions');
+
+          useEffect(() => {
+            fetchTickers();
+          }, [days]);
+
+          useEffect(() => {
+            if (selectedTicker) {
+              fetchAnalyses(selectedTicker.ticker);
+              fetchBrokerageAnalyses(selectedTicker.ticker);
+            }
+          }, [selectedTicker]);
+
+          const fetchTickers = async () => {
+            try {
+              const response = await fetch(`/api/tickers?days=${days}`);
+              const data = await response.json();
+              setTickers(data);
+            } catch (error) {
+              console.error('Error fetching tickers:', error);
+            }
+          };
+
+          const fetchAnalyses = async (ticker) => {
+            setLoading(true);
+            try {
+              const response = await fetch(`/api/analyses/${ticker}?days=${days}`);
+              const data = await response.json();
+              setAnalyses(data);
+            } catch (error) {
+              console.error('Error fetching analyses:', error);
+            } finally {
+              setLoading(false);
+            }
+          };
+
+          const fetchBrokerageAnalyses = async (ticker) => {
+            try {
+              const response = await fetch(`/api/brokerage/${ticker}?days=${days}`);
+              const data = await response.json();
+              setBrokerageAnalyses(data);
+            } catch (error) {
+              console.error('Error fetching brokerage analyses:', error);
+            }
+          };
+
+          const filteredTickers = tickers.filter(t => 
+            t.ticker.toLowerCase().includes(searchTerm.toLowerCase()) ||
+            (t.company_name && t.company_name.toLowerCase().includes(searchTerm.toLowerCase()))
+          );
+
+          const sortedTickers = [...filteredTickers].sort((a, b) => {
+            if (sortBy === 'impact') {
+              return b.avg_sentiment - a.avg_sentiment;
+            }
+            return b.mentions - a.mentions;
+          });
+
+          const getSentimentColor = (sentiment) => {
+            const val = Math.abs(sentiment);
+            if (val < 0.05) return 'text-gray-500';
+            if (sentiment > 0.3) return 'text-green-600';
+            if (sentiment > 0) return 'text-green-400';
+            if (sentiment > -0.3) return 'text-yellow-500';
+            return 'text-red-500';
+          };
+
+          const getSentimentBg = (sentiment) => {
+            const val = Math.abs(sentiment);
+            if (val < 0.05) return 'bg-gray-100';
+            if (sentiment > 0.3) return 'bg-green-100';
+            if (sentiment > 0) return 'bg-green-50';
+            if (sentiment > -0.3) return 'bg-yellow-50';
+            return 'bg-red-50';
+          };
+
+          const getRecommendationColor = (recommendation) => {
+            if (!recommendation) return 'text-gray-600';
+            const rec = recommendation.toLowerCase();
+            if (rec.includes('kupuj') || rec.includes('buy') || rec.includes('accumulate')) {
+              return 'text-green-600 font-bold';
+            }
+            if (rec.includes('trzymaj') || rec.includes('hold') || rec.includes('neutral')) {
+              return 'text-yellow-600 font-bold';
+            }
+            if (rec.includes('sprzedaj') || rec.includes('sell') || rec.includes('reduce')) {
+              return 'text-red-600 font-bold';
+            }
+            return 'text-gray-600';
+          };
+
+          const getUpsideColor = (upside) => {
+            if (upside === null || upside === undefined) return 'text-gray-600';
+            if (upside > 30) return 'text-green-700 font-bold';
+            if (upside > 15) return 'text-green-600 font-semibold';
+            if (upside > 5) return 'text-green-500';
+            if (upside > -5) return 'text-gray-600';
+            if (upside > -15) return 'text-red-500';
+            if (upside > -30) return 'text-red-600 font-semibold';
+            return 'text-red-700 font-bold';
+          };
+
+          const getUpsideBg = (upside) => {
+            if (upside === null || upside === undefined) return 'bg-gray-50';
+            if (upside > 20) return 'bg-green-100';
+            if (upside > 10) return 'bg-green-50';
+            if (upside > -10) return 'bg-gray-50';
+            if (upside > -20) return 'bg-red-50';
+            return 'bg-red-100';
+          };
+
+          const getImpactColor = (impact) => {
+            const val = Math.abs(impact);
+            if (val < 0.05) return 'bg-gray-400';
+            if (impact > 0.5) return 'bg-green-500';
+            if (impact > 0.2) return 'bg-green-400';
+            if (impact > -0.2) return 'bg-yellow-400';
+            if (impact > -0.5) return 'bg-orange-400';
+            return 'bg-red-500';
+          };
+
+          return (
+            <div className="min-h-screen bg-gray-50 p-6">
+              <div className="max-w-7xl mx-auto">
+                <div className="flex items-center justify-between mb-6">
+                  <h1 className="text-3xl font-bold text-gray-900">
+                    Analiza Sentymentu Tickerów
+                  </h1>
+                  <div className="flex items-center gap-4">
+                    <div className="flex items-center gap-2">
+                      <label className="text-sm text-gray-600">Okres:</label>
+                      <select 
+                        value={days} 
+                        onChange={(e) => setDays(Number(e.target.value))}
+                        className="px-3 py-2 border border-gray-300 rounded-lg"
+                      >
+                        <option value="7">7 dni</option>
+                        <option value="14">14 dni</option>
+                        <option value="30">30 dni</option>
+                        <option value="60">60 dni</option>
+                        <option value="90">90 dni</option>
+                      </select>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <label className="text-sm text-gray-600">Sortuj:</label>
+                      <select 
+                        value={sortBy} 
+                        onChange={(e) => setSortBy(e.target.value)}
+                        className="px-3 py-2 border border-gray-300 rounded-lg"
+                      >
+                        <option value="mentions">Po wzmianach</option>
+                        <option value="impact">Po sile impactu</option>
+                      </select>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-12 gap-6">
+                  <div className="col-span-4 bg-white rounded-lg shadow-lg p-4">
+                    <div className="mb-4">
+                      <input
+                        type="text"
+                        placeholder="Szukaj tickera lub firmy..."
+                        className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                        value={searchTerm}
+                        onChange={(e) => setSearchTerm(e.target.value)}
+                      />
+                    </div>
+
+                    <div className="space-y-2 max-h-[calc(100vh-200px)] overflow-y-auto">
+                      {sortedTickers.map((ticker) => (
+                        <div
+                          key={ticker.ticker}
+                          onClick={() => setSelectedTicker(ticker)}
+                          className={`p-3 rounded-lg cursor-pointer transition-all ${
+                            selectedTicker?.ticker === ticker.ticker
+                              ? 'bg-blue-50 border-2 border-blue-500'
+                              : 'bg-gray-50 hover:bg-gray-100 border-2 border-transparent'
+                          }`}
+                        >
+                          <div className="flex items-center justify-between">
+                            <div className="flex-1">
+                              <div className="flex items-center gap-2">
+                                <span className="font-bold text-lg text-gray-900">
+                                  {ticker.ticker}
+                                </span>
+                              </div>
+                              <p className="text-sm text-gray-600">{ticker.company_name || 'Brak nazwy'}</p>
+                              <p className="text-xs text-gray-500">{ticker.sector || 'Brak sektora'}</p>
+                            </div>
+                            <div className="text-right">
+                              <div className={`text-lg font-bold ${getSentimentColor(ticker.avg_sentiment)}`}>
+                                {ticker.avg_sentiment > 0 ? '+' : ''}{Number(ticker.avg_sentiment).toFixed(2)}
+                              </div>
+                              <div className="text-xs text-gray-500">
+                                {ticker.mentions} wzmianek
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="col-span-8 bg-white rounded-lg shadow-lg p-6">
+                    {!selectedTicker ? (
+                      <div className="flex items-center justify-center h-full text-gray-400">
+                        <div className="text-center">
+                          <p className="text-xl">Wybierz ticker z listy po lewej</p>
+                        </div>
+                      </div>
+                    ) : (
+                      <div>
+                        <div className={`p-4 rounded-lg mb-6 ${getSentimentBg(selectedTicker.avg_sentiment)}`}>
+                          <div className="flex items-center justify-between">
+                            <div>
+                              <h2 className="text-2xl font-bold text-gray-900">
+                                {selectedTicker.ticker} - {selectedTicker.company_name || 'Brak nazwy'}
+                              </h2>
+                              <p className="text-gray-600">{selectedTicker.sector || 'Brak sektora'}</p>
+                            </div>
+                            <div className="text-right">
+                              <div className={`text-3xl font-bold ${getSentimentColor(selectedTicker.avg_sentiment)}`}>
+                                {selectedTicker.avg_sentiment > 0 ? '+' : ''}{Number(selectedTicker.avg_sentiment).toFixed(2)}
+                              </div>
+                              <div className="text-sm text-gray-600">
+                                Średni sentyment
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+
+                        {loading ? (
+                          <div className="flex items-center justify-center py-12">
+                            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500"></div>
+                          </div>
+                        ) : (
+                          <div className="space-y-4 max-h-[calc(100vh-350px)] overflow-y-auto">
+                            <div>
+                              <h3 className="text-lg font-semibold text-gray-900 mb-3">
+                                Analizy newsowe ({analyses.length})
+                              </h3>
+                              {analyses.length === 0 ? (
+                                <p className="text-gray-500 text-sm">Brak analiz newsowych</p>
+                              ) : (
+                                <div className="space-y-3">
+                                  {analyses.map((analysis, idx) => (
+                                    <div
+                                      key={idx}
+                                      className="border border-gray-200 rounded-lg p-4 hover:shadow-md transition-shadow"
+                                    >
+                                      <div className="flex items-start gap-4">
+                                        <div className="flex-shrink-0">
+                                          <div className={`w-3 h-24 ${getImpactColor(analysis.impact)} rounded`}></div>
+                                        </div>
+
+                                        <div className="flex-1">
+                                          <div className="flex items-start justify-between mb-2">
+                                            <div className="flex-1">
+                                              <h3 className="font-semibold text-gray-900 mb-1">
+                                                {analysis.title}
+                                              </h3>
+                                              <div className="flex items-center gap-3 text-sm text-gray-500">
+                                                <span>{analysis.date}</span>
+                                                <span>•</span>
+                                                <span>{analysis.source}</span>
+                                              </div>
+                                            </div>
+                                          </div>
+
+                                          <div className="flex items-center gap-4 mb-3">
+                                            <div className="flex items-center gap-2">
+                                              <span className="text-sm text-gray-600">Impact:</span>
+                                              <span className={`font-bold ${getSentimentColor(analysis.impact)}`}>
+                                                {analysis.impact > 0 ? '+' : ''}{Number(analysis.impact).toFixed(2)}
+                                              </span>
+                                            </div>
+                                            <div className="flex items-center gap-2">
+                                              <span className="text-sm text-gray-600">Confidence:</span>
+                                              <span className="font-bold text-blue-600">
+                                                {(Number(analysis.confidence) * 100).toFixed(0)}%
+                                              </span>
+                                            </div>
+                                            {analysis.occasion && (
+                                              <div className="flex items-center gap-2">
+                                                <span className="px-2 py-1 bg-blue-100 text-blue-700 text-xs rounded-full">
+                                                  {analysis.occasion}
+                                                </span>
+                                              </div>
+                                            )}
+                                          </div>
+
+                                          {analysis.summary && (
+                                            <div 
+                                              className="text-sm text-gray-700 leading-relaxed"
+                                              dangerouslySetInnerHTML={{ __html: analysis.summary }}
+                                            />
+                                          )}
+                                        </div>
+                                      </div>
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+
+                            {brokerageAnalyses.length > 0 && (
+                              <div className="mt-6 pt-6 border-t border-gray-200">
+                                <h3 className="text-lg font-semibold text-gray-900 mb-3">
+                                  Rekomendacje domów maklerskich ({brokerageAnalyses.length})
+                                </h3>
+                                <div className="overflow-x-auto">
+                                  <table className="min-w-full divide-y divide-gray-200">
+                                    <thead className="bg-gray-50">
+                                      <tr>
+                                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                          Data
+                                        </th>
+                                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                          Dom maklerski
+                                        </th>
+                                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                          Rekomendacja
+                                        </th>
+                                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                          Cena obecna
+                                        </th>
+                                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                          Cena docelowa
+                                        </th>
+                                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                          Zmiana celu %
+                                        </th>
+                                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                          Upside %
+                                        </th>
+                                      </tr>
+                                    </thead>
+                                    <tbody className="bg-white divide-y divide-gray-200">
+                                      {brokerageAnalyses.map((brokerage, idx) => (
+                                        <tr key={idx} className={getUpsideBg(brokerage.upside_percent)}>
+                                          <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-700">
+                                            {brokerage.date}
+                                          </td>
+                                          <td className="px-4 py-3 text-sm text-gray-900 font-medium">
+                                            {brokerage.brokerage_house}
+                                          </td>
+                                          <td className={`px-4 py-3 whitespace-nowrap text-sm ${getRecommendationColor(brokerage.recommendation)}`}>
+                                            {brokerage.recommendation || '-'}
+                                          </td>
+                                          <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-900 font-semibold">
+                                            {brokerage.current_price 
+                                              ? `${brokerage.current_price.toFixed(2)}`
+                                              : (brokerage.price_old ? brokerage.price_old.toFixed(2) : '-')}
+                                          </td>
+                                          <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-900 font-semibold">
+                                            {brokerage.price_new ? brokerage.price_new.toFixed(2) : '-'}
+                                          </td>
+                                          <td className={`px-4 py-3 whitespace-nowrap text-sm ${getUpsideColor(brokerage.price_change_percent)}`}>
+                                            {brokerage.price_change_percent !== null 
+                                              ? `${brokerage.price_change_percent > 0 ? '+' : ''}${brokerage.price_change_percent.toFixed(1)}%`
+                                              : '-'}
+                                          </td>
+                                          <td className={`px-4 py-3 whitespace-nowrap text-sm ${getUpsideColor(brokerage.upside_percent)}`}>
+                                            {brokerage.upside_percent !== null 
+                                              ? `${brokerage.upside_percent > 0 ? '+' : ''}${brokerage.upside_percent.toFixed(1)}%`
+                                              : '-'}
+                                          </td>
+                                        </tr>
+                                      ))}
+                                    </tbody>
+                                  </table>
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </div>
+          );
+        };
+
+        // Renderowanie z error boundary
+        try {
+          const root = ReactDOM.createRoot(document.getElementById('root'));
+          root.render(<TickerDashboard />);
+        } catch (error) {
+          console.error('React render error:', error);
+          document.getElementById('root').innerHTML = '<div style="padding: 20px; color: red;">Błąd renderowania React: ' + error.message + '</div>';
+        }
+    {% endraw %}
     </script>
 </body>
 </html>
@@ -664,7 +1057,6 @@ def get_brokerage_analyses(ticker):
     """Endpoint zwracający rekomendacje brokerskie dla tickera"""
     days = request.args.get('days', 90, type=int)
 
-    # Pobierz aktualną cenę z Yahoo Finance
     current_price = get_current_price(ticker)
 
     query = text(f"""
@@ -690,31 +1082,25 @@ def get_brokerage_analyses(ticker):
         seen_combinations = set()
 
         for row in result:
-            # Parsowanie cen (usuwa waluty i normalizuje format)
             price_old = parse_price(row[2])
             price_new = parse_price(row[3])
             brokerage_house = row[1]
 
-            # Unikalne kombinacje: price_old + price_new + brokerage
             combination_key = (price_old, price_new, brokerage_house)
 
-            # Pomiń duplikaty
             if combination_key in seen_combinations:
                 continue
 
             seen_combinations.add(combination_key)
 
-            # Obliczanie zmian procentowych (stara -> nowa cena docelowa)
             price_change_percent = None
             if price_old and price_new and price_old > 0:
                 price_change_percent = ((price_new - price_old) / price_old) * 100
 
-            # Obliczanie upside (obecna cena -> nowa cena docelowa)
             upside_percent = None
             if price_new and current_price and current_price > 0:
                 upside_percent = ((price_new - current_price) / current_price) * 100
             elif price_new and price_old and price_old > 0:
-                # Fallback: jeśli nie ma current_price, użyj price_old jako przybliżenia
                 upside_percent = ((price_new - price_old) / price_old) * 100
 
             brokerage_analyses.append({
@@ -729,7 +1115,6 @@ def get_brokerage_analyses(ticker):
                 'upside_percent': upside_percent
             })
 
-        # Sortuj po dacie (najnowsze na górze)
         brokerage_analyses.sort(key=lambda x: x['date'] if x['date'] else '1900-01-01', reverse=True)
 
     return jsonify(brokerage_analyses)
