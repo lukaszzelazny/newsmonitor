@@ -218,19 +218,24 @@ Zasady analizy:
    - Jeżeli wiadomość dotyczy konkretnych spółek, zwróć jeden główny ticker oraz ewentualnie inne powiązane.
    - Jeśli brak – zwróć pustą listę: `"related_tickers": []`.
 
-3. **Zwróć szczególną uwagę na wyceny podawane przez domy maklerskie (DM)**:
+3. **WAŻNE - ticker_impact**:
+   - `ticker_impact` MUSI być POJEDYNCZĄ liczbą od -1.0 do +1.0
+   - Reprezentuje ŚREDNI wpływ na wszystkie wymienione spółki
+   - Jeśli spółki mają różny wpływ, oblicz średnią ważoną
+   - NIE używaj obiektu z różnymi wartościami dla każdego tickera
+
+4. **Zwróć szczególną uwagę na wyceny podawane przez domy maklerskie (DM)**:
    - Jeśli występuje nowa wycena, wypisz:
      - nazwę domu maklerskiego,
      - starą wycenę,
      - nową wycenę,
-     - zmianę procentową,
      - rekomendację (np. „kupuj", „neutralnie", „sprzedaj"),
      - krótki komentarz.
    - Jeśli nie ma danych o wycenach – wpisz wartości `null`.
 
-4. **Oceń wpływ wiadomości**:
+5. **Oceń wpływ wiadomości**:
    - Jeśli wiadomość dotyczy spółki lub spółek:
-     - `"ticker_impact"` – liczba od -1.0 do +1.0 (wpływ na kurs, gdzie -1.0 = bardzo negatywny, +1.0 = bardzo pozytywny)
+     - `"ticker_impact"` – POJEDYNCZA liczba od -1.0 do +1.0 (średni wpływ)
      - `"confidence"` – 0.0–1.0 (pewność oceny)
      - `"occasion"` – `"krótkoterminowa"`, `"średnioterminowa"` lub `"długoterminowa"`
      - `"sector"` – nazwa sektora
@@ -244,7 +249,12 @@ Zasady analizy:
    - Jeśli wiadomość jest neutralna:
      - Wszystkie pola wpływu (`ticker_impact`, `sector_impact`, `confidence`, `occasion`, `sector`) mają wartość `null`.
 
-5. **Dodaj krótkie uzasadnienie** w polu `"reason"` – jedno lub dwa zdania.
+6. **Dodaj krótkie uzasadnienie** w polu `"reason"` – jedno lub dwa zdania.
+
+7. **FORMAT ODPOWIEDZI**:
+   - Zwróć TYLKO czysty JSON, bez żadnych komentarzy przed ani po
+   - Bez dodatkowych wyjaśnień w stylu "*(Uwagi: ...)*"
+   - Bez bloków markdown
 
 ---
 
@@ -260,7 +270,7 @@ Zwróć wyłącznie **poprawny JSON** w formacie:
   "typ": "<Sektor / Spółka / Makro / IPO / Neutralna>",
   "related_tickers": ["..."],
   "sector": "<nazwa sektora lub null>",
-  "ticker_impact": <liczba lub null>,
+  "ticker_impact": <POJEDYNCZA liczba lub null>,
   "sector_impact": <liczba lub null>,
   "confidence": <liczba lub null>,
   "occasion": "<typ okazji lub null>",
@@ -274,7 +284,7 @@ Zwróć wyłącznie **poprawny JSON** w formacie:
 """
 
 
-PROMPT_SUMMARY = """
+PROMPT_SUMMARY_FIXED = """
 🧠 Prompt PRO — analiza podsumowania dnia (zbioru newsów)
 
 Jesteś doświadczonym analitykiem giełdowym.
@@ -282,56 +292,67 @@ Twoim zadaniem jest analizować zbiorcze podsumowania wiadomości ekonomicznych,
 
 Tekst, który otrzymasz, może zawierać wiele krótkich newsów lub streszczeń w jednym artykule. Każdy z nich potraktuj jako osobny wpis.
 Dla każdego fragmentu (newsa) zastosuj poniższe zasady analizy i zwróć listę obiektów JSON – po jednym dla każdej istotnej informacji.
+
 Zasady analizy:
 
-Rozpoznaj typ wiadomości:
-🏢 Spółka – dotyczy konkretnego podmiotu lub kilku spółek,
-🏭 Sektor – odnosi się do całej branży (np. banki, energetyka, gaming),
-💰 Debiut / IPO – informacja o wejściu spółki na giełdę,
-📊 Makro / Rynek – dotyczy zjawisk gospodarczych, wskaźników, polityki pieniężnej, cen surowców, decyzji NBP/FED itp.,
-📉 Niepowiązana / Neutralna – nie ma znaczenia dla rynku lub kursów akcji.
+1. **Rozpoznaj typ wiadomości**:
+   - 🏢 Spółka – dotyczy konkretnego podmiotu lub kilku spółek
+   - 🏭 Sektor – odnosi się do całej branży (np. banki, energetyka, gaming)
+   - 💰 Debiut / IPO – informacja o wejściu spółki na giełdę
+   - 📊 Makro / Rynek – dotyczy zjawisk gospodarczych, wskaźników, polityki pieniężnej, cen surowców, decyzji NBP/FED itp.
+   - 📉 Niepowiązana / Neutralna – nie ma znaczenia dla rynku lub kursów akcji
 
-Zidentyfikuj tickery:
+2. **Zidentyfikuj tickery**:
+   - Jeżeli wiadomość dotyczy konkretnych spółek, wypisz ich tickery (np. "related_tickers": ["KGH", "PZU"])
+   - Jeśli brak — zwróć pustą listę: "related_tickers": []
 
-Jeżeli wiadomość dotyczy konkretnych spółek, wypisz ich tickery (np. "related_tickers": ["KGHM", "PZU"]).
-Jeśli brak — zwróć pustą listę: "related_tickers": [].
-Uwzględnij nowe wyceny od domów maklerskich (DM):
-Jeśli występuje informacja o rekomendacji lub zmianie wyceny, wypisz:
+3. **WAŻNE - ticker_impact**:
+   - `ticker_impact` MUSI być POJEDYNCZĄ liczbą od -1.0 do +1.0
+   - Reprezentuje ŚREDNI wpływ na wszystkie wymienione spółki
+   - Jeśli spółki mają różny wpływ, oblicz średnią ważoną
+   - NIE używaj obiektu z różnymi wartościami dla każdego tickera
 
-"brokerage_house" – nazwa domu maklerskiego,
-"price_old" – stara wycena,
-"price_new" – nowa wycena,
-"price_recomendation" – np. "kupuj", "neutralnie", "sprzedaj",
-"price_comment" – krótki opis komentarza,
-"reason" – uzasadnienie wpływu tej zmiany.
+4. **Uwzględnij nowe wyceny od domów maklerskich (DM)**:
+   - Jeśli występuje informacja o rekomendacji lub zmianie wyceny, wypisz:
+     - "brokerage_house" – nazwa domu maklerskiego
+     - "price_old" – stara wycena
+     - "price_new" – nowa wycena
+     - "price_recomendation" – np. "kupuj", "neutralnie", "sprzedaj"
+     - "price_comment" – krótki opis komentarza
+     - "reason" – uzasadnienie wpływu tej zmiany
+   - Jeśli brak danych o wycenach — wpisz wartości null
 
-Jeśli brak danych o wycenach — wpisz wartości null.
-Oceń wpływ wiadomości:
-Jeśli dotyczy spółki/spółek:
+5. **Oceń wpływ wiadomości**:
+   - Jeśli dotyczy spółki/spółek:
+     - "ticker_impact" – POJEDYNCZA liczba od -1.0 do +1.0 (średni wpływ)
+     - "confidence" – liczba od 0.0 do 1.0
+     - "occasion" – "krótkoterminowa", "średnioterminowa", "długoterminowa"
+     - "sector" – nazwa sektora
+     - "sector_impact" – null
+   - Jeśli dotyczy całego sektora:
+     - "sector" – nazwa sektora
+     - "sector_impact" – liczba od -1.0 do +1.0
+     - "confidence" – liczba od 0.0 do 1.0
+     - "occasion" – null
+     - "ticker_impact" – null
+   - Jeśli wiadomość neutralna:
+     - wszystkie pola wpływu (ticker_impact, sector_impact, confidence, occasion, sector) mają wartość null
 
-"ticker_impact" – liczba od -1.0 do +1.0,
-"confidence" – liczba od 0.0 do 1.0,
-"occasion" – "krótkoterminowa", "średnioterminowa", "długoterminowa",
-"sector" – nazwa sektora,
-"sector_impact" – null.
+6. **Dodaj krótkie uzasadnienie** ("reason") – jedno lub dwa zdania wyjaśniające, dlaczego dana informacja może (lub nie może) wpłynąć na rynek
 
-Jeśli dotyczy całego sektora:
-"sector" – nazwa sektora,
-"sector_impact" – liczba od -1.0 do +1.0,
-"confidence" – liczba od 0.0 do 1.0,
-"occasion" – null,
-"ticker_impact" – null.
+7. **FORMAT ODPOWIEDZI**:
+   - Zwróć TYLKO czystą tablicę JSON (array), bez żadnych komentarzy
+   - Bez dodatkowych wyjaśnień poza strukturą JSON
+   - Bez bloków markdown
 
-Jeśli wiadomość neutralna:
-wszystkie pola wpływu (ticker_impact, sector_impact, confidence, occasion, sector) mają wartość null.
-Dodaj krótkie uzasadnienie ("reason") – jedno lub dwa zdania wyjaśniające, dlaczego dana informacja może (lub nie może) wpłynąć na rynek.
-Wejście:
+---
 
+### Wejście:
 Podsumowanie dnia:
 {news_summary_text}
 
-Oczekiwany wynik:
-Zwróć wyłącznie poprawny JSON zawierający listę obiektów – każdy reprezentuje osobny news:
+### Oczekiwany wynik:
+Zwróć wyłącznie tablicę JSON (array) zawierającą obiekty – każdy reprezentuje osobny news:
 
 [
   {{
@@ -379,11 +400,13 @@ def analyze_summary(headline, lead):
         JSON string z listą analiz (array)
     """
     news_summary_text = f"{headline}\n\n{lead}"
-    prompt = PROMPT_SUMMARY.format(news_summary_text=news_summary_text)
+    prompt = PROMPT_SUMMARY_FIXED.format(news_summary_text=news_summary_text)
 
     response = client.chat.completions.create(
-        model="gpt-4.1",
-        messages=[{"role": "user", "content": prompt}]
+        model="gpt-4o",
+        messages=[{"role": "user", "content": prompt}],
+        # UWAGA: Dla tablicy JSON nie używamy response_format
+        # bo wymusza to zwracanie obiektu, nie array
     )
     return response.choices[0].message.content
 
@@ -401,8 +424,9 @@ def analyze_news(headline, lead):
     prompt = PROMPT_NEWS.format(headline=headline, lead=lead)
 
     response = client.chat.completions.create(
-        model="gpt-4.1",
-        messages=[{"role": "user", "content": prompt}]
+        model="gpt-4o",  # Zaktualizowana nazwa modelu
+        messages=[{"role": "user", "content": prompt}],
+        response_format={"type": "json_object"}  # Wymuś JSON
     )
     return response.choices[0].message.content
 
@@ -642,12 +666,51 @@ def save_analysis_results(db: Database, news_id: int, analysis_json: str):
 
 
 def cleanJson(analysis_json: str) -> str:
+    """
+    Czyści JSON z markdown bloków i dodatkowych komentarzy.
+    
+    Args:
+        analysis_json: Surowy string JSON z odpowiedzi API
+        
+    Returns:
+        Wyczyszczony string JSON
+    """
     cleaned_json = analysis_json.strip()
+    
+    # Usuń markdown bloki (```json ... ```)
     if cleaned_json.startswith('```'):
-        # Znajdź początek i koniec bloku JSON
         lines = cleaned_json.split('\n')
-        cleaned_json = '\n'.join(lines[1:-1]) if len(lines) > 2 else cleaned_json
-    return cleaned_json
+        # Znajdź początek i koniec bloku
+        start_idx = 0
+        end_idx = len(lines)
+        
+        for i, line in enumerate(lines):
+            if line.strip().startswith('```'):
+                if start_idx == 0:
+                    start_idx = i + 1
+                else:
+                    end_idx = i
+                    break
+        
+        cleaned_json = '\n'.join(lines[start_idx:end_idx])
+    
+    # Usuń komentarze po JSON (wszystko po zamykającym } lub ])
+    # Szukamy ostatniego } lub ] który kończy główną strukturę
+    cleaned_json = cleaned_json.strip()
+    
+    # Sprawdź czy to array czy obiekt
+    if cleaned_json.startswith('['):
+        # Dla array, szukamy ostatniego ]
+        last_bracket = cleaned_json.rfind(']')
+        if last_bracket != -1:
+            cleaned_json = cleaned_json[:last_bracket + 1]
+    else:
+        # Dla obiektu, szukamy ostatniego }
+        last_brace = cleaned_json.rfind('}')
+        if last_brace != -1:
+            cleaned_json = cleaned_json[:last_brace + 1]
+    
+    return cleaned_json.strip()
 
 
 def analyze_articles(db: Database, mode: str = 'unanalyzed', article_id: int = None,
