@@ -1,5 +1,5 @@
 """
-Flask API dla interaktywnego dashboardu tickerów
+Flask API dla interaktywnego dashboardu tickerów z wykresem kursu
 Uruchom: python ticker_api.py
 Potem otwórz: http://localhost:5000
 
@@ -21,7 +21,6 @@ app = Flask(__name__)
 # Konfiguracja bazy danych
 def get_db_engine():
     db_url = "postgresql:///?service=stock"
-
     engine = create_engine(db_url)
     schema = os.getenv('DB_SCHEMA', 'stock')
     return engine, schema
@@ -61,6 +60,35 @@ def get_current_price(ticker_symbol):
     except Exception as e:
         print(f"Błąd pobierania ceny dla {ticker_symbol}: {e}")
         return None
+
+
+def get_price_history(ticker_symbol, days=90):
+    """Pobiera historię cen tickera"""
+    try:
+        if len(ticker_symbol) <= 4 and ticker_symbol.isupper():
+            yf_symbol = f"{ticker_symbol}.WA"
+        else:
+            yf_symbol = ticker_symbol
+
+        ticker = yf.Ticker(yf_symbol)
+        hist = ticker.history(period=f"{days}d")
+
+        if hist.empty:
+            return []
+
+        price_data = []
+        for date, row in hist.iterrows():
+            price_data.append({
+                'date': date.strftime('%Y-%m-%d'),
+                'price': float(row['Close']),
+                'volume': int(row['Volume']) if 'Volume' in row else 0
+            })
+
+        return price_data
+
+    except Exception as e:
+        print(f"Błąd pobierania historii dla {ticker_symbol}: {e}")
+        return []
 
 
 def parse_price(price_str):
@@ -126,7 +154,7 @@ def format_summary(summary_json):
         return summary_json if summary_json else 'Brak opisu'
 
 
-# HTML Template z React aplikacją - NAPRAWIONY
+# HTML Template z React aplikacją
 HTML_TEMPLATE = """
 <!DOCTYPE html>
 <html lang="pl">
@@ -144,14 +172,185 @@ HTML_TEMPLATE = """
     
     <script type="text/babel">
     {% raw %}
-        const { useState, useEffect } = React;
+        const { useState, useEffect, useRef } = React;
 
-        const TickerDashboard = () => {
+        // Komponent wykresu Canvas
+        function PriceChart({ ticker, priceHistory, brokerageAnalyses }) {
+          const canvasRef = useRef(null);
+
+          useEffect(() => {
+            if (!canvasRef.current || !priceHistory || priceHistory.length === 0) return;
+
+            const canvas = canvasRef.current;
+            const ctx = canvas.getContext('2d');
+            const width = canvas.width;
+            const height = canvas.height;
+
+            ctx.clearRect(0, 0, width, height);
+
+            const prices = priceHistory.map(p => p.price);
+            const minPrice = Math.min(...prices);
+            const maxPrice = Math.max(...prices);
+            const priceRange = maxPrice - minPrice;
+
+            const margin = { top: 20, right: 80, bottom: 40, left: 60 };
+            const chartWidth = width - margin.left - margin.right;
+            const chartHeight = height - margin.top - margin.bottom;
+
+            // Osie
+            ctx.strokeStyle = '#e5e7eb';
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            ctx.moveTo(margin.left, margin.top);
+            ctx.lineTo(margin.left, height - margin.bottom);
+            ctx.lineTo(width - margin.right, height - margin.bottom);
+            ctx.stroke();
+
+            // Siatka i etykiety Y
+            ctx.fillStyle = '#6b7280';
+            ctx.font = '12px sans-serif';
+            const ySteps = 5;
+            for (let i = 0; i <= ySteps; i++) {
+              const y = margin.top + (chartHeight / ySteps) * i;
+              const price = maxPrice - (priceRange / ySteps) * i;
+
+              ctx.strokeStyle = '#f3f4f6';
+              ctx.beginPath();
+              ctx.moveTo(margin.left, y);
+              ctx.lineTo(width - margin.right, y);
+              ctx.stroke();
+
+              ctx.fillStyle = '#6b7280';
+              ctx.textAlign = 'right';
+              ctx.fillText(price.toFixed(2), margin.left - 10, y + 4);
+            }
+
+            // Wykres
+            ctx.strokeStyle = '#3b82f6';
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+
+            priceHistory.forEach((item, i) => {
+              const x = margin.left + (chartWidth / (priceHistory.length - 1)) * i;
+              const y = margin.top + chartHeight - ((item.price - minPrice) / priceRange) * chartHeight;
+
+              if (i === 0) {
+                ctx.moveTo(x, y);
+              } else {
+                ctx.lineTo(x, y);
+              }
+            });
+
+            ctx.stroke();
+
+            // Etykiety X
+            ctx.fillStyle = '#6b7280';
+            ctx.textAlign = 'center';
+            const xSteps = Math.min(7, priceHistory.length);
+            const xInterval = Math.floor(priceHistory.length / xSteps);
+            
+            for (let i = 0; i < priceHistory.length; i += xInterval) {
+              const x = margin.left + (chartWidth / (priceHistory.length - 1)) * i;
+              const date = new Date(priceHistory[i].date);
+              const label = `${date.getDate()}/${date.getMonth() + 1}`;
+              ctx.fillText(label, x, height - margin.bottom + 20);
+            }
+
+            // Linia ceny docelowej
+            const latestBrokerage = brokerageAnalyses?.find(b => b.price_new);
+            if (latestBrokerage && latestBrokerage.price_new) {
+              const targetPrice = latestBrokerage.price_new;
+              const y = margin.top + chartHeight - ((targetPrice - minPrice) / priceRange) * chartHeight;
+
+              ctx.strokeStyle = '#10b981';
+              ctx.lineWidth = 2;
+              ctx.setLineDash([5, 5]);
+              ctx.beginPath();
+              ctx.moveTo(margin.left, y);
+              ctx.lineTo(width - margin.right, y);
+              ctx.stroke();
+              ctx.setLineDash([]);
+
+              ctx.fillStyle = '#10b981';
+              ctx.font = 'bold 12px sans-serif';
+              ctx.textAlign = 'left';
+              ctx.fillText(`Cel: ${targetPrice.toFixed(2)}`, width - margin.right + 5, y + 4);
+            }
+
+          }, [priceHistory, brokerageAnalyses]);
+
+          if (!priceHistory || priceHistory.length === 0) {
+            return (
+              <div className="bg-white rounded-lg shadow-lg p-6 mb-6">
+                <div className="text-center text-gray-500 py-8">
+                  <p>Brak danych o cenach dla {ticker}</p>
+                </div>
+              </div>
+            );
+          }
+
+          const latestPrice = priceHistory[priceHistory.length - 1]?.price;
+          const firstPrice = priceHistory[0]?.price;
+          const priceChange = latestPrice && firstPrice ? ((latestPrice - firstPrice) / firstPrice * 100) : 0;
+          const latestBrokerage = brokerageAnalyses?.find(b => b.price_new);
+
+          return (
+            <div className="bg-white rounded-lg shadow-lg p-6">
+              <div className="flex items-center justify-between mb-4">
+                <div>
+                  <h3 className="text-xl font-bold text-gray-900">Wykres kursu {ticker}</h3>
+                  <p className="text-sm text-gray-600">Ostatnie {priceHistory.length} dni</p>
+                </div>
+                <div className="text-right">
+                  <div className="text-2xl font-bold text-gray-900">
+                    {latestPrice?.toFixed(2)} PLN
+                  </div>
+                  <div className={`text-sm font-semibold ${priceChange >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                    {priceChange >= 0 ? '+' : ''}{priceChange.toFixed(2)}%
+                  </div>
+                </div>
+              </div>
+
+              <canvas 
+                ref={canvasRef} 
+                width={900} 
+                height={250}
+                className="w-full"
+                style={{ maxWidth: '100%', height: 'auto' }}
+              />
+
+              {latestBrokerage && (
+                <div className="mt-4 p-3 bg-green-50 rounded-lg">
+                  <div className="flex items-center justify-between text-sm">
+                    <span className="text-gray-700">
+                      Cena docelowa wg <strong>{latestBrokerage.brokerage_house}</strong>:
+                    </span>
+                    <div className="flex items-center gap-4">
+                      <span className="font-bold text-green-700">
+                        {latestBrokerage.price_new?.toFixed(2)} PLN
+                      </span>
+                      {latestBrokerage.upside_percent !== null && (
+                        <span className={`font-semibold ${latestBrokerage.upside_percent >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                          ({latestBrokerage.upside_percent >= 0 ? '+' : ''}{latestBrokerage.upside_percent.toFixed(1)}%)
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+          );
+        }
+
+        // Główny komponent dashboardu
+        function TickerDashboard() {
           const [tickers, setTickers] = useState([]);
           const [selectedTicker, setSelectedTicker] = useState(null);
           const [analyses, setAnalyses] = useState([]);
           const [brokerageAnalyses, setBrokerageAnalyses] = useState([]);
+          const [priceHistory, setPriceHistory] = useState([]);
           const [loading, setLoading] = useState(false);
+          const [loadingChart, setLoadingChart] = useState(false);
           const [searchTerm, setSearchTerm] = useState('');
           const [days, setDays] = useState(30);
           const [sortBy, setSortBy] = useState('mentions');
@@ -164,8 +363,9 @@ HTML_TEMPLATE = """
             if (selectedTicker) {
               fetchAnalyses(selectedTicker.ticker);
               fetchBrokerageAnalyses(selectedTicker.ticker);
+              fetchPriceHistory(selectedTicker.ticker);
             }
-          }, [selectedTicker]);
+          }, [selectedTicker, days]);
 
           const fetchTickers = async () => {
             try {
@@ -197,6 +397,20 @@ HTML_TEMPLATE = """
               setBrokerageAnalyses(data);
             } catch (error) {
               console.error('Error fetching brokerage analyses:', error);
+            }
+          };
+
+          const fetchPriceHistory = async (ticker) => {
+            setLoadingChart(true);
+            try {
+              const response = await fetch(`/api/price_history/${ticker}?days=${days}`);
+              const data = await response.json();
+              setPriceHistory(data);
+            } catch (error) {
+              console.error('Error fetching price history:', error);
+              setPriceHistory([]);
+            } finally {
+              setLoadingChart(false);
             }
           };
 
@@ -312,7 +526,7 @@ HTML_TEMPLATE = """
                 </div>
 
                 <div className="grid grid-cols-12 gap-6">
-                  <div className="col-span-4 bg-white rounded-lg shadow-lg p-4">
+                  <div className="col-span-3 bg-white rounded-lg shadow-lg p-4 sticky top-6 self-start" style={{ maxHeight: 'calc(100vh - 3rem)' }}>
                     <div className="mb-4">
                       <input
                         type="text"
@@ -323,7 +537,7 @@ HTML_TEMPLATE = """
                       />
                     </div>
 
-                    <div className="space-y-2 max-h-[calc(100vh-200px)] overflow-y-auto">
+                    <div className="space-y-2 overflow-y-auto" style={{ maxHeight: 'calc(100vh - 12rem)' }}>
                       {sortedTickers.map((ticker) => (
                         <div
                           key={ticker.ticker}
@@ -358,16 +572,16 @@ HTML_TEMPLATE = """
                     </div>
                   </div>
 
-                  <div className="col-span-8 bg-white rounded-lg shadow-lg p-6">
+                  <div className="col-span-9">
                     {!selectedTicker ? (
-                      <div className="flex items-center justify-center h-full text-gray-400">
-                        <div className="text-center">
+                      <div className="bg-white rounded-lg shadow-lg p-6 flex items-center justify-center" style={{ minHeight: '400px' }}>
+                        <div className="text-center text-gray-400">
                           <p className="text-xl">Wybierz ticker z listy po lewej</p>
                         </div>
                       </div>
                     ) : (
-                      <div>
-                        <div className={`p-4 rounded-lg mb-6 ${getSentimentBg(selectedTicker.avg_sentiment)}`}>
+                      <div className="space-y-6">
+                        <div className={`p-4 rounded-lg mb-6 shadow-lg ${getSentimentBg(selectedTicker.avg_sentiment)}`}>
                           <div className="flex items-center justify-between">
                             <div>
                               <h2 className="text-2xl font-bold text-gray-900">
@@ -386,149 +600,163 @@ HTML_TEMPLATE = """
                           </div>
                         </div>
 
-                        {loading ? (
-                          <div className="flex items-center justify-center py-12">
+                        {loadingChart ? (
+                          <div className="bg-white rounded-lg shadow-lg p-6 flex items-center justify-center">
                             <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500"></div>
                           </div>
                         ) : (
-                          <div className="space-y-4 max-h-[calc(100vh-350px)] overflow-y-auto">
-                            <div>
-                              <h3 className="text-lg font-semibold text-gray-900 mb-3">
-                                Analizy newsowe ({analyses.length})
-                              </h3>
-                              {analyses.length === 0 ? (
-                                <p className="text-gray-500 text-sm">Brak analiz newsowych</p>
-                              ) : (
-                                <div className="space-y-3">
-                                  {analyses.map((analysis, idx) => (
-                                    <div
-                                      key={idx}
-                                      className="border border-gray-200 rounded-lg p-4 hover:shadow-md transition-shadow"
-                                    >
-                                      <div className="flex items-start gap-4">
-                                        <div className="flex-shrink-0">
-                                          <div className={`w-3 h-24 ${getImpactColor(analysis.impact)} rounded`}></div>
-                                        </div>
+                          <PriceChart 
+                            ticker={selectedTicker.ticker} 
+                            priceHistory={priceHistory}
+                            brokerageAnalyses={brokerageAnalyses}
+                          />
+                        )}
 
-                                        <div className="flex-1">
-                                          <div className="flex items-start justify-between mb-2">
-                                            <div className="flex-1">
-                                              <h3 className="font-semibold text-gray-900 mb-1">
-                                                {analysis.title}
-                                              </h3>
-                                              <div className="flex items-center gap-3 text-sm text-gray-500">
-                                                <span>{analysis.date}</span>
-                                                <span>•</span>
-                                                <span>{analysis.source}</span>
-                                              </div>
-                                            </div>
+                        {loading ? (
+                          <div className="bg-white rounded-lg shadow-lg p-6 flex items-center justify-center py-12">
+                            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500"></div>
+                          </div>
+                        ) : (
+                          <div className="bg-white rounded-lg shadow-lg p-6">
+                            <div className="space-y-6">
+                              <div>
+                                <h3 className="text-lg font-semibold text-gray-900 mb-3">
+                                  Analizy newsowe ({analyses.length})
+                                </h3>
+                                {analyses.length === 0 ? (
+                                  <p className="text-gray-500 text-sm">Brak analiz newsowych</p>
+                                ) : (
+                                  <div className="space-y-3">
+                                    {analyses.map((analysis, idx) => (
+                                      <div
+                                        key={idx}
+                                        className="border border-gray-200 rounded-lg p-4 hover:shadow-md transition-shadow"
+                                      >
+                                        <div className="flex items-start gap-4">
+                                          <div className="flex-shrink-0">
+                                            <div className={`w-3 h-24 ${getImpactColor(analysis.impact)} rounded`}></div>
                                           </div>
 
-                                          <div className="flex items-center gap-4 mb-3">
-                                            <div className="flex items-center gap-2">
-                                              <span className="text-sm text-gray-600">Impact:</span>
-                                              <span className={`font-bold ${getSentimentColor(analysis.impact)}`}>
-                                                {analysis.impact > 0 ? '+' : ''}{Number(analysis.impact).toFixed(2)}
-                                              </span>
+                                          <div className="flex-1">
+                                            <div className="flex items-start justify-between mb-2">
+                                              <div className="flex-1">
+                                                <h3 className="font-semibold text-gray-900 mb-1">
+                                                  {analysis.title}
+                                                </h3>
+                                                <div className="flex items-center gap-3 text-sm text-gray-500">
+                                                  <span>{analysis.date}</span>
+                                                  <span>•</span>
+                                                  <span>{analysis.source}</span>
+                                                </div>
+                                              </div>
                                             </div>
-                                            <div className="flex items-center gap-2">
-                                              <span className="text-sm text-gray-600">Confidence:</span>
-                                              <span className="font-bold text-blue-600">
-                                                {(Number(analysis.confidence) * 100).toFixed(0)}%
-                                              </span>
-                                            </div>
-                                            {analysis.occasion && (
+
+                                            <div className="flex items-center gap-4 mb-3">
                                               <div className="flex items-center gap-2">
-                                                <span className="px-2 py-1 bg-blue-100 text-blue-700 text-xs rounded-full">
-                                                  {analysis.occasion}
+                                                <span className="text-sm text-gray-600">Impact:</span>
+                                                <span className={`font-bold ${getSentimentColor(analysis.impact)}`}>
+                                                  {analysis.impact > 0 ? '+' : ''}{Number(analysis.impact).toFixed(2)}
                                                 </span>
                                               </div>
+                                              <div className="flex items-center gap-2">
+                                                <span className="text-sm text-gray-600">Confidence:</span>
+                                                <span className="font-bold text-blue-600">
+                                                  {(Number(analysis.confidence) * 100).toFixed(0)}%
+                                                </span>
+                                              </div>
+                                              {analysis.occasion && (
+                                                <div className="flex items-center gap-2">
+                                                  <span className="px-2 py-1 bg-blue-100 text-blue-700 text-xs rounded-full">
+                                                    {analysis.occasion}
+                                                  </span>
+                                                </div>
+                                              )}
+                                            </div>
+
+                                            {analysis.summary && (
+                                              <div 
+                                                className="text-sm text-gray-700 leading-relaxed"
+                                                dangerouslySetInnerHTML={{ __html: analysis.summary }}
+                                              />
                                             )}
                                           </div>
-
-                                          {analysis.summary && (
-                                            <div 
-                                              className="text-sm text-gray-700 leading-relaxed"
-                                              dangerouslySetInnerHTML={{ __html: analysis.summary }}
-                                            />
-                                          )}
                                         </div>
                                       </div>
-                                    </div>
-                                  ))}
+                                    ))}
+                                  </div>
+                                )}
+                              </div>
+
+                              {brokerageAnalyses.length > 0 && (
+                                <div className="mt-6 pt-6 border-t border-gray-200">
+                                  <h3 className="text-lg font-semibold text-gray-900 mb-3">
+                                    Rekomendacje domów maklerskich ({brokerageAnalyses.length})
+                                  </h3>
+                                  <div className="overflow-x-auto">
+                                    <table className="min-w-full divide-y divide-gray-200">
+                                      <thead className="bg-gray-50">
+                                        <tr>
+                                          <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                            Data
+                                          </th>
+                                          <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                            Dom maklerski
+                                          </th>
+                                          <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                            Rekomendacja
+                                          </th>
+                                          <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                            Cena obecna
+                                          </th>
+                                          <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                            Cena docelowa
+                                          </th>
+                                          <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                            Zmiana celu %
+                                          </th>
+                                          <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                            Upside %
+                                          </th>
+                                        </tr>
+                                      </thead>
+                                      <tbody className="bg-white divide-y divide-gray-200">
+                                        {brokerageAnalyses.map((brokerage, idx) => (
+                                          <tr key={idx} className={getUpsideBg(brokerage.upside_percent)}>
+                                            <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-700">
+                                              {brokerage.date}
+                                            </td>
+                                            <td className="px-4 py-3 text-sm text-gray-900 font-medium">
+                                              {brokerage.brokerage_house}
+                                            </td>
+                                            <td className={`px-4 py-3 whitespace-nowrap text-sm ${getRecommendationColor(brokerage.recommendation)}`}>
+                                              {brokerage.recommendation || '-'}
+                                            </td>
+                                            <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-900 font-semibold">
+                                              {brokerage.current_price 
+                                                ? `${brokerage.current_price.toFixed(2)}`
+                                                : (brokerage.price_old ? brokerage.price_old.toFixed(2) : '-')}
+                                            </td>
+                                            <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-900 font-semibold">
+                                              {brokerage.price_new ? brokerage.price_new.toFixed(2) : '-'}
+                                            </td>
+                                            <td className={`px-4 py-3 whitespace-nowrap text-sm ${getUpsideColor(brokerage.price_change_percent)}`}>
+                                              {brokerage.price_change_percent !== null 
+                                                ? `${brokerage.price_change_percent > 0 ? '+' : ''}${brokerage.price_change_percent.toFixed(1)}%`
+                                                : '-'}
+                                            </td>
+                                            <td className={`px-4 py-3 whitespace-nowrap text-sm ${getUpsideColor(brokerage.upside_percent)}`}>
+                                              {brokerage.upside_percent !== null 
+                                                ? `${brokerage.upside_percent > 0 ? '+' : ''}${brokerage.upside_percent.toFixed(1)}%`
+                                                : '-'}
+                                            </td>
+                                          </tr>
+                                        ))}
+                                      </tbody>
+                                    </table>
+                                  </div>
                                 </div>
                               )}
                             </div>
-
-                            {brokerageAnalyses.length > 0 && (
-                              <div className="mt-6 pt-6 border-t border-gray-200">
-                                <h3 className="text-lg font-semibold text-gray-900 mb-3">
-                                  Rekomendacje domów maklerskich ({brokerageAnalyses.length})
-                                </h3>
-                                <div className="overflow-x-auto">
-                                  <table className="min-w-full divide-y divide-gray-200">
-                                    <thead className="bg-gray-50">
-                                      <tr>
-                                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                                          Data
-                                        </th>
-                                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                                          Dom maklerski
-                                        </th>
-                                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                                          Rekomendacja
-                                        </th>
-                                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                                          Cena obecna
-                                        </th>
-                                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                                          Cena docelowa
-                                        </th>
-                                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                                          Zmiana celu %
-                                        </th>
-                                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                                          Upside %
-                                        </th>
-                                      </tr>
-                                    </thead>
-                                    <tbody className="bg-white divide-y divide-gray-200">
-                                      {brokerageAnalyses.map((brokerage, idx) => (
-                                        <tr key={idx} className={getUpsideBg(brokerage.upside_percent)}>
-                                          <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-700">
-                                            {brokerage.date}
-                                          </td>
-                                          <td className="px-4 py-3 text-sm text-gray-900 font-medium">
-                                            {brokerage.brokerage_house}
-                                          </td>
-                                          <td className={`px-4 py-3 whitespace-nowrap text-sm ${getRecommendationColor(brokerage.recommendation)}`}>
-                                            {brokerage.recommendation || '-'}
-                                          </td>
-                                          <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-900 font-semibold">
-                                            {brokerage.current_price 
-                                              ? `${brokerage.current_price.toFixed(2)}`
-                                              : (brokerage.price_old ? brokerage.price_old.toFixed(2) : '-')}
-                                          </td>
-                                          <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-900 font-semibold">
-                                            {brokerage.price_new ? brokerage.price_new.toFixed(2) : '-'}
-                                          </td>
-                                          <td className={`px-4 py-3 whitespace-nowrap text-sm ${getUpsideColor(brokerage.price_change_percent)}`}>
-                                            {brokerage.price_change_percent !== null 
-                                              ? `${brokerage.price_change_percent > 0 ? '+' : ''}${brokerage.price_change_percent.toFixed(1)}%`
-                                              : '-'}
-                                          </td>
-                                          <td className={`px-4 py-3 whitespace-nowrap text-sm ${getUpsideColor(brokerage.upside_percent)}`}>
-                                            {brokerage.upside_percent !== null 
-                                              ? `${brokerage.upside_percent > 0 ? '+' : ''}${brokerage.upside_percent.toFixed(1)}%`
-                                              : '-'}
-                                          </td>
-                                        </tr>
-                                      ))}
-                                    </tbody>
-                                  </table>
-                                </div>
-                              </div>
-                            )}
                           </div>
                         )}
                       </div>
@@ -538,424 +766,11 @@ HTML_TEMPLATE = """
               </div>
             </div>
           );
-        };
-
-        // Renderowanie z error boundary
-        try {
-          const root = ReactDOM.createRoot(document.getElementById('root'));
-          root.render(<TickerDashboard />);
-        } catch (error) {
-          console.error('React render error:', error);
-          document.getElementById('root').innerHTML = '<div style="padding: 20px; color: red;">Błąd renderowania React: ' + error.message + '</div>';
         }
-    </script>
-======= REPLACE
-    <script type="text/babel">
-    {% raw %}
-        const { useState, useEffect } = React;
 
-        const TickerDashboard = () => {
-          const [tickers, setTickers] = useState([]);
-          const [selectedTicker, setSelectedTicker] = useState(null);
-          const [analyses, setAnalyses] = useState([]);
-          const [brokerageAnalyses, setBrokerageAnalyses] = useState([]);
-          const [loading, setLoading] = useState(false);
-          const [searchTerm, setSearchTerm] = useState('');
-          const [days, setDays] = useState(30);
-          const [sortBy, setSortBy] = useState('mentions');
-
-          useEffect(() => {
-            fetchTickers();
-          }, [days]);
-
-          useEffect(() => {
-            if (selectedTicker) {
-              fetchAnalyses(selectedTicker.ticker);
-              fetchBrokerageAnalyses(selectedTicker.ticker);
-            }
-          }, [selectedTicker]);
-
-          const fetchTickers = async () => {
-            try {
-              const response = await fetch(`/api/tickers?days=${days}`);
-              const data = await response.json();
-              setTickers(data);
-            } catch (error) {
-              console.error('Error fetching tickers:', error);
-            }
-          };
-
-          const fetchAnalyses = async (ticker) => {
-            setLoading(true);
-            try {
-              const response = await fetch(`/api/analyses/${ticker}?days=${days}`);
-              const data = await response.json();
-              setAnalyses(data);
-            } catch (error) {
-              console.error('Error fetching analyses:', error);
-            } finally {
-              setLoading(false);
-            }
-          };
-
-          const fetchBrokerageAnalyses = async (ticker) => {
-            try {
-              const response = await fetch(`/api/brokerage/${ticker}?days=${days}`);
-              const data = await response.json();
-              setBrokerageAnalyses(data);
-            } catch (error) {
-              console.error('Error fetching brokerage analyses:', error);
-            }
-          };
-
-          const filteredTickers = tickers.filter(t => 
-            t.ticker.toLowerCase().includes(searchTerm.toLowerCase()) ||
-            (t.company_name && t.company_name.toLowerCase().includes(searchTerm.toLowerCase()))
-          );
-
-          const sortedTickers = [...filteredTickers].sort((a, b) => {
-            if (sortBy === 'impact') {
-              return b.avg_sentiment - a.avg_sentiment;
-            }
-            return b.mentions - a.mentions;
-          });
-
-          const getSentimentColor = (sentiment) => {
-            const val = Math.abs(sentiment);
-            if (val < 0.05) return 'text-gray-500';
-            if (sentiment > 0.3) return 'text-green-600';
-            if (sentiment > 0) return 'text-green-400';
-            if (sentiment > -0.3) return 'text-yellow-500';
-            return 'text-red-500';
-          };
-
-          const getSentimentBg = (sentiment) => {
-            const val = Math.abs(sentiment);
-            if (val < 0.05) return 'bg-gray-100';
-            if (sentiment > 0.3) return 'bg-green-100';
-            if (sentiment > 0) return 'bg-green-50';
-            if (sentiment > -0.3) return 'bg-yellow-50';
-            return 'bg-red-50';
-          };
-
-          const getRecommendationColor = (recommendation) => {
-            if (!recommendation) return 'text-gray-600';
-            const rec = recommendation.toLowerCase();
-            if (rec.includes('kupuj') || rec.includes('buy') || rec.includes('accumulate')) {
-              return 'text-green-600 font-bold';
-            }
-            if (rec.includes('trzymaj') || rec.includes('hold') || rec.includes('neutral')) {
-              return 'text-yellow-600 font-bold';
-            }
-            if (rec.includes('sprzedaj') || rec.includes('sell') || rec.includes('reduce')) {
-              return 'text-red-600 font-bold';
-            }
-            return 'text-gray-600';
-          };
-
-          const getUpsideColor = (upside) => {
-            if (upside === null || upside === undefined) return 'text-gray-600';
-            if (upside > 30) return 'text-green-700 font-bold';
-            if (upside > 15) return 'text-green-600 font-semibold';
-            if (upside > 5) return 'text-green-500';
-            if (upside > -5) return 'text-gray-600';
-            if (upside > -15) return 'text-red-500';
-            if (upside > -30) return 'text-red-600 font-semibold';
-            return 'text-red-700 font-bold';
-          };
-
-          const getUpsideBg = (upside) => {
-            if (upside === null || upside === undefined) return 'bg-gray-50';
-            if (upside > 20) return 'bg-green-100';
-            if (upside > 10) return 'bg-green-50';
-            if (upside > -10) return 'bg-gray-50';
-            if (upside > -20) return 'bg-red-50';
-            return 'bg-red-100';
-          };
-
-          const getImpactColor = (impact) => {
-            const val = Math.abs(impact);
-            if (val < 0.05) return 'bg-gray-400';
-            if (impact > 0.5) return 'bg-green-500';
-            if (impact > 0.2) return 'bg-green-400';
-            if (impact > -0.2) return 'bg-yellow-400';
-            if (impact > -0.5) return 'bg-orange-400';
-            return 'bg-red-500';
-          };
-
-          return (
-            <div className="min-h-screen bg-gray-50 p-6">
-              <div className="max-w-7xl mx-auto">
-                <div className="flex items-center justify-between mb-6">
-                  <h1 className="text-3xl font-bold text-gray-900">
-                    Analiza Sentymentu Tickerów
-                  </h1>
-                  <div className="flex items-center gap-4">
-                    <div className="flex items-center gap-2">
-                      <label className="text-sm text-gray-600">Okres:</label>
-                      <select 
-                        value={days} 
-                        onChange={(e) => setDays(Number(e.target.value))}
-                        className="px-3 py-2 border border-gray-300 rounded-lg"
-                      >
-                        <option value="7">7 dni</option>
-                        <option value="14">14 dni</option>
-                        <option value="30">30 dni</option>
-                        <option value="60">60 dni</option>
-                        <option value="90">90 dni</option>
-                      </select>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <label className="text-sm text-gray-600">Sortuj:</label>
-                      <select 
-                        value={sortBy} 
-                        onChange={(e) => setSortBy(e.target.value)}
-                        className="px-3 py-2 border border-gray-300 rounded-lg"
-                      >
-                        <option value="mentions">Po wzmianach</option>
-                        <option value="impact">Po sile impactu</option>
-                      </select>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-12 gap-6">
-                  <div className="col-span-4 bg-white rounded-lg shadow-lg p-4">
-                    <div className="mb-4">
-                      <input
-                        type="text"
-                        placeholder="Szukaj tickera lub firmy..."
-                        className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                        value={searchTerm}
-                        onChange={(e) => setSearchTerm(e.target.value)}
-                      />
-                    </div>
-
-                    <div className="space-y-2 max-h-[calc(100vh-200px)] overflow-y-auto">
-                      {sortedTickers.map((ticker) => (
-                        <div
-                          key={ticker.ticker}
-                          onClick={() => setSelectedTicker(ticker)}
-                          className={`p-3 rounded-lg cursor-pointer transition-all ${
-                            selectedTicker?.ticker === ticker.ticker
-                              ? 'bg-blue-50 border-2 border-blue-500'
-                              : 'bg-gray-50 hover:bg-gray-100 border-2 border-transparent'
-                          }`}
-                        >
-                          <div className="flex items-center justify-between">
-                            <div className="flex-1">
-                              <div className="flex items-center gap-2">
-                                <span className="font-bold text-lg text-gray-900">
-                                  {ticker.ticker}
-                                </span>
-                              </div>
-                              <p className="text-sm text-gray-600">{ticker.company_name || 'Brak nazwy'}</p>
-                              <p className="text-xs text-gray-500">{ticker.sector || 'Brak sektora'}</p>
-                            </div>
-                            <div className="text-right">
-                              <div className={`text-lg font-bold ${getSentimentColor(ticker.avg_sentiment)}`}>
-                                {ticker.avg_sentiment > 0 ? '+' : ''}{Number(ticker.avg_sentiment).toFixed(2)}
-                              </div>
-                              <div className="text-xs text-gray-500">
-                                {ticker.mentions} wzmianek
-                              </div>
-                            </div>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-
-                  <div className="col-span-8 bg-white rounded-lg shadow-lg p-6">
-                    {!selectedTicker ? (
-                      <div className="flex items-center justify-center h-full text-gray-400">
-                        <div className="text-center">
-                          <p className="text-xl">Wybierz ticker z listy po lewej</p>
-                        </div>
-                      </div>
-                    ) : (
-                      <div>
-                        <div className={`p-4 rounded-lg mb-6 ${getSentimentBg(selectedTicker.avg_sentiment)}`}>
-                          <div className="flex items-center justify-between">
-                            <div>
-                              <h2 className="text-2xl font-bold text-gray-900">
-                                {selectedTicker.ticker} - {selectedTicker.company_name || 'Brak nazwy'}
-                              </h2>
-                              <p className="text-gray-600">{selectedTicker.sector || 'Brak sektora'}</p>
-                            </div>
-                            <div className="text-right">
-                              <div className={`text-3xl font-bold ${getSentimentColor(selectedTicker.avg_sentiment)}`}>
-                                {selectedTicker.avg_sentiment > 0 ? '+' : ''}{Number(selectedTicker.avg_sentiment).toFixed(2)}
-                              </div>
-                              <div className="text-sm text-gray-600">
-                                Średni sentyment
-                              </div>
-                            </div>
-                          </div>
-                        </div>
-
-                        {loading ? (
-                          <div className="flex items-center justify-center py-12">
-                            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500"></div>
-                          </div>
-                        ) : (
-                          <div className="space-y-4 max-h-[calc(100vh-350px)] overflow-y-auto">
-                            <div>
-                              <h3 className="text-lg font-semibold text-gray-900 mb-3">
-                                Analizy newsowe ({analyses.length})
-                              </h3>
-                              {analyses.length === 0 ? (
-                                <p className="text-gray-500 text-sm">Brak analiz newsowych</p>
-                              ) : (
-                                <div className="space-y-3">
-                                  {analyses.map((analysis, idx) => (
-                                    <div
-                                      key={idx}
-                                      className="border border-gray-200 rounded-lg p-4 hover:shadow-md transition-shadow"
-                                    >
-                                      <div className="flex items-start gap-4">
-                                        <div className="flex-shrink-0">
-                                          <div className={`w-3 h-24 ${getImpactColor(analysis.impact)} rounded`}></div>
-                                        </div>
-
-                                        <div className="flex-1">
-                                          <div className="flex items-start justify-between mb-2">
-                                            <div className="flex-1">
-                                              <h3 className="font-semibold text-gray-900 mb-1">
-                                                {analysis.title}
-                                              </h3>
-                                              <div className="flex items-center gap-3 text-sm text-gray-500">
-                                                <span>{analysis.date}</span>
-                                                <span>•</span>
-                                                <span>{analysis.source}</span>
-                                              </div>
-                                            </div>
-                                          </div>
-
-                                          <div className="flex items-center gap-4 mb-3">
-                                            <div className="flex items-center gap-2">
-                                              <span className="text-sm text-gray-600">Impact:</span>
-                                              <span className={`font-bold ${getSentimentColor(analysis.impact)}`}>
-                                                {analysis.impact > 0 ? '+' : ''}{Number(analysis.impact).toFixed(2)}
-                                              </span>
-                                            </div>
-                                            <div className="flex items-center gap-2">
-                                              <span className="text-sm text-gray-600">Confidence:</span>
-                                              <span className="font-bold text-blue-600">
-                                                {(Number(analysis.confidence) * 100).toFixed(0)}%
-                                              </span>
-                                            </div>
-                                            {analysis.occasion && (
-                                              <div className="flex items-center gap-2">
-                                                <span className="px-2 py-1 bg-blue-100 text-blue-700 text-xs rounded-full">
-                                                  {analysis.occasion}
-                                                </span>
-                                              </div>
-                                            )}
-                                          </div>
-
-                                          {analysis.summary && (
-                                            <div 
-                                              className="text-sm text-gray-700 leading-relaxed"
-                                              dangerouslySetInnerHTML={{ __html: analysis.summary }}
-                                            />
-                                          )}
-                                        </div>
-                                      </div>
-                                    </div>
-                                  ))}
-                                </div>
-                              )}
-                            </div>
-
-                            {brokerageAnalyses.length > 0 && (
-                              <div className="mt-6 pt-6 border-t border-gray-200">
-                                <h3 className="text-lg font-semibold text-gray-900 mb-3">
-                                  Rekomendacje domów maklerskich ({brokerageAnalyses.length})
-                                </h3>
-                                <div className="overflow-x-auto">
-                                  <table className="min-w-full divide-y divide-gray-200">
-                                    <thead className="bg-gray-50">
-                                      <tr>
-                                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                                          Data
-                                        </th>
-                                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                                          Dom maklerski
-                                        </th>
-                                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                                          Rekomendacja
-                                        </th>
-                                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                                          Cena obecna
-                                        </th>
-                                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                                          Cena docelowa
-                                        </th>
-                                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                                          Zmiana celu %
-                                        </th>
-                                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                                          Upside %
-                                        </th>
-                                      </tr>
-                                    </thead>
-                                    <tbody className="bg-white divide-y divide-gray-200">
-                                      {brokerageAnalyses.map((brokerage, idx) => (
-                                        <tr key={idx} className={getUpsideBg(brokerage.upside_percent)}>
-                                          <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-700">
-                                            {brokerage.date}
-                                          </td>
-                                          <td className="px-4 py-3 text-sm text-gray-900 font-medium">
-                                            {brokerage.brokerage_house}
-                                          </td>
-                                          <td className={`px-4 py-3 whitespace-nowrap text-sm ${getRecommendationColor(brokerage.recommendation)}`}>
-                                            {brokerage.recommendation || '-'}
-                                          </td>
-                                          <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-900 font-semibold">
-                                            {brokerage.current_price 
-                                              ? `${brokerage.current_price.toFixed(2)}`
-                                              : (brokerage.price_old ? brokerage.price_old.toFixed(2) : '-')}
-                                          </td>
-                                          <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-900 font-semibold">
-                                            {brokerage.price_new ? brokerage.price_new.toFixed(2) : '-'}
-                                          </td>
-                                          <td className={`px-4 py-3 whitespace-nowrap text-sm ${getUpsideColor(brokerage.price_change_percent)}`}>
-                                            {brokerage.price_change_percent !== null 
-                                              ? `${brokerage.price_change_percent > 0 ? '+' : ''}${brokerage.price_change_percent.toFixed(1)}%`
-                                              : '-'}
-                                          </td>
-                                          <td className={`px-4 py-3 whitespace-nowrap text-sm ${getUpsideColor(brokerage.upside_percent)}`}>
-                                            {brokerage.upside_percent !== null 
-                                              ? `${brokerage.upside_percent > 0 ? '+' : ''}${brokerage.upside_percent.toFixed(1)}%`
-                                              : '-'}
-                                          </td>
-                                        </tr>
-                                      ))}
-                                    </tbody>
-                                  </table>
-                                </div>
-                              </div>
-                            )}
-                          </div>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                </div>
-              </div>
-            </div>
-          );
-        };
-
-        // Renderowanie z error boundary
-        try {
-          const root = ReactDOM.createRoot(document.getElementById('root'));
-          root.render(<TickerDashboard />);
-        } catch (error) {
-          console.error('React render error:', error);
-          document.getElementById('root').innerHTML = '<div style="padding: 20px; color: red;">Błąd renderowania React: ' + error.message + '</div>';
-        }
+        // Renderowanie aplikacji
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<TickerDashboard />);
     {% endraw %}
     </script>
 </body>
@@ -1118,6 +933,14 @@ def get_brokerage_analyses(ticker):
         brokerage_analyses.sort(key=lambda x: x['date'] if x['date'] else '1900-01-01', reverse=True)
 
     return jsonify(brokerage_analyses)
+
+
+@app.route('/api/price_history/<ticker>')
+def get_price_history_endpoint(ticker):
+    """Endpoint zwracający historię cen tickera"""
+    days = request.args.get('days', 90, type=int)
+    price_data = get_price_history(ticker, days)
+    return jsonify(price_data)
 
 
 if __name__ == '__main__':
