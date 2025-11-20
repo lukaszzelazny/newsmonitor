@@ -634,33 +634,34 @@ HTML_TEMPLATE = """
           } : null;
 
           return (
-            <div className="min-h-screen bg-gray-50 p-6">
+            <div className="min-h-screen bg-gray-50 p-4">
               <div className="max-w-7xl mx-auto">
-                <div className="flex items-center justify-between mb-6">
-                  <h1 className="text-3xl font-bold text-gray-900">
+                <div className="flex items-center justify-between mb-4">
+                  <h1 className="text-2xl font-bold text-gray-900">
                     Analiza Sentymentu Tickerów
                   </h1>
-                  <div className="flex items-center gap-4">
+                  <div className="flex items-center gap-3">
                     <div className="flex items-center gap-2">
-                      <label className="text-sm text-gray-600">Okres:</label>
+                      <label className="text-xs text-gray-600">Okres:</label>
                       <select 
                         value={days} 
                         onChange={(e) => setDays(Number(e.target.value))}
-                        className="px-3 py-2 border border-gray-300 rounded-lg"
+                        className="px-2 py-1 text-sm border border-gray-300 rounded-lg"
                       >
                         <option value="7">7 dni</option>
                         <option value="14">14 dni</option>
-                        <option value="30">30 dni</option>
-                        <option value="60">60 dni</option>
-                        <option value="90">90 dni</option>
+                        <option value="30">1 miesiąc</option>
+                        <option value="90">3 miesiące</option>
+                        <option value="180">6 miesięcy</option>
+                        <option value="365">1 rok</option>
                       </select>
                     </div>
                     <div className="flex items-center gap-2">
-                      <label className="text-sm text-gray-600">Sortuj:</label>
+                      <label className="text-xs text-gray-600">Sortuj:</label>
                       <select 
                         value={sortBy} 
                         onChange={(e) => setSortBy(e.target.value)}
-                        className="px-3 py-2 border border-gray-300 rounded-lg"
+                        className="px-2 py-1 text-sm border border-gray-300 rounded-lg"
                       >
                         <option value="mentions">Po wzmianach</option>
                         <option value="impact">Po sile impactu</option>
@@ -669,45 +670,45 @@ HTML_TEMPLATE = """
                   </div>
                 </div>
 
-                <div className="grid grid-cols-12 gap-6">
-                  <div className="col-span-3 bg-white rounded-lg shadow-lg p-4 sticky top-6 self-start" style={{ maxHeight: 'calc(100vh - 3rem)' }}>
-                    <div className="mb-4">
+                <div className="grid grid-cols-12 gap-4">
+                  <div className="col-span-3 bg-white rounded-lg shadow p-3 sticky top-4 self-start" style={{ maxHeight: 'calc(100vh - 2rem)' }}>
+                    <div className="mb-3">
                       <input
                         type="text"
-                        placeholder="Szukaj tickera lub firmy..."
-                        className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                        placeholder="Szukaj tickera..."
+                        className="w-full px-3 py-1.5 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                         value={searchTerm}
                         onChange={(e) => setSearchTerm(e.target.value)}
                       />
                     </div>
 
-                    <div className="space-y-2 overflow-y-auto" style={{ maxHeight: 'calc(100vh - 12rem)' }}>
+                    <div className="space-y-1.5 overflow-y-auto" style={{ maxHeight: 'calc(100vh - 10rem)' }}>
                       {sortedTickers.map((ticker) => (
                         <div
                           key={ticker.ticker}
                           onClick={() => setSelectedTicker(ticker)}
-                          className={`p-3 rounded-lg cursor-pointer transition-all ${
+                          className={`p-2 rounded-lg cursor-pointer transition-all ${
                             selectedTicker?.ticker === ticker.ticker
                               ? 'bg-blue-50 border-2 border-blue-500'
                               : 'bg-gray-50 hover:bg-gray-100 border-2 border-transparent'
                           }`}
                         >
                           <div className="flex items-center justify-between">
-                            <div className="flex-1">
-                              <div className="flex items-center gap-2">
-                                <span className="font-bold text-lg text-gray-900">
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center gap-1.5">
+                                <span className="font-bold text-base text-gray-900">
                                   {ticker.ticker}
                                 </span>
                               </div>
-                              <p className="text-sm text-gray-600">{ticker.company_name || 'Brak nazwy'}</p>
+                              <p className="text-xs text-gray-600 truncate">{ticker.company_name || 'Brak nazwy'}</p>
                               <p className="text-xs text-gray-500">{ticker.sector || 'Brak sektora'}</p>
                             </div>
-                            <div className="text-right">
-                              <div className={`text-lg font-bold ${getSentimentColor(ticker.avg_sentiment)}`}>
+                            <div className="text-right ml-2">
+                              <div className={`text-base font-bold ${getSentimentColor(ticker.avg_sentiment)}`}>
                                 {ticker.avg_sentiment > 0 ? '+' : ''}{Number(ticker.avg_sentiment).toFixed(2)}
                               </div>
                               <div className="text-xs text-gray-500">
-                                {ticker.mentions} wzmianek
+                                {ticker.mentions} wzm.
                               </div>
                             </div>
                           </div>
@@ -718,26 +719,26 @@ HTML_TEMPLATE = """
 
                   <div className="col-span-9">
                     {!selectedTicker ? (
-                      <div className="bg-white rounded-lg shadow-lg p-6 flex items-center justify-center" style={{ minHeight: '400px' }}>
+                      <div className="bg-white rounded-lg shadow p-6 flex items-center justify-center" style={{ minHeight: '300px' }}>
                         <div className="text-center text-gray-400">
-                          <p className="text-xl">Wybierz ticker z listy po lewej</p>
+                          <p className="text-lg">Wybierz ticker z listy po lewej</p>
                         </div>
                       </div>
                     ) : (
-                      <div className="space-y-6">
-                        <div className={`p-4 rounded-lg mb-6 shadow-lg ${getSentimentBg(selectedTicker.avg_sentiment)}`}>
+                      <div className="space-y-4">
+                        <div className={`p-3 rounded-lg shadow ${getSentimentBg(selectedTicker.avg_sentiment)}`}>
                           <div className="flex items-center justify-between">
                             <div>
-                              <h2 className="text-2xl font-bold text-gray-900">
+                              <h2 className="text-xl font-bold text-gray-900">
                                 {selectedTicker.ticker} - {selectedTicker.company_name || 'Brak nazwy'}
                               </h2>
-                              <p className="text-gray-600">{selectedTicker.sector || 'Brak sektora'}</p>
+                              <p className="text-sm text-gray-600">{selectedTicker.sector || 'Brak sektora'}</p>
                             </div>
                             <div className="text-right">
-                              <div className={`text-3xl font-bold ${getSentimentColor(selectedTicker.avg_sentiment)}`}>
+                              <div className={`text-2xl font-bold ${getSentimentColor(selectedTicker.avg_sentiment)}`}>
                                 {selectedTicker.avg_sentiment > 0 ? '+' : ''}{Number(selectedTicker.avg_sentiment).toFixed(2)}
                               </div>
-                              <div className="text-sm text-gray-600">
+                              <div className="text-xs text-gray-600">
                                 Średni sentyment
                               </div>
                             </div>
@@ -745,44 +746,44 @@ HTML_TEMPLATE = """
                         </div>
 
                         {tickerStats && showStats && (
-                          <div className="bg-white rounded-lg shadow-lg p-6">
-                            <div className="flex items-center justify-between mb-4">
-                              <h3 className="text-lg font-semibold text-gray-900">Statystyki</h3>
+                          <div className="bg-white rounded-lg shadow p-4">
+                            <div className="flex items-center justify-between mb-3">
+                              <h3 className="text-base font-semibold text-gray-900">Statystyki</h3>
                               <button 
                                 onClick={() => setShowStats(false)}
-                                className="text-gray-400 hover:text-gray-600"
+                                className="text-gray-400 hover:text-gray-600 text-sm"
                               >
                                 ✕
                               </button>
                             </div>
-                            <div className="grid grid-cols-3 gap-4">
-                              <div className="bg-gray-50 p-4 rounded-lg">
-                                <div className="text-2xl font-bold text-gray-900">{tickerStats.totalNews}</div>
-                                <div className="text-sm text-gray-600">Wszystkie newsy</div>
+                            <div className="grid grid-cols-3 gap-3">
+                              <div className="bg-gray-50 p-3 rounded-lg">
+                                <div className="text-xl font-bold text-gray-900">{tickerStats.totalNews}</div>
+                                <div className="text-xs text-gray-600">Wszystkie</div>
                               </div>
-                              <div className="bg-green-50 p-4 rounded-lg">
-                                <div className="text-2xl font-bold text-green-600">{tickerStats.positiveNews}</div>
-                                <div className="text-sm text-gray-600">Pozytywne</div>
+                              <div className="bg-green-50 p-3 rounded-lg">
+                                <div className="text-xl font-bold text-green-600">{tickerStats.positiveNews}</div>
+                                <div className="text-xs text-gray-600">Pozytywne</div>
                               </div>
-                              <div className="bg-red-50 p-4 rounded-lg">
-                                <div className="text-2xl font-bold text-red-600">{tickerStats.negativeNews}</div>
-                                <div className="text-sm text-gray-600">Negatywne</div>
+                              <div className="bg-red-50 p-3 rounded-lg">
+                                <div className="text-xl font-bold text-red-600">{tickerStats.negativeNews}</div>
+                                <div className="text-xs text-gray-600">Negatywne</div>
                               </div>
-                              <div className="bg-gray-50 p-4 rounded-lg">
-                                <div className="text-2xl font-bold text-gray-600">{tickerStats.neutralNews}</div>
-                                <div className="text-sm text-gray-600">Neutralne</div>
+                              <div className="bg-gray-50 p-3 rounded-lg">
+                                <div className="text-xl font-bold text-gray-600">{tickerStats.neutralNews}</div>
+                                <div className="text-xs text-gray-600">Neutralne</div>
                               </div>
-                              <div className="bg-blue-50 p-4 rounded-lg">
-                                <div className={`text-2xl font-bold ${getSentimentColor(tickerStats.avgImpact)}`}>
+                              <div className="bg-blue-50 p-3 rounded-lg">
+                                <div className={`text-xl font-bold ${getSentimentColor(tickerStats.avgImpact)}`}>
                                   {tickerStats.avgImpact > 0 ? '+' : ''}{tickerStats.avgImpact.toFixed(3)}
                                 </div>
-                                <div className="text-sm text-gray-600">Średni impact</div>
+                                <div className="text-xs text-gray-600">Śr. impact</div>
                               </div>
-                              <div className="bg-purple-50 p-4 rounded-lg">
-                                <div className="text-2xl font-bold text-purple-600">
+                              <div className="bg-purple-50 p-3 rounded-lg">
+                                <div className="text-xl font-bold text-purple-600">
                                   {(tickerStats.avgConfidence * 100).toFixed(0)}%
                                 </div>
-                                <div className="text-sm text-gray-600">Średnia pewność</div>
+                                <div className="text-xs text-gray-600">Śr. pewność</div>
                               </div>
                             </div>
                           </div>
@@ -806,19 +807,19 @@ HTML_TEMPLATE = """
                             <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500"></div>
                           </div>
                         ) : (
-                          <div className="bg-white rounded-lg shadow-lg p-6">
-                            <div className="space-y-6">
+                          <div className="bg-white rounded-lg shadow p-4">
+                            <div className="space-y-4">
                               <div>
-                                <div className="flex items-center justify-between mb-3">
-                                  <h3 className="text-lg font-semibold text-gray-900">
+                                <div className="flex items-center justify-between mb-2">
+                                  <h3 className="text-base font-semibold text-gray-900">
                                     Analizy newsowe ({filteredAnalyses.length})
                                   </h3>
                                   <div className="flex items-center gap-2">
-                                    <label className="text-sm text-gray-600">Filtruj:</label>
+                                    <label className="text-xs text-gray-600">Filtruj:</label>
                                     <select 
                                       value={filterImpact} 
                                       onChange={(e) => setFilterImpact(e.target.value)}
-                                      className="px-3 py-1 text-sm border border-gray-300 rounded-lg"
+                                      className="px-2 py-1 text-xs border border-gray-300 rounded-lg"
                                     >
                                       <option value="all">Wszystkie</option>
                                       <option value="positive">Pozytywne</option>
@@ -828,34 +829,34 @@ HTML_TEMPLATE = """
                                   </div>
                                 </div>
                                 {filteredAnalyses.length === 0 ? (
-                                  <p className="text-gray-500 text-sm">Brak analiz newsowych</p>
+                                  <p className="text-gray-500 text-xs">Brak analiz newsowych</p>
                                 ) : (
-                                  <div className="space-y-3">
+                                  <div className="space-y-2">
                                     {filteredAnalyses.map((analysis, idx) => (
                                       <div
                                         key={idx}
-                                        className="border border-gray-200 rounded-lg p-4 hover:shadow-md transition-shadow relative"
+                                        className="border border-gray-200 rounded-lg p-3 hover:shadow-md transition-shadow relative"
                                       >
                                         <button
                                           onClick={() => markAsDuplicate(analysis.analysis_id, analysis.news_id)}
-                                          className="absolute top-2 right-2 w-8 h-8 flex items-center justify-center bg-red-500 hover:bg-red-600 text-white rounded-full text-lg font-bold transition-colors"
-                                          title="Oznacz jako duplikat i usuń"
+                                          className="absolute top-1.5 right-1.5 w-6 h-6 flex items-center justify-center bg-red-500 hover:bg-red-600 text-white rounded-full text-sm font-bold transition-colors"
+                                          title="Oznacz jako duplikat"
                                         >
                                           ✕
                                         </button>
 
-                                        <div className="flex items-start gap-4">
+                                        <div className="flex items-start gap-3">
                                           <div className="flex-shrink-0">
-                                            <div className={`w-3 h-24 ${getImpactColor(analysis.impact)} rounded`}></div>
+                                            <div className={`w-2 h-16 ${getImpactColor(analysis.impact)} rounded`}></div>
                                           </div>
 
-                                          <div className="flex-1 pr-10">
-                                            <div className="flex items-start justify-between mb-2">
+                                          <div className="flex-1 pr-8">
+                                            <div className="flex items-start justify-between mb-1.5">
                                               <div className="flex-1">
-                                                <h3 className="font-semibold text-gray-900 mb-1">
+                                                <h3 className="font-semibold text-sm text-gray-900 mb-0.5">
                                                   {analysis.title}
                                                 </h3>
-                                                <div className="flex items-center gap-3 text-sm text-gray-500">
+                                                <div className="flex items-center gap-2 text-xs text-gray-500">
                                                   <span>{analysis.date}</span>
                                                   <span>•</span>
                                                   <span>{analysis.source}</span>
@@ -876,22 +877,22 @@ HTML_TEMPLATE = """
                                               </div>
                                             </div>
 
-                                            <div className="flex items-center gap-4 mb-3">
-                                              <div className="flex items-center gap-2">
-                                                <span className="text-sm text-gray-600">Impact:</span>
-                                                <span className={`font-bold ${getSentimentColor(analysis.impact)}`}>
+                                            <div className="flex items-center gap-3 mb-2">
+                                              <div className="flex items-center gap-1.5">
+                                                <span className="text-xs text-gray-600">Impact:</span>
+                                                <span className={`font-bold text-sm ${getSentimentColor(analysis.impact)}`}>
                                                   {analysis.impact > 0 ? '+' : ''}{Number(analysis.impact).toFixed(2)}
                                                 </span>
                                               </div>
-                                              <div className="flex items-center gap-2">
-                                                <span className="text-sm text-gray-600">Confidence:</span>
-                                                <span className="font-bold text-blue-600">
+                                              <div className="flex items-center gap-1.5">
+                                                <span className="text-xs text-gray-600">Confidence:</span>
+                                                <span className="font-bold text-sm text-blue-600">
                                                   {(Number(analysis.confidence) * 100).toFixed(0)}%
                                                 </span>
                                               </div>
                                               {analysis.occasion && (
-                                                <div className="flex items-center gap-2">
-                                                  <span className="px-2 py-1 bg-blue-100 text-blue-700 text-xs rounded-full">
+                                                <div className="flex items-center gap-1.5">
+                                                  <span className="px-2 py-0.5 bg-blue-100 text-blue-700 text-xs rounded-full">
                                                     {analysis.occasion}
                                                   </span>
                                                 </div>
@@ -900,7 +901,7 @@ HTML_TEMPLATE = """
 
                                             {analysis.summary && (
                                               <div 
-                                                className="text-sm text-gray-700 leading-relaxed"
+                                                className="text-xs text-gray-700 leading-relaxed"
                                                 dangerouslySetInnerHTML={{ __html: analysis.summary }}
                                               />
                                             )}
@@ -913,33 +914,33 @@ HTML_TEMPLATE = """
                               </div>
 
                               {brokerageAnalyses.length > 0 && (
-                                <div className="mt-6 pt-6 border-t border-gray-200">
-                                  <h3 className="text-lg font-semibold text-gray-900 mb-3">
+                                <div className="mt-4 pt-4 border-t border-gray-200">
+                                  <h3 className="text-base font-semibold text-gray-900 mb-2">
                                     Rekomendacje domów maklerskich ({brokerageAnalyses.length})
                                   </h3>
                                   <div className="overflow-x-auto">
                                     <table className="min-w-full divide-y divide-gray-200">
                                       <thead className="bg-gray-50">
                                         <tr>
-                                          <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                          <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">
                                             Data
                                           </th>
-                                          <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                          <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">
                                             Dom maklerski
                                           </th>
-                                          <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                          <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">
                                             Rekomendacja
                                           </th>
-                                          <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                          <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">
                                             Cena obecna
                                           </th>
-                                          <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                          <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">
                                             Cena docelowa
                                           </th>
-                                          <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                                            Zmiana celu %
+                                          <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">
+                                            Zmiana %
                                           </th>
-                                          <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                          <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">
                                             Upside %
                                           </th>
                                         </tr>
@@ -947,29 +948,29 @@ HTML_TEMPLATE = """
                                       <tbody className="bg-white divide-y divide-gray-200">
                                         {brokerageAnalyses.map((brokerage, idx) => (
                                           <tr key={idx} className={getUpsideBg(brokerage.upside_percent)}>
-                                            <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-700">
+                                            <td className="px-3 py-2 whitespace-nowrap text-xs text-gray-700">
                                               {brokerage.date}
                                             </td>
-                                            <td className="px-4 py-3 text-sm text-gray-900 font-medium">
+                                            <td className="px-3 py-2 text-xs text-gray-900 font-medium">
                                               {brokerage.brokerage_house}
                                             </td>
-                                            <td className={`px-4 py-3 whitespace-nowrap text-sm ${getRecommendationColor(brokerage.recommendation)}`}>
+                                            <td className={`px-3 py-2 whitespace-nowrap text-xs ${getRecommendationColor(brokerage.recommendation)}`}>
                                               {brokerage.recommendation || '-'}
                                             </td>
-                                            <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-900 font-semibold">
+                                            <td className="px-3 py-2 whitespace-nowrap text-xs text-gray-900 font-semibold">
                                               {brokerage.current_price 
                                                 ? `${brokerage.current_price.toFixed(2)}`
                                                 : (brokerage.price_old ? brokerage.price_old.toFixed(2) : '-')}
                                             </td>
-                                            <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-900 font-semibold">
+                                            <td className="px-3 py-2 whitespace-nowrap text-xs text-gray-900 font-semibold">
                                               {brokerage.price_new ? brokerage.price_new.toFixed(2) : '-'}
                                             </td>
-                                            <td className={`px-4 py-3 whitespace-nowrap text-sm ${getUpsideColor(brokerage.price_change_percent)}`}>
+                                            <td className={`px-3 py-2 whitespace-nowrap text-xs ${getUpsideColor(brokerage.price_change_percent)}`}>
                                               {brokerage.price_change_percent !== null 
                                                 ? `${brokerage.price_change_percent > 0 ? '+' : ''}${brokerage.price_change_percent.toFixed(1)}%`
                                                 : '-'}
                                             </td>
-                                            <td className={`px-4 py-3 whitespace-nowrap text-sm ${getUpsideColor(brokerage.upside_percent)}`}>
+                                            <td className={`px-3 py-2 whitespace-nowrap text-xs ${getUpsideColor(brokerage.upside_percent)}`}>
                                               {brokerage.upside_percent !== null 
                                                 ? `${brokerage.upside_percent > 0 ? '+' : ''}${brokerage.upside_percent.toFixed(1)}%`
                                                 : '-'}
