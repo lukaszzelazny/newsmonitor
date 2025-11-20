@@ -286,10 +286,12 @@ HTML_TEMPLATE = """
                 let color;
                 const impact = analysis.impact;
                 if (Math.abs(impact) < 0.05) color = '#9ca3af'; // gray
-                else if (impact > 0.3) color = '#10b981'; // green
-                else if (impact > 0) color = '#84cc16'; // light green
-                else if (impact > -0.3) color = '#f97316'; // orange
-                else color = '#ef4444'; // red
+                else if (impact > 0.5) color = '#059669'; // dark green
+                else if (impact > 0.2) color = '#10b981'; // green
+                else if (impact > 0.05) color = '#4ade80'; // light green
+                else if (impact > -0.2) color = '#fb923c'; // light orange
+                else if (impact > -0.5) color = '#f97316'; // orange
+                else color = '#dc2626'; // red
 
                 // Rysuj punkt
                 ctx.fillStyle = color;
@@ -442,6 +444,332 @@ HTML_TEMPLATE = """
           );
         }
 
+        // Komponent widoku kalendarzowego
+        function CalendarView({ days, onBack }) {
+          const [calendarStats, setCalendarStats] = useState([]);
+          const [selectedDate, setSelectedDate] = useState(null);
+          const [newsForDate, setNewsForDate] = useState([]);
+          const [loading, setLoading] = useState(false);
+          const [currentMonth, setCurrentMonth] = useState(new Date());
+
+          useEffect(() => {
+            fetchCalendarStats();
+          }, [days]);
+
+          const fetchCalendarStats = async () => {
+            try {
+              const response = await fetch(`/api/calendar_stats?days=${days}`);
+              const data = await response.json();
+              setCalendarStats(data);
+            } catch (error) {
+              console.error('Error fetching calendar stats:', error);
+            }
+          };
+
+          const fetchNewsForDate = async (date) => {
+            setLoading(true);
+            try {
+              const response = await fetch(`/api/news_by_date/${date}`);
+              const data = await response.json();
+              setNewsForDate(data);
+              setSelectedDate(date);
+            } catch (error) {
+              console.error('Error fetching news for date:', error);
+            } finally {
+              setLoading(false);
+            }
+          };
+
+          const markAsDuplicate = async (newsId) => {
+            if (!confirm('Czy na pewno chcesz oznaczyć ten news jako duplikat?')) return;
+
+            try {
+              const response = await fetch('/api/mark_duplicate', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ news_id: newsId })
+              });
+
+              if (response.ok) {
+                fetchNewsForDate(selectedDate);
+                fetchCalendarStats();
+                alert('News oznaczony jako duplikat');
+              } else {
+                alert('Błąd przy oznaczaniu newsa jako duplikat');
+              }
+            } catch (error) {
+              console.error('Error marking as duplicate:', error);
+              alert('Błąd połączenia z serwerem');
+            }
+          };
+
+          const getDayStats = (dateStr) => {
+            return calendarStats.find(s => s.date === dateStr);
+          };
+
+          const getDayColor = (stats) => {
+            if (!stats || stats.news_count === 0) return 'bg-gray-50';
+
+            const avgImpact = stats.avg_impact;
+            const count = stats.news_count;
+
+            // Intensywność bazowana na liczbie newsów
+            if (avgImpact > 0.1) {
+              if (count > 5) return 'bg-green-500';
+              if (count > 2) return 'bg-green-400';
+              return 'bg-green-300';
+            } else if (avgImpact < -0.1) {
+              if (count > 5) return 'bg-red-500';
+              if (count > 2) return 'bg-red-400';
+              return 'bg-red-300';
+            } else {
+              if (count > 5) return 'bg-yellow-500';
+              if (count > 2) return 'bg-yellow-400';
+              return 'bg-yellow-300';
+            }
+          };
+
+          const getImpactColor = (impact) => {
+            const val = Math.abs(impact);
+            if (val < 0.05) return 'bg-gray-400';
+            if (impact > 0.5) return 'bg-green-600';
+            if (impact > 0.2) return 'bg-green-500';
+            if (impact > 0.05) return 'bg-green-400';
+            if (impact > -0.05) return 'bg-gray-400';
+            if (impact > -0.2) return 'bg-orange-400';
+            if (impact > -0.5) return 'bg-orange-500';
+            return 'bg-red-600';
+          };
+
+          const getSentimentColor = (sentiment) => {
+            const val = Math.abs(sentiment);
+            if (val < 0.05) return 'text-gray-500';
+            if (sentiment > 0.3) return 'text-green-600';
+            if (sentiment > 0) return 'text-green-400';
+            if (sentiment > -0.3) return 'text-yellow-500';
+            return 'text-red-500';
+          };
+
+          // Generuj dni dla kalendarza
+          const generateCalendarDays = () => {
+            const year = currentMonth.getFullYear();
+            const month = currentMonth.getMonth();
+
+            const firstDay = new Date(year, month, 1);
+            const lastDay = new Date(year, month + 1, 0);
+
+            const daysInMonth = lastDay.getDate();
+            const startDayOfWeek = firstDay.getDay();
+
+            const days = [];
+
+            // Puste dni przed pierwszym dniem miesiąca
+            for (let i = 0; i < (startDayOfWeek === 0 ? 6 : startDayOfWeek - 1); i++) {
+              days.push(null);
+            }
+
+            // Dni miesiąca
+            for (let day = 1; day <= daysInMonth; day++) {
+              days.push(new Date(year, month, day));
+            }
+
+            return days;
+          };
+
+          const calendarDays = generateCalendarDays();
+          const monthNames = ['Styczeń', 'Luty', 'Marzec', 'Kwiecień', 'Maj', 'Czerwiec',
+                            'Lipiec', 'Sierpień', 'Wrzesień', 'Październik', 'Listopad', 'Grudzień'];
+
+          return (
+            <div className="space-y-4">
+              <div className="bg-white rounded-lg shadow p-4">
+                <div className="flex items-center justify-between mb-4">
+                  <h2 className="text-xl font-bold text-gray-900">
+                    {monthNames[currentMonth.getMonth()]} {currentMonth.getFullYear()}
+                  </h2>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => setCurrentMonth(new Date(currentMonth.getFullYear(), currentMonth.getMonth() - 1))}
+                      className="px-3 py-1 bg-gray-200 hover:bg-gray-300 rounded-lg"
+                    >
+                      ←
+                    </button>
+                    <button
+                      onClick={() => setCurrentMonth(new Date())}
+                      className="px-3 py-1 bg-blue-500 hover:bg-blue-600 text-white rounded-lg text-sm"
+                    >
+                      Dziś
+                    </button>
+                    <button
+                      onClick={() => setCurrentMonth(new Date(currentMonth.getFullYear(), currentMonth.getMonth() + 1))}
+                      className="px-3 py-1 bg-gray-200 hover:bg-gray-300 rounded-lg"
+                    >
+                      →
+                    </button>
+                  </div>
+                </div>
+
+                {/* Legenda */}
+                <div className="mb-4 flex items-center gap-4 text-xs text-gray-600 flex-wrap">
+                  <span className="flex items-center gap-2">
+                    <span className="w-4 h-4 rounded bg-green-500"></span>
+                    Pozytywne (wiele newsów)
+                  </span>
+                  <span className="flex items-center gap-2">
+                    <span className="w-4 h-4 rounded bg-green-300"></span>
+                    Pozytywne (kilka)
+                  </span>
+                  <span className="flex items-center gap-2">
+                    <span className="w-4 h-4 rounded bg-yellow-400"></span>
+                    Mieszane/Neutralne
+                  </span>
+                  <span className="flex items-center gap-2">
+                    <span className="w-4 h-4 rounded bg-red-300"></span>
+                    Negatywne (kilka)
+                  </span>
+                  <span className="flex items-center gap-2">
+                    <span className="w-4 h-4 rounded bg-red-500"></span>
+                    Negatywne (wiele)
+                  </span>
+                </div>
+
+                {/* Kalendarz */}
+                <div className="grid grid-cols-7 gap-2">
+                  {['Pn', 'Wt', 'Śr', 'Cz', 'Pt', 'Sb', 'Nd'].map(day => (
+                    <div key={day} className="text-center font-bold text-sm text-gray-600 py-2">
+                      {day}
+                    </div>
+                  ))}
+
+                  {calendarDays.map((date, idx) => {
+                    if (!date) {
+                      return <div key={idx} className="aspect-square"></div>;
+                    }
+
+                    const dateStr = date.toISOString().split('T')[0];
+                    const stats = getDayStats(dateStr);
+                    const dayColor = getDayColor(stats);
+                    const isSelected = selectedDate === dateStr;
+
+                    return (
+                      <button
+                        key={idx}
+                        onClick={() => fetchNewsForDate(dateStr)}
+                        className={`aspect-square ${dayColor} rounded-lg hover:ring-2 hover:ring-blue-500 transition-all relative
+                          ${isSelected ? 'ring-2 ring-blue-600' : ''}
+                        `}
+                      >
+                        <div className="absolute top-1 left-1 text-xs font-bold text-gray-800">
+                          {date.getDate()}
+                        </div>
+                        {stats && stats.news_count > 0 && (
+                          <div className="absolute bottom-1 right-1 text-xs font-bold text-gray-800">
+                            {stats.news_count}
+                          </div>
+                        )}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Lista newsów z wybranego dnia */}
+              {selectedDate && (
+                <div className="bg-white rounded-lg shadow p-4">
+                  <h3 className="text-lg font-bold text-gray-900 mb-3">
+                    Newsy z {selectedDate} ({newsForDate.length})
+                  </h3>
+
+                  {loading ? (
+                    <div className="flex items-center justify-center py-12">
+                      <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500"></div>
+                    </div>
+                  ) : newsForDate.length === 0 ? (
+                    <p className="text-gray-500 text-center py-8">Brak newsów z tego dnia</p>
+                  ) : (
+                    <div className="space-y-3">
+                      {newsForDate.map((news, idx) => (
+                        <div key={idx} className="border border-gray-200 rounded-lg p-3 hover:shadow-md transition-shadow relative">
+                          <button
+                            onClick={() => markAsDuplicate(news.news_id)}
+                            className="absolute top-1.5 right-1.5 w-6 h-6 flex items-center justify-center bg-red-500 hover:bg-red-600 text-white rounded-full text-sm font-bold"
+                            title="Oznacz jako duplikat"
+                          >
+                            ✕
+                          </button>
+
+                          <div className="flex items-start gap-3">
+                            <div className="flex-shrink-0">
+                              <div className={`w-2 h-16 ${getImpactColor(news.impact)} rounded`}></div>
+                            </div>
+
+                            <div className="flex-1 pr-8">
+                              <h4 className="font-semibold text-sm text-gray-900 mb-1">
+                                {news.title}
+                              </h4>
+
+                              {/* Tickery */}
+                              <div className="flex items-center gap-2 mb-2 flex-wrap">
+                                {news.tickers && news.tickers.map((ticker, tidx) => (
+                                  <span
+                                    key={tidx}
+                                    className="px-2 py-0.5 bg-blue-100 text-blue-800 text-xs font-bold rounded"
+                                  >
+                                    {ticker.ticker}
+                                  </span>
+                                ))}
+                              </div>
+
+                              <div className="flex items-center gap-2 text-xs text-gray-500 mb-2">
+                                <span>{news.source}</span>
+                                {news.url && (
+                                  <>
+                                    <span>•</span>
+                                    <a
+                                      href={news.url}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      className="text-blue-600 hover:underline"
+                                    >
+                                      Link
+                                    </a>
+                                  </>
+                                )}
+                              </div>
+
+                              <div className="flex items-center gap-3 mb-2">
+                                <div className="flex items-center gap-1.5">
+                                  <span className="text-xs text-gray-600">Impact:</span>
+                                  <span className={`font-bold text-sm ${getSentimentColor(news.impact)}`}>
+                                    {news.impact > 0 ? '+' : ''}{Number(news.impact).toFixed(2)}
+                                  </span>
+                                </div>
+                                <div className="flex items-center gap-1.5">
+                                  <span className="text-xs text-gray-600">Confidence:</span>
+                                  <span className="font-bold text-sm text-blue-600">
+                                    {(Number(news.confidence) * 100).toFixed(0)}%
+                                  </span>
+                                </div>
+                              </div>
+
+                              {news.summary && (
+                                <div
+                                  className="text-xs text-gray-700 leading-relaxed"
+                                  dangerouslySetInnerHTML={{ __html: news.summary }}
+                                />
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          );
+        }
+
         // Główny komponent dashboardu
         function TickerDashboard() {
           const [tickers, setTickers] = useState([]);
@@ -456,6 +784,7 @@ HTML_TEMPLATE = """
           const [sortBy, setSortBy] = useState('mentions');
           const [filterImpact, setFilterImpact] = useState('all');
           const [showStats, setShowStats] = useState(true);
+          const [viewMode, setViewMode] = useState('tickers'); // 'tickers' lub 'calendar'
 
           useEffect(() => {
             fetchTickers();
@@ -616,11 +945,13 @@ HTML_TEMPLATE = """
           const getImpactColor = (impact) => {
             const val = Math.abs(impact);
             if (val < 0.05) return 'bg-gray-400';
-            if (impact > 0.5) return 'bg-green-500';
-            if (impact > 0.2) return 'bg-green-400';
-            if (impact > -0.2) return 'bg-yellow-400';
-            if (impact > -0.5) return 'bg-orange-400';
-            return 'bg-red-500';
+            if (impact > 0.5) return 'bg-green-600';
+            if (impact > 0.2) return 'bg-green-500';
+            if (impact > 0.05) return 'bg-green-400';
+            if (impact > -0.05) return 'bg-gray-400';
+            if (impact > -0.2) return 'bg-orange-400';
+            if (impact > -0.5) return 'bg-orange-500';
+            return 'bg-red-600';
           };
 
           // Statystyki dla wybranego tickera
@@ -642,9 +973,31 @@ HTML_TEMPLATE = """
                   </h1>
                   <div className="flex items-center gap-3">
                     <div className="flex items-center gap-2">
+                      <button
+                        onClick={() => setViewMode('tickers')}
+                        className={`px-3 py-1 text-sm rounded-lg transition-colors ${
+                          viewMode === 'tickers'
+                            ? 'bg-blue-500 text-white'
+                            : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+                        }`}
+                      >
+                        Widok Tickerów
+                      </button>
+                      <button
+                        onClick={() => setViewMode('calendar')}
+                        className={`px-3 py-1 text-sm rounded-lg transition-colors ${
+                          viewMode === 'calendar'
+                            ? 'bg-blue-500 text-white'
+                            : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+                        }`}
+                      >
+                        Widok Kalendarz
+                      </button>
+                    </div>
+                    <div className="flex items-center gap-2">
                       <label className="text-xs text-gray-600">Okres:</label>
-                      <select 
-                        value={days} 
+                      <select
+                        value={days}
                         onChange={(e) => setDays(Number(e.target.value))}
                         className="px-2 py-1 text-sm border border-gray-300 rounded-lg"
                       >
@@ -656,20 +1009,25 @@ HTML_TEMPLATE = """
                         <option value="365">1 rok</option>
                       </select>
                     </div>
-                    <div className="flex items-center gap-2">
-                      <label className="text-xs text-gray-600">Sortuj:</label>
-                      <select 
-                        value={sortBy} 
-                        onChange={(e) => setSortBy(e.target.value)}
-                        className="px-2 py-1 text-sm border border-gray-300 rounded-lg"
-                      >
-                        <option value="mentions">Po wzmianach</option>
-                        <option value="impact">Po sile impactu</option>
-                      </select>
-                    </div>
+                    {viewMode === 'tickers' && (
+                      <div className="flex items-center gap-2">
+                        <label className="text-xs text-gray-600">Sortuj:</label>
+                        <select
+                          value={sortBy}
+                          onChange={(e) => setSortBy(e.target.value)}
+                          className="px-2 py-1 text-sm border border-gray-300 rounded-lg"
+                        >
+                          <option value="mentions">Po wzmianach</option>
+                          <option value="impact">Po sile impactu</option>
+                        </select>
+                      </div>
+                    )}
                   </div>
                 </div>
 
+                {viewMode === 'calendar' ? (
+                  <CalendarView days={days} />
+                ) : (
                 <div className="grid grid-cols-12 gap-4">
                   <div className="col-span-3 bg-white rounded-lg shadow p-3 sticky top-4 self-start" style={{ maxHeight: 'calc(100vh - 2rem)' }}>
                     <div className="mb-3">
@@ -989,6 +1347,7 @@ HTML_TEMPLATE = """
                     )}
                   </div>
                 </div>
+                )}
               </div>
             </div>
           );
@@ -1211,6 +1570,116 @@ def mark_duplicate():
         import traceback
         traceback.print_exc()
         return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/calendar_stats')
+def get_calendar_stats():
+    """Endpoint zwracający statystyki newsów dla każdego dnia (dla color coding kalendarza)"""
+    days = request.args.get('days', 90, type=int)
+
+    query = text(f"""
+    SELECT
+        na.date,
+        COUNT(DISTINCT na.id) as news_count,
+        AVG(ts.impact::numeric) as avg_impact
+    FROM {schema}.news_articles na
+    JOIN {schema}.analysis_result ar ON ar.news_id = na.id
+    JOIN {schema}.ticker_sentiment ts ON ts.analysis_id = ar.id
+    WHERE na.date >= CURRENT_DATE - INTERVAL '{days} days'
+        AND na.id NOT IN (SELECT news_id FROM {schema}.news_not_analyzed WHERE reason = 'duplicate')
+    GROUP BY na.date
+    ORDER BY na.date DESC
+    """)
+
+    with engine.connect() as conn:
+        result = conn.execute(query)
+        calendar_data = []
+        for row in result:
+            calendar_data.append({
+                'date': row[0].strftime('%Y-%m-%d') if row[0] else None,
+                'news_count': int(row[1]),
+                'avg_impact': float(row[2]) if row[2] else 0
+            })
+
+    return jsonify(calendar_data)
+
+
+@app.route('/api/news_by_date/<date>')
+def get_news_by_date(date):
+    """Endpoint zwracający wszystkie newsy z wybranego dnia z tickerami"""
+    query = text(f"""
+    SELECT DISTINCT ON (na.id)
+        na.id as news_id,
+        ar.id as analysis_id,
+        na.date,
+        na.title,
+        na.source,
+        na.url,
+        ts.impact,
+        ts.confidence,
+        ts.occasion,
+        ar.summary,
+        ts.ticker
+    FROM {schema}.news_articles na
+    JOIN {schema}.analysis_result ar ON ar.news_id = na.id
+    JOIN {schema}.ticker_sentiment ts ON ts.analysis_id = ar.id
+    WHERE na.date = :date
+        AND na.id NOT IN (SELECT news_id FROM {schema}.news_not_analyzed WHERE reason = 'duplicate')
+    ORDER BY na.id, ts.impact DESC
+    """)
+
+    with engine.connect() as conn:
+        result = conn.execute(query, {'date': date})
+        news_list = []
+
+        # Grupujemy newsy i ich tickery
+        news_dict = {}
+        for row in result:
+            news_id = row[0]
+            if news_id not in news_dict:
+                news_dict[news_id] = {
+                    'news_id': news_id,
+                    'analysis_id': row[1],
+                    'date': row[2].strftime('%Y-%m-%d') if row[2] else None,
+                    'title': row[3],
+                    'source': row[4],
+                    'url': row[5],
+                    'impact': float(row[6]) if row[6] else 0,
+                    'confidence': float(row[7]) if row[7] else 0,
+                    'occasion': row[8],
+                    'summary': format_summary(row[9]),
+                    'tickers': []
+                }
+
+            # Dodaj ticker do listy tickerów dla tego newsa
+            if row[10]:  # ticker
+                ticker_info = {
+                    'ticker': row[10],
+                    'impact': float(row[6]) if row[6] else 0
+                }
+                if ticker_info not in news_dict[news_id]['tickers']:
+                    news_dict[news_id]['tickers'].append(ticker_info)
+
+        # Pobieramy wszystkie tickery dla każdego newsa
+        for news_id in news_dict:
+            ticker_query = text(f"""
+                SELECT ts.ticker, ts.impact
+                FROM {schema}.ticker_sentiment ts
+                WHERE ts.analysis_id = :analysis_id
+                AND ts.ticker IS NOT NULL
+                ORDER BY ts.impact DESC
+            """)
+            ticker_result = conn.execute(ticker_query, {'analysis_id': news_dict[news_id]['analysis_id']})
+            news_dict[news_id]['tickers'] = [
+                {'ticker': row[0], 'impact': float(row[1]) if row[1] else 0}
+                for row in ticker_result
+            ]
+
+        news_list = list(news_dict.values())
+        # Sortuj po impact malejąco
+        news_list.sort(key=lambda x: abs(x['impact']), reverse=True)
+
+    return jsonify(news_list)
 
 
 if __name__ == '__main__':
