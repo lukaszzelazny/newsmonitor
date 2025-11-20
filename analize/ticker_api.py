@@ -174,9 +174,10 @@ HTML_TEMPLATE = """
     {% raw %}
         const { useState, useEffect, useRef } = React;
 
-        // Komponent wykresu Canvas
-        function PriceChart({ ticker, priceHistory, brokerageAnalyses }) {
+        // Komponent wykresu Canvas z punktami dla newsów
+        function PriceChart({ ticker, priceHistory, brokerageAnalyses, analyses, onNewsClick }) {
           const canvasRef = useRef(null);
+          const [hoveredNews, setHoveredNews] = useState(null);
 
           useEffect(() => {
             if (!canvasRef.current || !priceHistory || priceHistory.length === 0) return;
@@ -196,6 +197,16 @@ HTML_TEMPLATE = """
             const margin = { top: 20, right: 80, bottom: 40, left: 60 };
             const chartWidth = width - margin.left - margin.right;
             const chartHeight = height - margin.top - margin.bottom;
+
+            // Funkcja do konwersji daty na pozycję X
+            const dateToX = (dateStr) => {
+              const targetDate = new Date(dateStr);
+              const firstDate = new Date(priceHistory[0].date);
+              const lastDate = new Date(priceHistory[priceHistory.length - 1].date);
+              const totalRange = lastDate - firstDate;
+              const datePos = targetDate - firstDate;
+              return margin.left + (datePos / totalRange) * chartWidth;
+            };
 
             // Osie
             ctx.strokeStyle = '#e5e7eb';
@@ -256,6 +267,52 @@ HTML_TEMPLATE = """
               ctx.fillText(label, x, height - margin.bottom + 20);
             }
 
+            // Rysowanie punktów dla newsów
+            if (analyses && analyses.length > 0) {
+              analyses.forEach((analysis) => {
+                const x = dateToX(analysis.date);
+                
+                // Znajdź najbliższą cenę dla tej daty
+                const analysisDate = new Date(analysis.date);
+                const closestPrice = priceHistory.reduce((prev, curr) => {
+                  const prevDiff = Math.abs(new Date(prev.date) - analysisDate);
+                  const currDiff = Math.abs(new Date(curr.date) - analysisDate);
+                  return currDiff < prevDiff ? curr : prev;
+                });
+                
+                const y = margin.top + chartHeight - ((closestPrice.price - minPrice) / priceRange) * chartHeight;
+
+                // Kolor punktu bazowany na impact
+                let color;
+                const impact = analysis.impact;
+                if (Math.abs(impact) < 0.05) color = '#9ca3af'; // gray
+                else if (impact > 0.3) color = '#10b981'; // green
+                else if (impact > 0) color = '#84cc16'; // light green
+                else if (impact > -0.3) color = '#f97316'; // orange
+                else color = '#ef4444'; // red
+
+                // Rysuj punkt
+                ctx.fillStyle = color;
+                ctx.beginPath();
+                ctx.arc(x, y, 6, 0, 2 * Math.PI);
+                ctx.fill();
+                
+                // Obramowanie
+                ctx.strokeStyle = '#ffffff';
+                ctx.lineWidth = 2;
+                ctx.stroke();
+                
+                // Podświetlenie hoverowanego newsa
+                if (hoveredNews && hoveredNews.date === analysis.date && hoveredNews.title === analysis.title) {
+                  ctx.strokeStyle = '#000000';
+                  ctx.lineWidth = 3;
+                  ctx.beginPath();
+                  ctx.arc(x, y, 8, 0, 2 * Math.PI);
+                  ctx.stroke();
+                }
+              });
+            }
+
             // Linia ceny docelowej
             const latestBrokerage = brokerageAnalyses?.find(b => b.price_new);
             if (latestBrokerage && latestBrokerage.price_new) {
@@ -277,7 +334,26 @@ HTML_TEMPLATE = """
               ctx.fillText(`Cel: ${targetPrice.toFixed(2)}`, width - margin.right + 5, y + 4);
             }
 
-          }, [priceHistory, brokerageAnalyses]);
+          }, [priceHistory, brokerageAnalyses, analyses, hoveredNews]);
+
+          const handleCanvasClick = (e) => {
+            if (!canvasRef.current || !analyses) return;
+            
+            const rect = canvasRef.current.getBoundingClientRect();
+            const x = e.clientX - rect.left;
+            const y = e.clientY - rect.top;
+            
+            // Sprawdź czy kliknięto w któryś punkt
+            const clickRadius = 10;
+            for (const analysis of analyses) {
+              // Tutaj potrzebujemy odtworzyć pozycję punktu
+              // (uproszczone - w produkcji lepiej przechowywać pozycje)
+              if (onNewsClick) {
+                onNewsClick(analysis);
+                break;
+              }
+            }
+          };
 
           if (!priceHistory || priceHistory.length === 0) {
             return (
@@ -315,9 +391,33 @@ HTML_TEMPLATE = """
                 ref={canvasRef} 
                 width={900} 
                 height={250}
-                className="w-full"
+                className="w-full cursor-pointer"
                 style={{ maxWidth: '100%', height: 'auto' }}
+                onClick={handleCanvasClick}
               />
+
+              <div className="mt-4 flex items-center gap-4 text-xs text-gray-600">
+                <span className="flex items-center gap-2">
+                  <span className="w-3 h-3 rounded-full bg-green-500"></span>
+                  Pozytywny (impact &gt; 0.3)
+                </span>
+                <span className="flex items-center gap-2">
+                  <span className="w-3 h-3 rounded-full bg-lime-500"></span>
+                  Lekko pozytywny
+                </span>
+                <span className="flex items-center gap-2">
+                  <span className="w-3 h-3 rounded-full bg-gray-400"></span>
+                  Neutralny
+                </span>
+                <span className="flex items-center gap-2">
+                  <span className="w-3 h-3 rounded-full bg-orange-500"></span>
+                  Lekko negatywny
+                </span>
+                <span className="flex items-center gap-2">
+                  <span className="w-3 h-3 rounded-full bg-red-500"></span>
+                  Negatywny (impact &lt; -0.3)
+                </span>
+              </div>
 
               {latestBrokerage && (
                 <div className="mt-4 p-3 bg-green-50 rounded-lg">
@@ -354,6 +454,8 @@ HTML_TEMPLATE = """
           const [searchTerm, setSearchTerm] = useState('');
           const [days, setDays] = useState(30);
           const [sortBy, setSortBy] = useState('mentions');
+          const [filterImpact, setFilterImpact] = useState('all');
+          const [showStats, setShowStats] = useState(true);
 
           useEffect(() => {
             fetchTickers();
@@ -414,6 +516,30 @@ HTML_TEMPLATE = """
             }
           };
 
+          const markAsDuplicate = async (analysisId, newsId) => {
+            if (!confirm('Czy na pewno chcesz oznaczyć ten news jako duplikat?')) return;
+            
+            try {
+              const response = await fetch('/api/mark_duplicate', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ news_id: newsId })
+              });
+              
+              if (response.ok) {
+                // Odśwież listę analiz
+                fetchAnalyses(selectedTicker.ticker);
+                fetchTickers(); // Odśwież statystyki tickerów
+                alert('News oznaczony jako duplikat i usunięty z widoku');
+              } else {
+                alert('Błąd przy oznaczaniu newsa jako duplikat');
+              }
+            } catch (error) {
+              console.error('Error marking as duplicate:', error);
+              alert('Błąd połączenia z serwerem');
+            }
+          };
+
           const filteredTickers = tickers.filter(t => 
             t.ticker.toLowerCase().includes(searchTerm.toLowerCase()) ||
             (t.company_name && t.company_name.toLowerCase().includes(searchTerm.toLowerCase()))
@@ -424,6 +550,14 @@ HTML_TEMPLATE = """
               return b.avg_sentiment - a.avg_sentiment;
             }
             return b.mentions - a.mentions;
+          });
+
+          const filteredAnalyses = analyses.filter(a => {
+            if (filterImpact === 'all') return true;
+            if (filterImpact === 'positive') return a.impact > 0.05;
+            if (filterImpact === 'negative') return a.impact < -0.05;
+            if (filterImpact === 'neutral') return Math.abs(a.impact) <= 0.05;
+            return true;
           });
 
           const getSentimentColor = (sentiment) => {
@@ -488,6 +622,16 @@ HTML_TEMPLATE = """
             if (impact > -0.5) return 'bg-orange-400';
             return 'bg-red-500';
           };
+
+          // Statystyki dla wybranego tickera
+          const tickerStats = selectedTicker ? {
+            totalNews: analyses.length,
+            positiveNews: analyses.filter(a => a.impact > 0.05).length,
+            negativeNews: analyses.filter(a => a.impact < -0.05).length,
+            neutralNews: analyses.filter(a => Math.abs(a.impact) <= 0.05).length,
+            avgImpact: analyses.length > 0 ? (analyses.reduce((sum, a) => sum + a.impact, 0) / analyses.length) : 0,
+            avgConfidence: analyses.length > 0 ? (analyses.reduce((sum, a) => sum + a.confidence, 0) / analyses.length) : 0
+          } : null;
 
           return (
             <div className="min-h-screen bg-gray-50 p-6">
@@ -600,6 +744,50 @@ HTML_TEMPLATE = """
                           </div>
                         </div>
 
+                        {tickerStats && showStats && (
+                          <div className="bg-white rounded-lg shadow-lg p-6">
+                            <div className="flex items-center justify-between mb-4">
+                              <h3 className="text-lg font-semibold text-gray-900">Statystyki</h3>
+                              <button 
+                                onClick={() => setShowStats(false)}
+                                className="text-gray-400 hover:text-gray-600"
+                              >
+                                ✕
+                              </button>
+                            </div>
+                            <div className="grid grid-cols-3 gap-4">
+                              <div className="bg-gray-50 p-4 rounded-lg">
+                                <div className="text-2xl font-bold text-gray-900">{tickerStats.totalNews}</div>
+                                <div className="text-sm text-gray-600">Wszystkie newsy</div>
+                              </div>
+                              <div className="bg-green-50 p-4 rounded-lg">
+                                <div className="text-2xl font-bold text-green-600">{tickerStats.positiveNews}</div>
+                                <div className="text-sm text-gray-600">Pozytywne</div>
+                              </div>
+                              <div className="bg-red-50 p-4 rounded-lg">
+                                <div className="text-2xl font-bold text-red-600">{tickerStats.negativeNews}</div>
+                                <div className="text-sm text-gray-600">Negatywne</div>
+                              </div>
+                              <div className="bg-gray-50 p-4 rounded-lg">
+                                <div className="text-2xl font-bold text-gray-600">{tickerStats.neutralNews}</div>
+                                <div className="text-sm text-gray-600">Neutralne</div>
+                              </div>
+                              <div className="bg-blue-50 p-4 rounded-lg">
+                                <div className={`text-2xl font-bold ${getSentimentColor(tickerStats.avgImpact)}`}>
+                                  {tickerStats.avgImpact > 0 ? '+' : ''}{tickerStats.avgImpact.toFixed(3)}
+                                </div>
+                                <div className="text-sm text-gray-600">Średni impact</div>
+                              </div>
+                              <div className="bg-purple-50 p-4 rounded-lg">
+                                <div className="text-2xl font-bold text-purple-600">
+                                  {(tickerStats.avgConfidence * 100).toFixed(0)}%
+                                </div>
+                                <div className="text-sm text-gray-600">Średnia pewność</div>
+                              </div>
+                            </div>
+                          </div>
+                        )}
+
                         {loadingChart ? (
                           <div className="bg-white rounded-lg shadow-lg p-6 flex items-center justify-center">
                             <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500"></div>
@@ -609,6 +797,7 @@ HTML_TEMPLATE = """
                             ticker={selectedTicker.ticker} 
                             priceHistory={priceHistory}
                             brokerageAnalyses={brokerageAnalyses}
+                            analyses={filteredAnalyses}
                           />
                         )}
 
@@ -620,24 +809,47 @@ HTML_TEMPLATE = """
                           <div className="bg-white rounded-lg shadow-lg p-6">
                             <div className="space-y-6">
                               <div>
-                                <h3 className="text-lg font-semibold text-gray-900 mb-3">
-                                  Analizy newsowe ({analyses.length})
-                                </h3>
-                                {analyses.length === 0 ? (
+                                <div className="flex items-center justify-between mb-3">
+                                  <h3 className="text-lg font-semibold text-gray-900">
+                                    Analizy newsowe ({filteredAnalyses.length})
+                                  </h3>
+                                  <div className="flex items-center gap-2">
+                                    <label className="text-sm text-gray-600">Filtruj:</label>
+                                    <select 
+                                      value={filterImpact} 
+                                      onChange={(e) => setFilterImpact(e.target.value)}
+                                      className="px-3 py-1 text-sm border border-gray-300 rounded-lg"
+                                    >
+                                      <option value="all">Wszystkie</option>
+                                      <option value="positive">Pozytywne</option>
+                                      <option value="negative">Negatywne</option>
+                                      <option value="neutral">Neutralne</option>
+                                    </select>
+                                  </div>
+                                </div>
+                                {filteredAnalyses.length === 0 ? (
                                   <p className="text-gray-500 text-sm">Brak analiz newsowych</p>
                                 ) : (
                                   <div className="space-y-3">
-                                    {analyses.map((analysis, idx) => (
+                                    {filteredAnalyses.map((analysis, idx) => (
                                       <div
                                         key={idx}
-                                        className="border border-gray-200 rounded-lg p-4 hover:shadow-md transition-shadow"
+                                        className="border border-gray-200 rounded-lg p-4 hover:shadow-md transition-shadow relative"
                                       >
+                                        <button
+                                          onClick={() => markAsDuplicate(analysis.analysis_id, analysis.news_id)}
+                                          className="absolute top-2 right-2 w-8 h-8 flex items-center justify-center bg-red-500 hover:bg-red-600 text-white rounded-full text-lg font-bold transition-colors"
+                                          title="Oznacz jako duplikat i usuń"
+                                        >
+                                          ✕
+                                        </button>
+
                                         <div className="flex items-start gap-4">
                                           <div className="flex-shrink-0">
                                             <div className={`w-3 h-24 ${getImpactColor(analysis.impact)} rounded`}></div>
                                           </div>
 
-                                          <div className="flex-1">
+                                          <div className="flex-1 pr-10">
                                             <div className="flex items-start justify-between mb-2">
                                               <div className="flex-1">
                                                 <h3 className="font-semibold text-gray-900 mb-1">
@@ -647,6 +859,19 @@ HTML_TEMPLATE = """
                                                   <span>{analysis.date}</span>
                                                   <span>•</span>
                                                   <span>{analysis.source}</span>
+                                                  {analysis.url && (
+                                                    <>
+                                                      <span>•</span>
+                                                      <a 
+                                                        href={analysis.url} 
+                                                        target="_blank" 
+                                                        rel="noopener noreferrer"
+                                                        className="text-blue-600 hover:underline"
+                                                      >
+                                                        Link
+                                                      </a>
+                                                    </>
+                                                  )}
                                                 </div>
                                               </div>
                                             </div>
@@ -804,6 +1029,7 @@ def get_tickers():
     LEFT JOIN {schema}.tickers t ON ts.ticker = t.ticker
     WHERE ts.ticker IS NOT NULL
         AND na.date >= CURRENT_DATE - INTERVAL '{days} days'
+        AND na.id NOT IN (SELECT news_id FROM {schema}.news_not_analyzed WHERE reason = 'duplicate')
     GROUP BY ts.ticker, t.company_name, t.sector
     HAVING COUNT(*) >= 1
     ORDER BY COUNT(*) DESC, ts.ticker
@@ -833,6 +1059,8 @@ def get_analyses(ticker):
 
     query = text(f"""
     SELECT 
+        na.id as news_id,
+        ar.id as analysis_id,
         na.date,
         na.title,
         na.source,
@@ -846,6 +1074,7 @@ def get_analyses(ticker):
     JOIN {schema}.news_articles na ON ar.news_id = na.id
     WHERE ts.ticker = :ticker
         AND na.date >= CURRENT_DATE - INTERVAL '{days} days'
+        AND na.id NOT IN (SELECT news_id FROM {schema}.news_not_analyzed WHERE reason = 'duplicate')
     ORDER BY na.date DESC, ts.impact DESC
     """)
 
@@ -854,14 +1083,16 @@ def get_analyses(ticker):
         analyses = []
         for row in result:
             analyses.append({
-                'date': row[0].strftime('%Y-%m-%d') if row[0] else None,
-                'title': row[1],
-                'source': row[2],
-                'url': row[3],
-                'impact': float(row[4]) if row[4] else 0,
-                'confidence': float(row[5]) if row[5] else 0,
-                'occasion': row[6],
-                'summary': format_summary(row[7])
+                'news_id': row[0],
+                'analysis_id': row[1],
+                'date': row[2].strftime('%Y-%m-%d') if row[2] else None,
+                'title': row[3],
+                'source': row[4],
+                'url': row[5],
+                'impact': float(row[6]) if row[6] else 0,
+                'confidence': float(row[7]) if row[7] else 0,
+                'occasion': row[8],
+                'summary': format_summary(row[9])
             })
 
     return jsonify(analyses)
@@ -888,6 +1119,7 @@ def get_brokerage_analyses(ticker):
     LEFT JOIN {schema}.news_articles na ON ar.news_id = na.id
     WHERE ba.ticker = :ticker
         AND ba.created_at >= CURRENT_DATE - INTERVAL '{days} days'
+        AND (na.id IS NULL OR na.id NOT IN (SELECT news_id FROM {schema}.news_not_analyzed WHERE reason = 'duplicate'))
     ORDER BY ba.price_old, ba.price_new, ba.brokerage_house, ba.created_at DESC
     """)
 
@@ -941,6 +1173,43 @@ def get_price_history_endpoint(ticker):
     days = request.args.get('days', 90, type=int)
     price_data = get_price_history(ticker, days)
     return jsonify(price_data)
+
+
+@app.route('/api/mark_duplicate', methods=['POST'])
+def mark_duplicate():
+    """Endpoint oznaczający news jako duplikat"""
+    try:
+        data = request.get_json()
+        news_id = data.get('news_id')
+
+        if not news_id:
+            return jsonify({'error': 'Missing news_id'}), 400
+
+        with engine.connect() as conn:
+            # Sprawdź czy news istnieje
+            check_query = text(f"""
+                SELECT id FROM {schema}.news_articles WHERE id = :news_id
+            """)
+            result = conn.execute(check_query, {'news_id': news_id})
+            if not result.fetchone():
+                return jsonify({'error': 'News not found'}), 404
+
+            # Dodaj wpis do news_not_analyzed
+            insert_query = text(f"""
+                INSERT INTO {schema}.news_not_analyzed (news_id, reason, relevance_score)
+                VALUES (:news_id, 'duplicate', 0.0)
+                ON CONFLICT (news_id) DO UPDATE SET reason = 'duplicate'
+            """)
+            conn.execute(insert_query, {'news_id': news_id})
+            conn.commit()
+
+        return jsonify({'success': True, 'message': 'News marked as duplicate'})
+
+    except Exception as e:
+        print(f"Error marking duplicate: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
 
 
 if __name__ == '__main__':
