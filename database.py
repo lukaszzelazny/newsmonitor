@@ -58,6 +58,7 @@ class Ticker(Base):
     ticker = Column(String(32), primary_key=True)
     company_name = Column(String(200), nullable=True)
     sector = Column(String(100), nullable=True)
+    in_portfolio = Column(Integer, default=0, nullable=False)  # 0 = nie, 1 = tak
 
     def __repr__(self):
         return f"<Ticker(ticker='{self.ticker}')>"
@@ -140,22 +141,16 @@ class Database:
     
     def __init__(self):
         """Initialize database connection."""
-        host = os.getenv('DB_HOST', 'localhost')
-        port = os.getenv('DB_PORT', '5432')
-        user = os.getenv('DB_USER', 'stock')
-        password = os.getenv('DB_PASSWORD', 'stock')
-        database = os.getenv('DB_NAME', 'stock')
-        schema = os.getenv('DB_SCHEMA', 'stock')
-        
-        db_url = f'postgresql://{user}:{password}@{host}:{port}/{database}'
-        
+        service = os.getenv('PG_SERVICE', 'stock')
+        db_url = f"postgresql:///?service={service}"
+
         self.engine = create_engine(
             db_url,
             echo=False,
             connect_args={},
-            execution_options={"schema_translate_map": {schema: schema}}
+            execution_options={"schema_translate_map": {"stock": "stock"}}
         )
-        Base.metadata.schema = schema
+        Base.metadata.schema = "stock"
         Base.metadata.create_all(self.engine)
         self.Session = sessionmaker(bind=self.engine)
     

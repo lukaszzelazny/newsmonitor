@@ -214,6 +214,12 @@ Zasady analizy:
    - 📊 Makro / Rynek (dotyczy ogólnych zjawisk gospodarczych)
    - 📉 Niepowiązana / neutralna (nie ma znaczenia dla rynku)
 
+   **WAŻNE - Emisja nowych akcji (ABB):**
+   - Jeśli wiadomość dotyczy emisji nowych akcji, subskrypcji, ABB (akcelerowany budowa księgi), to ma to WYSOKI WPŁYW na kurs (zazwyczaj negatywny impact > 0.5)
+   - Emisja akcji często powoduje rozwodnienie kapitału i spadek wartości akcji istniejących akcjonariuszy
+   - Oceń impact na poziomie -0.6 do -0.8 dla standardowej emisji ABB
+   - Confidence powinno być wysokie (0.8-0.9) dla tego typu wiadomości
+
 2. **Zidentyfikuj tickery**:
    - Jeżeli wiadomość dotyczy konkretnych spółek, zwróć jeden główny ticker oraz ewentualnie inne powiązane.
    - Jeśli brak – zwróć pustą listę: `"related_tickers": []`.
@@ -301,6 +307,12 @@ Zasady analizy:
    - 💰 Debiut / IPO – informacja o wejściu spółki na giełdę
    - 📊 Makro / Rynek – dotyczy zjawisk gospodarczych, wskaźników, polityki pieniężnej, cen surowców, decyzji NBP/FED itp.
    - 📉 Niepowiązana / Neutralna – nie ma znaczenia dla rynku lub kursów akcji
+
+   **WAŻNE - Emisja nowych akcji (ABB):**
+   - Jeśli wiadomość dotyczy emisji nowych akcji, subskrypcji, ABB (akcelerowany budowa księgi), to ma to WYSOKI WPŁYW na kurs (zazwyczaj negatywny impact > 0.5)
+   - Emisja akcji często powoduje rozwodnienie kapitału i spadek wartości akcji istniejących akcjonariuszy
+   - Oceń impact na poziomie -0.6 do -0.8 dla standardowej emisji ABB
+   - Confidence powinno być wysokie (0.8-0.9) dla tego typu wiadomości
 
 2. **Zidentyfikuj tickery**:
    - Jeżeli wiadomość dotyczy konkretnych spółek, wypisz ich tickery (np. "related_tickers": ["KGH", "PZU"])
@@ -714,7 +726,7 @@ def cleanJson(analysis_json: str) -> str:
 
 
 def analyze_articles(db: Database, mode: str = 'unanalyzed', article_id: int = None,
-                     relevance_threshold: float = 0.50, telegram=None):
+                     relevance_threshold: float = 0.50, telegram=None, skip_relevance_check: bool = False):
     """
     Główna funkcja do analizy artykułów z wstępną filtracją istotności.
 
@@ -723,6 +735,8 @@ def analyze_articles(db: Database, mode: str = 'unanalyzed', article_id: int = N
         mode: 'id' (dla konkretnego ID) lub 'unanalyzed' (dla nieprzeanalizowanych)
         article_id: ID artykułu (wymagane gdy mode='id')
         relevance_threshold: Próg istotności dla embeddings (0-1)
+        telegram: Instancja Telegram do wysyłania powiadomień
+        skip_relevance_check: Jeśli True, pomija sprawdzanie wzorców i od razu analizuje przez AI
 
     Returns:
         Dict z informacją o przetworzonych artykułach
@@ -772,55 +786,62 @@ def analyze_articles(db: Database, mode: str = 'unanalyzed', article_id: int = N
                 })
                 continue
 
-            # NOWE: Wstępna analiza istotności
-            print(f"[1/3] Sprawdzam istotność newsa...")
-
-            # Sprawdź czy news zawiera negatywne słowa kluczowe
-            has_negative, negative_keyword = contains_pattern(NEGATIVE_KEYWORDS, article.title, article.content or "")
-            if has_negative:
-                reason = f"Zawiera negatywne słowo kluczowe: '{negative_keyword}'"
-                print(f"    ✗ Wykluczony: {reason}")
-                save_not_analyzed(db, article.id, reason, 0.0)
-                results.append({
-                    "article_id": article.id,
-                    "title": article.title,
-                    "status": "skipped",
-                    "reason": "negative_keyword",
-                    "relevance_score": 0.0,
-                    "details": reason
-                })
-                continue
-            has_summary, summary_keyword = contains_pattern(NEWS_SUMMARY_PATTERN,
-                                                              article.title,
-                                                              article.content or "")
-            if not has_summary:
-                is_relevant, relevance_score, relevance_reason = is_news_relevant(
-                    article.title,
-                    article.content or "",
-                    threshold=relevance_threshold
-                )
+            # NOWE: Wstępna analiza istotności (POMIJANA jeśli skip_relevance_check=True)
+            if skip_relevance_check:
+                print(f"[1/2] Pomijam sprawdzanie wzorców - bezpośrednia analiza AI...")
+                has_summary = False
+                is_relevant = True
+                relevance_score = 1.0
             else:
-                is_relevant, relevance_score, relevance_reason = True, 1, "Podsumowanie dnia"
+                print(f"[1/3] Sprawdzam istotność newsa...")
 
-            print(
-                f"    Istotność: {'TAK' if is_relevant else 'NIE'} (score: {relevance_score:.3f})")
-            print(f"    Powód: {relevance_reason}")
+                # Sprawdź czy news zawiera negatywne słowa kluczowe
+                has_negative, negative_keyword = contains_pattern(NEGATIVE_KEYWORDS, article.title, article.content or "")
+                if has_negative:
+                    reason = f"Zawiera negatywne słowo kluczowe: '{negative_keyword}'"
+                    print(f"    ✗ Wykluczony: {reason}")
+                    save_not_analyzed(db, article.id, reason, 0.0)
+                    results.append({
+                        "article_id": article.id,
+                        "title": article.title,
+                        "status": "skipped",
+                        "reason": "negative_keyword",
+                        "relevance_score": 0.0,
+                        "details": reason
+                    })
+                    continue
+                has_summary, summary_keyword = contains_pattern(NEWS_SUMMARY_PATTERN,
+                                                                  article.title,
+                                                                  article.content or "")
+                if not has_summary:
+                    is_relevant, relevance_score, relevance_reason = is_news_relevant(
+                        article.title,
+                        article.content or "",
+                        threshold=relevance_threshold
+                    )
+                else:
+                    is_relevant, relevance_score, relevance_reason = True, 1, "Podsumowanie dnia"
 
-            if not is_relevant:
-                # Zapisz do news_not_analyzed
-                save_not_analyzed(db, article.id, relevance_reason, relevance_score)
-                results.append({
-                    "article_id": article.id,
-                    "title": article.title,
-                    "status": "skipped",
-                    "reason": "not_relevant",
-                    "relevance_score": relevance_score,
-                    "details": relevance_reason
-                })
-                continue
+                print(
+                    f"    Istotność: {'TAK' if is_relevant else 'NIE'} (score: {relevance_score:.3f})")
+                print(f"    Powód: {relevance_reason}")
 
-            # Analizuj artykuł (tylko jeśli jest istotny)
-            print(f"[2/3] Wysyłam zapytanie do OpenAI...")
+                if not is_relevant:
+                    # Zapisz do news_not_analyzed
+                    save_not_analyzed(db, article.id, relevance_reason, relevance_score)
+                    results.append({
+                        "article_id": article.id,
+                        "title": article.title,
+                        "status": "skipped",
+                        "reason": "not_relevant",
+                        "relevance_score": relevance_score,
+                        "details": relevance_reason
+                    })
+                    continue
+
+            # Analizuj artykuł (tylko jeśli jest istotny lub skip_relevance_check=True)
+            step_num = "[2/2]" if skip_relevance_check else "[2/3]"
+            print(f"{step_num} Wysyłam zapytanie do OpenAI...")
             if has_summary:
                 analysis_json = analyze_summary(article.title, article.content or "")
                 analysis_datas = json.loads(cleanJson(analysis_json))
@@ -852,14 +873,14 @@ def analyze_articles(db: Database, mode: str = 'unanalyzed', article_id: int = N
                 tickers = analysis_data.get('related_tickers', [])
                 sector_impact = analysis_data.get('sector_impact')
                 sector = analysis_data.get('sector')
-                if tickers:
+                if tickers and telegram:
                     telegram.send_analysis_alert(ticker=','.join(tickers),
                                                  title=article.title,
                                                  reason=analysis_data.get('reason'),
                                                  impact=analysis_data.get('ticker_impact'),
                                                  confidence=analysis_data.get('confidence')
                                                  )
-                elif sector:
+                elif sector and telegram:
                     telegram.send_sector_alert(sector=sector,
                                                  title=article.title,
                                                  reason=analysis_data.get('reason'),
@@ -869,7 +890,8 @@ def analyze_articles(db: Database, mode: str = 'unanalyzed', article_id: int = N
             print(f"    Otrzymano odpowiedź: {analysis_json[:100]}...")
 
             # Zapisz wyniki
-            print(f"[3/3] Zapisuję wyniki do bazy danych...")
+            step_num = "[2/2]" if skip_relevance_check else "[3/3]"
+            print(f"{step_num} Zapisuję wyniki do bazy danych...")
 
             analysis_id = save_analysis_results(db, article.id, analysis_json)
             print(f"✓ Pomyślnie zapisano analizę (analysis_id={analysis_id})")

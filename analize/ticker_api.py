@@ -6,10 +6,13 @@ Potem otwórz: http://localhost:5000
 Wymagane biblioteki:
 pip install flask sqlalchemy yfinance psycopg2-binary
 """
+import sys
+import os
+
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from flask import Flask, render_template_string, jsonify, request
 from sqlalchemy import create_engine, text
-import os
 from datetime import datetime, timedelta
 import yfinance as yf
 from functools import lru_cache
@@ -770,6 +773,279 @@ HTML_TEMPLATE = """
           );
         }
 
+        // Komponent widoku odrzuconych newsów
+        function CalendarRejectedView({ days, onBack }) {
+          const [calendarStats, setCalendarStats] = useState([]);
+          const [selectedDate, setSelectedDate] = useState(null);
+          const [newsForDate, setNewsForDate] = useState([]);
+          const [loading, setLoading] = useState(false);
+          const [reanalyzing, setReanalyzing] = useState({});
+          const [currentMonth, setCurrentMonth] = useState(new Date());
+
+          useEffect(() => {
+            fetchCalendarStats();
+          }, [days]);
+
+          const fetchCalendarStats = async () => {
+            try {
+              const response = await fetch(`/api/rejected_calendar_stats?days=${days}`);
+              const data = await response.json();
+              setCalendarStats(data);
+            } catch (error) {
+              console.error('Error fetching rejected calendar stats:', error);
+            }
+          };
+
+          const fetchNewsForDate = async (date) => {
+            setLoading(true);
+            try {
+              const response = await fetch(`/api/rejected_news_by_date/${date}`);
+              const data = await response.json();
+              setNewsForDate(data);
+              setSelectedDate(date);
+            } catch (error) {
+              console.error('Error fetching rejected news for date:', error);
+            } finally {
+              setLoading(false);
+            }
+          };
+
+          const reanalyzeNews = async (newsId) => {
+            if (!confirm('Czy na pewno chcesz ponownie przeanalizować ten news przez AI?')) return;
+
+            setReanalyzing(prev => ({ ...prev, [newsId]: true }));
+            try {
+              const response = await fetch('/api/reanalyze_news', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ news_id: newsId })
+              });
+
+              const result = await response.json();
+
+              if (response.ok) {
+                alert('News został pomyślnie przeanalizowany przez AI!');
+                fetchNewsForDate(selectedDate);
+                fetchCalendarStats();
+              } else {
+                alert(`Błąd analizy: ${result.error}`);
+              }
+            } catch (error) {
+              console.error('Error reanalyzing news:', error);
+              alert('Błąd połączenia z serwerem');
+            } finally {
+              setReanalyzing(prev => ({ ...prev, [newsId]: false }));
+            }
+          };
+
+          const getDayStats = (dateStr) => {
+            return calendarStats.filter(s => s.date === dateStr);
+          };
+
+          const getDayColor = (stats) => {
+            if (!stats || stats.length === 0) return 'bg-gray-50';
+
+            const totalCount = stats.reduce((sum, s) => sum + s.news_count, 0);
+
+            if (totalCount > 10) return 'bg-red-500';
+            if (totalCount > 5) return 'bg-red-400';
+            if (totalCount > 2) return 'bg-red-300';
+            return 'bg-red-200';
+          };
+
+          // Generuj dni dla kalendarza
+          const generateCalendarDays = () => {
+            const year = currentMonth.getFullYear();
+            const month = currentMonth.getMonth();
+
+            const firstDay = new Date(year, month, 1);
+            const lastDay = new Date(year, month + 1, 0);
+
+            const daysInMonth = lastDay.getDate();
+            const startDayOfWeek = firstDay.getDay();
+
+            const days = [];
+
+            // Puste dni przed pierwszym dniem miesiąca
+            for (let i = 0; i < (startDayOfWeek === 0 ? 6 : startDayOfWeek - 1); i++) {
+              days.push(null);
+            }
+
+            // Dni miesiąca
+            for (let day = 1; day <= daysInMonth; day++) {
+              days.push(new Date(year, month, day));
+            }
+
+            return days;
+          };
+
+          const calendarDays = generateCalendarDays();
+          const monthNames = ['Styczeń', 'Luty', 'Marzec', 'Kwiecień', 'Maj', 'Czerwiec',
+                            'Lipiec', 'Sierpień', 'Wrzesień', 'Październik', 'Listopad', 'Grudzień'];
+
+          return (
+            <div className="space-y-4">
+              <div className="bg-white rounded-lg shadow p-4">
+                <div className="flex items-center justify-between mb-4">
+                  <h2 className="text-xl font-bold text-gray-900">
+                    Odrzucone Newsy - {monthNames[currentMonth.getMonth()]} {currentMonth.getFullYear()}
+                  </h2>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => setCurrentMonth(new Date(currentMonth.getFullYear(), currentMonth.getMonth() - 1))}
+                      className="px-3 py-1 bg-gray-200 hover:bg-gray-300 rounded-lg"
+                    >
+                      ←
+                    </button>
+                    <button
+                      onClick={() => setCurrentMonth(new Date())}
+                      className="px-3 py-1 bg-red-500 hover:bg-red-600 text-white rounded-lg text-sm"
+                    >
+                      Dziś
+                    </button>
+                    <button
+                      onClick={() => setCurrentMonth(new Date(currentMonth.getFullYear(), currentMonth.getMonth() + 1))}
+                      className="px-3 py-1 bg-gray-200 hover:bg-gray-300 rounded-lg"
+                    >
+                      →
+                    </button>
+                  </div>
+                </div>
+
+                {/* Legenda */}
+                <div className="mb-4 flex items-center gap-4 text-xs text-gray-600 flex-wrap">
+                  <span className="flex items-center gap-2">
+                    <span className="w-4 h-4 rounded bg-red-500"></span>
+                    Wiele odrzuconych (10+)
+                  </span>
+                  <span className="flex items-center gap-2">
+                    <span className="w-4 h-4 rounded bg-red-300"></span>
+                    Kilka odrzuconych (2-10)
+                  </span>
+                  <span className="flex items-center gap-2">
+                    <span className="w-4 h-4 rounded bg-red-200"></span>
+                    Mało odrzuconych (1-2)
+                  </span>
+                </div>
+
+                {/* Kalendarz */}
+                <div className="grid grid-cols-7 gap-2">
+                  {['Pn', 'Wt', 'Śr', 'Cz', 'Pt', 'Sb', 'Nd'].map(day => (
+                    <div key={day} className="text-center font-bold text-sm text-gray-600 py-2">
+                      {day}
+                    </div>
+                  ))}
+
+                  {calendarDays.map((date, idx) => {
+                    if (!date) {
+                      return <div key={idx} className="aspect-square"></div>;
+                    }
+
+                    const dateStr = date.toISOString().split('T')[0];
+                    const stats = getDayStats(dateStr);
+                    const dayColor = getDayColor(stats);
+                    const isSelected = selectedDate === dateStr;
+                    const totalCount = stats.reduce((sum, s) => sum + s.news_count, 0);
+
+                    return (
+                      <button
+                        key={idx}
+                        onClick={() => fetchNewsForDate(dateStr)}
+                        className={`aspect-square ${dayColor} rounded-lg hover:ring-2 hover:ring-red-500 transition-all relative
+                          ${isSelected ? 'ring-2 ring-red-600' : ''}
+                        `}
+                      >
+                        <div className="absolute top-1 left-1 text-xs font-bold text-gray-800">
+                          {date.getDate()}
+                        </div>
+                        {totalCount > 0 && (
+                          <div className="absolute bottom-1 right-1 text-xs font-bold text-gray-800">
+                            {totalCount}
+                          </div>
+                        )}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Lista odrzuconych newsów z wybranego dnia */}
+              {selectedDate && (
+                <div className="bg-white rounded-lg shadow p-4">
+                  <h3 className="text-lg font-bold text-gray-900 mb-3">
+                    Odrzucone newsy z {selectedDate} ({newsForDate.length})
+                  </h3>
+
+                  {loading ? (
+                    <div className="flex items-center justify-center py-12">
+                      <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-red-500"></div>
+                    </div>
+                  ) : newsForDate.length === 0 ? (
+                    <p className="text-gray-500 text-center py-8">Brak odrzuconych newsów z tego dnia</p>
+                  ) : (
+                    <div className="space-y-3">
+                      {newsForDate.map((news, idx) => (
+                        <div key={idx} className="border border-red-200 rounded-lg p-4 hover:shadow-md transition-shadow bg-red-50">
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="flex-1">
+                              <h4 className="font-semibold text-sm text-gray-900 mb-2">
+                                {news.title}
+                              </h4>
+
+                              <div className="flex items-center gap-2 text-xs text-gray-500 mb-2">
+                                <span>{news.source}</span>
+                                {news.url && (
+                                  <>
+                                    <span>•</span>
+                                    <a
+                                      href={news.url}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      className="text-blue-600 hover:underline"
+                                    >
+                                      Link
+                                    </a>
+                                  </>
+                                )}
+                              </div>
+
+                              <div className="mb-2 p-2 bg-red-100 rounded border border-red-300">
+                                <div className="text-xs font-semibold text-red-900 mb-1">Powód odrzucenia:</div>
+                                <div className="text-xs text-red-800">{news.reason}</div>
+                                <div className="text-xs text-red-600 mt-1">
+                                  Score: {(news.relevance_score * 100).toFixed(1)}%
+                                </div>
+                              </div>
+
+                              {news.content && (
+                                <div className="text-xs text-gray-700 leading-relaxed mb-2">
+                                  {news.content.substring(0, 200)}...
+                                </div>
+                              )}
+                            </div>
+
+                            <button
+                              onClick={() => reanalyzeNews(news.news_id)}
+                              disabled={reanalyzing[news.news_id]}
+                              className={`flex-shrink-0 px-4 py-2 rounded-lg font-semibold text-sm transition-colors ${
+                                reanalyzing[news.news_id]
+                                  ? 'bg-gray-300 text-gray-600 cursor-not-allowed'
+                                  : 'bg-blue-500 hover:bg-blue-600 text-white'
+                              }`}
+                            >
+                              {reanalyzing[news.news_id] ? 'Analizowanie...' : 'Analizuj AI'}
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          );
+        }
+
         // Główny komponent dashboardu
         function TickerDashboard() {
           const [tickers, setTickers] = useState([]);
@@ -784,7 +1060,7 @@ HTML_TEMPLATE = """
           const [sortBy, setSortBy] = useState('mentions');
           const [filterImpact, setFilterImpact] = useState('all');
           const [showStats, setShowStats] = useState(true);
-          const [viewMode, setViewMode] = useState('tickers'); // 'tickers' lub 'calendar'
+          const [viewMode, setViewMode] = useState('tickers'); // 'tickers', 'calendar' lub 'rejected'
 
           useEffect(() => {
             fetchTickers();
@@ -875,6 +1151,11 @@ HTML_TEMPLATE = """
           );
 
           const sortedTickers = [...filteredTickers].sort((a, b) => {
+            // Najpierw sortuj po statusie portfolio (in_portfolio na górze)
+            if (a.in_portfolio !== b.in_portfolio) {
+              return b.in_portfolio ? 1 : -1;
+            }
+            // Potem według wybranego kryterium
             if (sortBy === 'impact') {
               return b.avg_sentiment - a.avg_sentiment;
             }
@@ -991,7 +1272,17 @@ HTML_TEMPLATE = """
                             : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
                         }`}
                       >
-                        Widok Kalendarz
+                        Kalendarz Analiz
+                      </button>
+                      <button
+                        onClick={() => setViewMode('rejected')}
+                        className={`px-3 py-1 text-sm rounded-lg transition-colors ${
+                          viewMode === 'rejected'
+                            ? 'bg-red-500 text-white'
+                            : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+                        }`}
+                      >
+                        Odrzucone Newsy
                       </button>
                     </div>
                     <div className="flex items-center gap-2">
@@ -1027,6 +1318,8 @@ HTML_TEMPLATE = """
 
                 {viewMode === 'calendar' ? (
                   <CalendarView days={days} />
+                ) : viewMode === 'rejected' ? (
+                  <CalendarRejectedView days={days} />
                 ) : (
                 <div className="grid grid-cols-12 gap-4">
                   <div className="col-span-3 bg-white rounded-lg shadow p-3 sticky top-4 self-start" style={{ maxHeight: 'calc(100vh - 2rem)' }}>
@@ -1041,37 +1334,76 @@ HTML_TEMPLATE = """
                     </div>
 
                     <div className="space-y-1.5 overflow-y-auto" style={{ maxHeight: 'calc(100vh - 10rem)' }}>
-                      {sortedTickers.map((ticker) => (
-                        <div
-                          key={ticker.ticker}
-                          onClick={() => setSelectedTicker(ticker)}
-                          className={`p-2 rounded-lg cursor-pointer transition-all ${
-                            selectedTicker?.ticker === ticker.ticker
-                              ? 'bg-blue-50 border-2 border-blue-500'
-                              : 'bg-gray-50 hover:bg-gray-100 border-2 border-transparent'
-                          }`}
-                        >
-                          <div className="flex items-center justify-between">
-                            <div className="flex-1 min-w-0">
-                              <div className="flex items-center gap-1.5">
-                                <span className="font-bold text-base text-gray-900">
-                                  {ticker.ticker}
-                                </span>
+                      {sortedTickers.map((ticker) => {
+                        const togglePortfolio = async (e) => {
+                          e.stopPropagation();
+                          try {
+                            const response = await fetch('/api/toggle_portfolio', {
+                              method: 'POST',
+                              headers: { 'Content-Type': 'application/json' },
+                              body: JSON.stringify({
+                                ticker: ticker.ticker,
+                                in_portfolio: !ticker.in_portfolio
+                              })
+                            });
+                            if (response.ok) {
+                              fetchTickers();
+                            }
+                          } catch (error) {
+                            console.error('Error toggling portfolio:', error);
+                          }
+                        };
+
+                        return (
+                          <div
+                            key={ticker.ticker}
+                            onClick={() => setSelectedTicker(ticker)}
+                            className={`p-2 rounded-lg cursor-pointer transition-all relative ${
+                              ticker.in_portfolio
+                                ? (selectedTicker?.ticker === ticker.ticker
+                                  ? 'bg-gradient-to-r from-green-100 to-emerald-100 border-2 border-blue-500'
+                                  : 'bg-gradient-to-r from-green-50 to-emerald-50 hover:from-green-100 hover:to-emerald-100 border-2 border-green-200')
+                                : (selectedTicker?.ticker === ticker.ticker
+                                  ? 'bg-blue-50 border-2 border-blue-500'
+                                  : 'bg-gray-50 hover:bg-gray-100 border-2 border-transparent')
+                            }`}
+                          >
+                            <div className="flex items-center justify-between">
+                              <div className="flex-1 min-w-0">
+                                <div className="flex items-center gap-1.5">
+                                  <span className={`text-base ${ticker.in_portfolio ? 'font-extrabold text-green-900' : 'font-bold text-gray-900'}`}>
+                                    {ticker.ticker}
+                                  </span>
+                                  {ticker.in_portfolio && (
+                                    <span className="text-xs bg-green-600 text-white px-1.5 py-0.5 rounded-full font-semibold">
+                                      Portfolio
+                                    </span>
+                                  )}
+                                </div>
+                                <p className="text-xs text-gray-600 truncate">{ticker.company_name || 'Brak nazwy'}</p>
+                                <p className="text-xs text-gray-500">{ticker.sector || 'Brak sektora'}</p>
                               </div>
-                              <p className="text-xs text-gray-600 truncate">{ticker.company_name || 'Brak nazwy'}</p>
-                              <p className="text-xs text-gray-500">{ticker.sector || 'Brak sektora'}</p>
-                            </div>
-                            <div className="text-right ml-2">
-                              <div className={`text-base font-bold ${getSentimentColor(ticker.avg_sentiment)}`}>
-                                {ticker.avg_sentiment > 0 ? '+' : ''}{Number(ticker.avg_sentiment).toFixed(2)}
-                              </div>
-                              <div className="text-xs text-gray-500">
-                                {ticker.mentions} wzm.
+                              <div className="flex items-center gap-2 ml-2">
+                                <div className="text-right">
+                                  <div className={`text-base font-bold ${getSentimentColor(ticker.avg_sentiment)}`}>
+                                    {ticker.avg_sentiment > 0 ? '+' : ''}{Number(ticker.avg_sentiment).toFixed(2)}
+                                  </div>
+                                  <div className="text-xs text-gray-500">
+                                    {ticker.mentions} wzm.
+                                  </div>
+                                </div>
+                                <input
+                                  type="checkbox"
+                                  checked={ticker.in_portfolio}
+                                  onChange={togglePortfolio}
+                                  className="w-4 h-4 cursor-pointer accent-green-600"
+                                  title="Dodaj/usuń z portfolio"
+                                />
                               </div>
                             </div>
                           </div>
-                        </div>
-                      ))}
+                        );
+                      })}
                     </div>
                   </div>
 
@@ -1375,14 +1707,15 @@ def get_tickers():
     days = request.args.get('days', 30, type=int)
 
     query = text(f"""
-    SELECT 
+    SELECT
         ts.ticker,
         t.company_name,
         t.sector,
         COUNT(*) as mentions,
         AVG(ts.impact::numeric) as avg_sentiment,
         AVG(ts.confidence::numeric) as avg_confidence,
-        MAX(na.date) as last_mention
+        MAX(na.date) as last_mention,
+        COALESCE(t.in_portfolio, 0) as in_portfolio
     FROM {schema}.ticker_sentiment ts
     JOIN {schema}.analysis_result ar ON ts.analysis_id = ar.id
     JOIN {schema}.news_articles na ON ar.news_id = na.id
@@ -1390,7 +1723,7 @@ def get_tickers():
     WHERE ts.ticker IS NOT NULL
         AND na.date >= CURRENT_DATE - INTERVAL '{days} days'
         AND na.id NOT IN (SELECT news_id FROM {schema}.news_not_analyzed WHERE reason = 'duplicate')
-    GROUP BY ts.ticker, t.company_name, t.sector
+    GROUP BY ts.ticker, t.company_name, t.sector, t.in_portfolio
     HAVING COUNT(*) >= 1
     ORDER BY COUNT(*) DESC, ts.ticker
     """)
@@ -1406,7 +1739,8 @@ def get_tickers():
                 'mentions': int(row[3]),
                 'avg_sentiment': float(row[4]) if row[4] else 0,
                 'avg_confidence': float(row[5]) if row[5] else 0,
-                'last_mention': row[6].strftime('%Y-%m-%d') if row[6] else None
+                'last_mention': row[6].strftime('%Y-%m-%d') if row[6] else None,
+                'in_portfolio': bool(row[7]) if row[7] else False
             })
 
     return jsonify(tickers)
@@ -1680,6 +2014,169 @@ def get_news_by_date(date):
         news_list.sort(key=lambda x: abs(x['impact']), reverse=True)
 
     return jsonify(news_list)
+
+
+@app.route('/api/rejected_calendar_stats')
+def get_rejected_calendar_stats():
+    """Endpoint zwracający statystyki odrzuconych newsów dla każdego dnia (dla color coding kalendarza)"""
+    days = request.args.get('days', 90, type=int)
+
+    query = text(f"""
+    SELECT
+        na.date,
+        COUNT(DISTINCT na.id) as news_count,
+        nna.reason
+    FROM {schema}.news_articles na
+    JOIN {schema}.news_not_analyzed nna ON nna.news_id = na.id
+    WHERE na.date >= CURRENT_DATE - INTERVAL '{days} days'
+    GROUP BY na.date, nna.reason
+    ORDER BY na.date DESC
+    """)
+
+    with engine.connect() as conn:
+        result = conn.execute(query)
+        calendar_data = []
+        for row in result:
+            calendar_data.append({
+                'date': row[0].strftime('%Y-%m-%d') if row[0] else None,
+                'news_count': int(row[1]),
+                'reason': row[2]
+            })
+
+    return jsonify(calendar_data)
+
+
+@app.route('/api/rejected_news_by_date/<date>')
+def get_rejected_news_by_date(date):
+    """Endpoint zwracający wszystkie odrzucone newsy z wybranego dnia"""
+    query = text(f"""
+    SELECT
+        na.id as news_id,
+        na.date,
+        na.title,
+        na.source,
+        na.url,
+        na.content,
+        nna.reason,
+        nna.relevance_score
+    FROM {schema}.news_articles na
+    JOIN {schema}.news_not_analyzed nna ON nna.news_id = na.id
+    WHERE na.date = :date
+    ORDER BY nna.created_at DESC
+    """)
+
+    with engine.connect() as conn:
+        result = conn.execute(query, {'date': date})
+        news_list = []
+
+        for row in result:
+            news_list.append({
+                'news_id': row[0],
+                'date': row[1].strftime('%Y-%m-%d') if row[1] else None,
+                'title': row[2],
+                'source': row[3],
+                'url': row[4],
+                'content': row[5],
+                'reason': row[6],
+                'relevance_score': float(row[7]) if row[7] else 0.0
+            })
+
+    return jsonify(news_list)
+
+
+@app.route('/api/reanalyze_news', methods=['POST'])
+def reanalyze_news():
+    """Endpoint do ponownej analizy odrzuconego newsa przez AI"""
+    try:
+        data = request.get_json()
+        news_id = data.get('news_id')
+
+        if not news_id:
+            return jsonify({'error': 'Missing news_id'}), 400
+
+        # Import potrzebnych modułów
+        from ai_analist import analyze_articles
+        from database import Database
+
+        # Usuń news z news_not_analyzed
+        with engine.connect() as conn:
+            delete_query = text(f"""
+                DELETE FROM {schema}.news_not_analyzed
+                WHERE news_id = :news_id
+            """)
+            conn.execute(delete_query, {'news_id': news_id})
+            conn.commit()
+
+        # Uruchom analizę AI (pomijamy sprawdzanie wzorców - od razu do OpenAI)
+        db = Database()
+        result = analyze_articles(db, mode='id', article_id=news_id, telegram=None, skip_relevance_check=True)
+
+        if result['status'] == 'error':
+            return jsonify({'error': result.get('message', 'Unknown error')}), 500
+
+        return jsonify({
+            'success': True,
+            'message': 'News został pomyślnie przeanalizowany',
+            'result': result
+        })
+
+    except Exception as e:
+        print(f"Error reanalyzing news: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/toggle_portfolio', methods=['POST'])
+def toggle_portfolio():
+    """Endpoint do przełączania statusu portfolio dla tickera"""
+    try:
+        data = request.get_json()
+        ticker_symbol = data.get('ticker')
+        in_portfolio = data.get('in_portfolio', False)
+
+        if not ticker_symbol:
+            return jsonify({'error': 'Missing ticker'}), 400
+
+        with engine.connect() as conn:
+            # Sprawdź czy ticker istnieje
+            check_query = text(f"""
+                SELECT ticker FROM {schema}.tickers WHERE ticker = :ticker
+            """)
+            result = conn.execute(check_query, {'ticker': ticker_symbol})
+            exists = result.fetchone()
+
+            if not exists:
+                # Utwórz ticker jeśli nie istnieje
+                insert_query = text(f"""
+                    INSERT INTO {schema}.tickers (ticker, in_portfolio)
+                    VALUES (:ticker, :in_portfolio)
+                """)
+                conn.execute(insert_query, {
+                    'ticker': ticker_symbol,
+                    'in_portfolio': 1 if in_portfolio else 0
+                })
+            else:
+                # Zaktualizuj istniejący ticker
+                update_query = text(f"""
+                    UPDATE {schema}.tickers
+                    SET in_portfolio = :in_portfolio
+                    WHERE ticker = :ticker
+                """)
+                conn.execute(update_query, {
+                    'ticker': ticker_symbol,
+                    'in_portfolio': 1 if in_portfolio else 0
+                })
+
+            conn.commit()
+
+        return jsonify({'success': True, 'ticker': ticker_symbol, 'in_portfolio': in_portfolio})
+
+    except Exception as e:
+        print(f"Error toggling portfolio: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
 
 
 if __name__ == '__main__':
