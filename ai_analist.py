@@ -6,12 +6,15 @@ from dotenv import load_dotenv
 from collections import defaultdict
 from database import Database, NewsArticle, AnalysisResult, TickerSentiment, Ticker, \
     SectorSentiment, BrokerageAnalysis
+from tools.normalizer import get_normalizer
 from sklearn.metrics.pairwise import cosine_similarity
 from sqlalchemy import text
 
 load_dotenv()
 
 client = OpenAI(api_key=os.getenv('OPENAI_API', ''))
+
+normalizer = get_normalizer()
 
 def load_patterns(filepath='patterns.json', name="relevant_patterns"):
     """Wczytuje atrybut 'relevant_patterns' z pliku JSON"""
@@ -821,6 +824,8 @@ def analyze_articles(db: Database, mode: str = 'unanalyzed', article_id: int = N
                     )
                 else:
                     is_relevant, relevance_score, relevance_reason = True, 1, "Podsumowanie dnia"
+                    print(f"    Pomijam, Powód: Podsumowanie dnia")
+                    continue
 
                 print(
                     f"    Istotność: {'TAK' if is_relevant else 'NIE'} (score: {relevance_score:.3f})")
@@ -1055,6 +1060,11 @@ def get_ticker_report(db: Database):
                         momentum = "negatywny"
                     else:
                         momentum = "neutralny"
+
+                    ticker, reason = normalizer.normalize(ticker)
+
+                    if reason:
+                        print(f"Normalizacja tickera: {reason}")
 
                     summary.append({
                         "ticker": ticker,
