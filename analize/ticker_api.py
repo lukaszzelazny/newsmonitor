@@ -13,7 +13,8 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from flask import Flask, render_template_string, jsonify, request
 from sqlalchemy import create_engine, text
-from datetime import datetime, timedelta
+from tools.ticker_analizer import getScoreWithDetails, RATING_LABELS
+from tools.moving_analizer import calculate_moving_averages_signals
 import yfinance as yf
 from functools import lru_cache
 import json
@@ -112,6 +113,139 @@ def parse_price(price_str):
         pass
 
     return None
+
+
+def signal_to_label_and_color(signal_value):
+    """
+    Konwertuje wartość sygnału liczbowego na etykietę tekstową i kolor
+
+    Args:
+        signal_value: wartość od -2 do 2
+        -2: Mocne sprzedaj
+        -1: Sprzedaj
+         0: Neutralne/Trzymaj
+         1: Kupuj
+         2: Mocne kupuj
+
+    Returns:
+        dict z 'label', 'color' i 'bg_color'
+    """
+    mapping = {
+        2: {
+            'label': 'Mocne kupuj',
+            'color': '#065f46',  # ciemny zielony (text)
+            'bg_color': '#d1fae5'  # jasny zielony (background)
+        },
+        1: {
+            'label': 'Kupuj',
+            'color': '#047857',  # zielony (text)
+            'bg_color': '#d1fae5'  # jasny zielony (background)
+        },
+        0: {
+            'label': 'Neutralne',
+            'color': '#4b5563',  # szary (text)
+            'bg_color': '#f3f4f6'  # jasny szary (background)
+        },
+        -1: {
+            'label': 'Sprzedaj',
+            'color': '#b91c1c',  # czerwony (text)
+            'bg_color': '#fee2e2'  # jasny czerwony (background)
+        },
+        -2: {
+            'label': 'Mocne sprzedaj',
+            'color': '#7f1d1d',  # ciemny czerwony (text)
+            'bg_color': '#fee2e2'  # jasny czerwony (background)
+        }
+    }
+
+    return mapping.get(signal_value, mapping[0])
+
+
+def get_technical_analysis(ticker_symbol, period="1y"):
+    """
+    Pobiera analizę techniczną dla tickera
+
+    Args:
+        ticker_symbol: symbol tickera (np. 'PKO', 'CDR')
+        period: okres analizy (domyślnie "1y")
+
+    Returns:
+        dict z analizą techniczną zawierającą:
+        - summary: podsumowanie z etykietami i kolorami
+        - details: szczegółowe informacje o wskaźnikach
+    """
+    try:
+        # Konwersja symbolu na format Yahoo Finance
+        if len(ticker_symbol) <= 4 and ticker_symbol.isupper():
+            yf_symbol = f"{ticker_symbol}.WA"
+        else:
+            yf_symbol = ticker_symbol
+
+        # Pobierz dane z Yahoo Finance
+        ticker = yf.Ticker(yf_symbol)
+        df = ticker.history(period=period)
+
+        if df.empty:
+            return {
+                'error': 'Brak danych dla tickera',
+                'summary': None,
+                'details': None
+            }
+
+        # Analiza wskaźników technicznych
+        indicators_score, indicators_details = getScoreWithDetails(df)
+        indicators_info = signal_to_label_and_color(indicators_score)
+
+        # Analiza średnich kroczących
+        ma_results = calculate_moving_averages_signals(df)
+        ma_score = ma_results['overall_summary']['signal']
+        ma_info = signal_to_label_and_color(ma_score)
+
+        # Przygotuj szczegóły średnich kroczących
+        ma_details = []
+        for ma_type in ['sma', 'ema']:
+            details_key = f'{ma_type}_details'
+            if details_key in ma_results:
+                for period_name, period_data in ma_results[details_key].items():
+                    ma_details.append({
+                        'name': period_name,
+                        'value': period_data['value'],
+                        'signal': period_data['signal'],
+                        'difference': f"{period_data['difference']:+.2f}%"
+                    })
+
+        # Zwróć strukturę z podsumowaniem i szczegółami
+        return {
+            'summary': {
+                'indicators': {
+                    'label': indicators_info['label'],
+                    'color': indicators_info['color'],
+                    'bg_color': indicators_info['bg_color'],
+                    'score': indicators_score
+                },
+                'moving_averages': {
+                    'label': ma_info['label'],
+                    'color': ma_info['color'],
+                    'bg_color': ma_info['bg_color'],
+                    'score': ma_score,
+                    'buy_count': ma_results['overall_summary']['buy_count'],
+                    'sell_count': ma_results['overall_summary']['sell_count']
+                }
+            },
+            'details': {
+                'indicators': indicators_details,
+                'moving_averages': ma_details,
+                'current_price': ma_results['current_price']
+            }
+        }
+
+    except Exception as e:
+        print(f"Błąd analizy technicznej dla {ticker_symbol}: {e}")
+        return {
+            'error': str(e),
+            'summary': None,
+            'details': None
+        }
 
 
 def format_summary(summary_json):
@@ -439,6 +573,177 @@ HTML_TEMPLATE = """
                           ({latestBrokerage.upside_percent >= 0 ? '+' : ''}{latestBrokerage.upside_percent.toFixed(1)}%)
                         </span>
                       )}
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+          );
+        }
+
+        // Komponent analizy technicznej
+        function TechnicalAnalysis({ ticker }) {
+          const [technicalData, setTechnicalData] = useState(null);
+          const [loading, setLoading] = useState(false);
+          const [showDetails, setShowDetails] = useState(false);
+          const [error, setError] = useState(null);
+
+          useEffect(() => {
+            if (ticker) {
+              fetchTechnicalAnalysis();
+            }
+          }, [ticker]);
+
+          const fetchTechnicalAnalysis = async () => {
+            setLoading(true);
+            setError(null);
+            try {
+              const response = await fetch(`/api/technical_analysis/${ticker}?period=1y`);
+              const data = await response.json();
+
+              if (data.error) {
+                setError(data.error);
+                setTechnicalData(null);
+              } else {
+                setTechnicalData(data);
+              }
+            } catch (error) {
+              console.error('Error fetching technical analysis:', error);
+              setError('Błąd pobierania danych');
+              setTechnicalData(null);
+            } finally {
+              setLoading(false);
+            }
+          };
+
+          if (loading) {
+            return (
+              <div className="bg-white rounded-lg shadow p-6">
+                <h3 className="text-lg font-bold text-gray-900 mb-4">Analiza Techniczna</h3>
+                <div className="flex items-center justify-center py-8">
+                  <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500"></div>
+                </div>
+              </div>
+            );
+          }
+
+          if (error) {
+            return (
+              <div className="bg-white rounded-lg shadow p-6">
+                <h3 className="text-lg font-bold text-gray-900 mb-4">Analiza Techniczna</h3>
+                <div className="text-center text-gray-500 py-4">
+                  <p>{error}</p>
+                </div>
+              </div>
+            );
+          }
+
+          if (!technicalData || !technicalData.summary) {
+            return null;
+          }
+
+          const { summary, details } = technicalData;
+
+          return (
+            <div className="bg-white rounded-lg shadow p-6">
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="text-lg font-bold text-gray-900">Analiza Techniczna</h3>
+                <button
+                  onClick={() => setShowDetails(!showDetails)}
+                  className="text-sm text-blue-600 hover:text-blue-800 font-medium"
+                >
+                  {showDetails ? 'Ukryj szczegóły ▲' : 'Pokaż szczegóły ▼'}
+                </button>
+              </div>
+
+              {/* Podsumowanie */}
+              <div className="grid grid-cols-2 gap-4 mb-4">
+                {/* Wskaźniki */}
+                <div
+                  className="p-4 rounded-lg border-2"
+                  style={{
+                    backgroundColor: summary.indicators.bg_color,
+                    borderColor: summary.indicators.color
+                  }}
+                >
+                  <div className="text-sm font-medium text-gray-600 mb-2">Wskaźniki</div>
+                  <div
+                    className="text-2xl font-bold"
+                    style={{ color: summary.indicators.color }}
+                  >
+                    {summary.indicators.label}
+                  </div>
+                  <div className="text-xs text-gray-500 mt-1">
+                    Score: {summary.indicators.score}
+                  </div>
+                </div>
+
+                {/* Średnie kroczące */}
+                <div
+                  className="p-4 rounded-lg border-2"
+                  style={{
+                    backgroundColor: summary.moving_averages.bg_color,
+                    borderColor: summary.moving_averages.color
+                  }}
+                >
+                  <div className="text-sm font-medium text-gray-600 mb-2">Średnie kroczące</div>
+                  <div
+                    className="text-2xl font-bold"
+                    style={{ color: summary.moving_averages.color }}
+                  >
+                    {summary.moving_averages.label}
+                  </div>
+                  <div className="text-xs text-gray-500 mt-1">
+                    Kupuj: {summary.moving_averages.buy_count} | Sprzedaj: {summary.moving_averages.sell_count}
+                  </div>
+                </div>
+              </div>
+
+              {/* Szczegóły (rozwijane) */}
+              {showDetails && details && (
+                <div className="border-t pt-4">
+                  <div className="grid grid-cols-2 gap-6">
+                    {/* Szczegóły wskaźników */}
+                    <div>
+                      <h4 className="text-sm font-semibold text-gray-900 mb-3">Szczegóły wskaźników</h4>
+                      <div className="space-y-1 text-xs font-mono">
+                        {details.indicators && details.indicators.map((indicator, idx) => (
+                          <div key={idx} className="text-gray-700">
+                            {indicator}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Szczegóły średnich kroczących */}
+                    <div>
+                      <h4 className="text-sm font-semibold text-gray-900 mb-3">
+                        Średnie kroczące (Aktualna cena: {details.current_price})
+                      </h4>
+                      <div className="space-y-2">
+                        {details.moving_averages && details.moving_averages.map((ma, idx) => (
+                          <div key={idx} className="flex items-center justify-between text-xs p-2 bg-gray-50 rounded">
+                            <span className="font-semibold">{ma.name}</span>
+                            <span className="text-gray-600">{ma.value}</span>
+                            <span
+                              className={`font-medium ${
+                                ma.signal === 'kupuj' ? 'text-green-600' :
+                                ma.signal === 'sprzedaj' ? 'text-red-600' :
+                                'text-gray-500'
+                              }`}
+                            >
+                              {ma.signal}
+                            </span>
+                            <span
+                              className={`font-mono ${
+                                ma.difference.startsWith('+') ? 'text-green-600' : 'text-red-600'
+                              }`}
+                            >
+                              {ma.difference}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -1492,6 +1797,9 @@ HTML_TEMPLATE = """
                           />
                         )}
 
+                        {/* Analiza Techniczna */}
+                        <TechnicalAnalysis ticker={selectedTicker.ticker} />
+
                         {loading ? (
                           <div className="bg-white rounded-lg shadow-lg p-6 flex items-center justify-center py-12">
                             <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500"></div>
@@ -2174,6 +2482,53 @@ def toggle_portfolio():
 
     except Exception as e:
         print(f"Error toggling portfolio: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/technical_analysis/<ticker>')
+def get_technical_analysis_endpoint(ticker):
+    """
+    Endpoint zwracający analizę techniczną dla tickera
+
+    Zwraca:
+    - summary: podsumowanie z Wskaźnikami i Średnimi kroczącymi (z kolorami)
+    - details: szczegółowe informacje o wszystkich wskaźnikach i średnich
+
+    Format odpowiedzi:
+    {
+        'summary': {
+            'indicators': {
+                'label': 'Mocne kupuj',
+                'color': '#065f46',
+                'bg_color': '#d1fae5',
+                'score': 2
+            },
+            'moving_averages': {
+                'label': 'Neutralne',
+                'color': '#4b5563',
+                'bg_color': '#f3f4f6',
+                'score': 0,
+                'buy_count': 4,
+                'sell_count': 4
+            }
+        },
+        'details': {
+            'indicators': [...],
+            'moving_averages': [...],
+            'current_price': 45.20
+        }
+    }
+    """
+    try:
+        period = request.args.get('period', '1y', type=str)
+        analysis_data = get_technical_analysis(ticker, period)
+
+        return jsonify(analysis_data)
+
+    except Exception as e:
+        print(f"Error in technical analysis endpoint: {e}")
         import traceback
         traceback.print_exc()
         return jsonify({'error': str(e)}), 500
