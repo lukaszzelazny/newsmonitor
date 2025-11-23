@@ -14,8 +14,12 @@ services:
       - ./patterns.json:/app/patterns.json:ro
       # Montuj .env
       - ./.env:/app/.env:ro
+      # Montuj pg_service.conf
+      - ./pg_service.conf:/root/.pg_service.conf:ro
     environment:
       - TZ=Europe/Warsaw
+      - PGSERVICEFILE=/root/.pg_service.conf
+
     extra_hosts:
       - "host.docker.internal:host-gateway"
     networks:
