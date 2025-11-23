@@ -57,6 +57,30 @@
       "Analitycy DM BOŚ w raporcie z 29 października podwyższyli cenę docelową akcji PKO BP w perspektywie 12 miesięcy do 107,4 zł z 65,7 zł wcześniej, podtrzymując dla nich rekomendację \"kupuj\"."
     ]
   },
+  "sector_movements": [
+      "indeks WIG", "WIG20", "mWIG40", "sWIG80",
+      "WIG Energia", "WIG Banki", "WIG Budownictwo", "WIG Chemia",
+      "WIG Informatyka", "WIG Media", "WIG Paliwa", "WIG Spożywczy",
+      "spółki energetyczne", "spółki bankowe", "spółki deweloperskie",
+      "branża", "sektor", "segment",
+      "spadają o", "rosną o", "zniżkują", "zyskują",
+      "najwyższe obroty", "największe spadki", "największe wzrosty"
+  ],
+  "macro_sector_impact": [
+      "NBP", "Narodowy Bank Polski", "RPP", "Rada Polityki Pieniężnej",
+      "stopy procentowe", "inflacja", "PKB",
+      "popyt na kredyty", "akcja kredytowa", "kredyty mieszkaniowe",
+      "polityka monetarna", "polityka fiskalna",
+      "prognoza", "przewiduje się", "szacuje się",
+      "tempo wzrostu gospodarczego", "dynamika"
+  ],
+  "regulatory_sector": [
+      "regulacje", "ustawa", "rozporządzenie",
+      "URE", "UOKiK", "KNF", "Komisja Nadzoru Finansowego",
+      "Urząd Regulacji Energetyki",
+      "taryfy", "opłaty dystrybucyjne", "koncesja",
+      "wymogi kapitałowe", "normy emisji"
+  ],
   "irrevelant_patterns" : [
     "konferencja prasowa", "spotkanie", "wizyta", "wywiad",
     "organizacja wydarzenia", "sympozjum", "debata", "panel dyskusyjny",
@@ -72,6 +96,45 @@
   ],
   "negative_keywords": [
     "Komunikat Giełdy Papierów Wartościowych", "GPW: komunikat"
+  ],
+  "capital_raising": [
+    "emisja akcji",
+    "emisję akcji",
+    "nowa emisja akcji",
+    "podwyższenie kapitału",
+    "podwyższenie kapitału zakładowego",
+    "podwyższyć kapitał zakładowy",
+    "dokapitalizowanie",
+    "dokapitalizowania",
+    "akcje nowej emisji",
+    "emisja z wyłączeniem prawa poboru",
+    "emisja bez prawa poboru",
+    "wyłączenie prawa poboru",
+    "prawa poboru",
+    "subskrypcja akcji",
+    "series of shares",
+    "serie akcji",
+    "akcje serii",
+    "emisja prywatna",
+    "emisja kierowana",
+    "private placement",
+    "accelerated bookbuilding",
+    "ABB",
+    "budowanie księgi popytu",
+    "przydział akcji",
+    "zapis na akcje",
+    "uchwała o emisji akcji",
+    "umowa objęcia akcji",
+    "objęcie akcji",
+    "rejestracja podwyższenia kapitału",
+    "KRS zarejestrował podwyższenie kapitału",
+    "dilution",
+    "rozwodnienie akcjonariatu",
+    "rozwodnienie udziałów",
+    "emisja akcji serii",
+    "emisja akcji dla inwestora",
+    "emisja akcji dla inwestorów kwalifikowanych",
+    "nowe akcje zostaną wprowadzone do obrotu"
   ],
   "summary_patterns": [
     "Skrót wiadomości"
