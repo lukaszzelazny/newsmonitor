@@ -867,12 +867,12 @@ HTML_TEMPLATE = """
             const lastDay = new Date(year, month + 1, 0);
 
             const daysInMonth = lastDay.getDate();
-            const startDayOfWeek = firstDay.getDay();
+            const startDayOfWeek = (firstDay.getDay() + 6) % 7; // Monday = 0, Sunday = 6
 
             const days = [];
 
             // Puste dni przed pierwszym dniem miesiąca
-            for (let i = 0; i < (startDayOfWeek === 0 ? 6 : startDayOfWeek - 1); i++) {
+            for (let i = 0; i < startDayOfWeek; i++) {
               days.push(null);
             }
 
@@ -951,10 +951,14 @@ HTML_TEMPLATE = """
 
                   {calendarDays.map((date, idx) => {
                     if (!date) {
-                      return <div key={idx} className="aspect-square"></div>;
+                      return <div key={idx} className="p-2"></div>;
                     }
 
-                    const dateStr = date.toISOString().split('T')[0];
+                    const year = date.getFullYear();
+                    const month = (date.getMonth() + 1).toString().padStart(2, '0');
+                    const day = date.getDate().toString().padStart(2, '0');
+                    const dateStr = `${year}-${month}-${day}`;
+                    
                     const stats = getDayStats(dateStr);
                     const dayColor = getDayColor(stats);
                     const isSelected = selectedDate === dateStr;
@@ -963,16 +967,16 @@ HTML_TEMPLATE = """
                       <button
                         key={idx}
                         onClick={() => fetchNewsForDate(dateStr)}
-                        className={`aspect-square ${dayColor} rounded-lg hover:ring-2 hover:ring-blue-500 transition-all relative
+                        className={`p-2 text-center ${dayColor} rounded-lg hover:ring-2 hover:ring-blue-500 transition-all relative
                           ${isSelected ? 'ring-2 ring-blue-600' : ''}
                         `}
                       >
-                        <div className="absolute top-1 left-1 text-xs font-bold text-gray-800">
+                        <div className="font-bold text-sm text-gray-800">
                           {date.getDate()}
                         </div>
                         {stats && stats.news_count > 0 && (
-                          <div className="absolute bottom-1 right-1 text-xs font-bold text-gray-800">
-                            {stats.news_count}
+                          <div className="text-xs font-bold text-gray-700 mt-1">
+                            {stats.news_count} news
                           </div>
                         )}
                       </button>
@@ -1167,12 +1171,12 @@ HTML_TEMPLATE = """
             const lastDay = new Date(year, month + 1, 0);
 
             const daysInMonth = lastDay.getDate();
-            const startDayOfWeek = firstDay.getDay();
+            const startDayOfWeek = (firstDay.getDay() + 6) % 7; // Monday = 0, Sunday = 6
 
             const days = [];
 
             // Puste dni przed pierwszym dniem miesiąca
-            for (let i = 0; i < (startDayOfWeek === 0 ? 6 : startDayOfWeek - 1); i++) {
+            for (let i = 0; i < startDayOfWeek; i++) {
               days.push(null);
             }
 
@@ -1243,10 +1247,14 @@ HTML_TEMPLATE = """
 
                   {calendarDays.map((date, idx) => {
                     if (!date) {
-                      return <div key={idx} className="aspect-square"></div>;
+                      return <div key={idx} className="p-2"></div>;
                     }
 
-                    const dateStr = date.toISOString().split('T')[0];
+                    const year = date.getFullYear();
+                    const month = (date.getMonth() + 1).toString().padStart(2, '0');
+                    const day = date.getDate().toString().padStart(2, '0');
+                    const dateStr = `${year}-${month}-${day}`;
+
                     const stats = getDayStats(dateStr);
                     const dayColor = getDayColor(stats);
                     const isSelected = selectedDate === dateStr;
@@ -1256,16 +1264,16 @@ HTML_TEMPLATE = """
                       <button
                         key={idx}
                         onClick={() => fetchNewsForDate(dateStr)}
-                        className={`aspect-square ${dayColor} rounded-lg hover:ring-2 hover:ring-red-500 transition-all relative
+                        className={`p-2 text-center ${dayColor} rounded-lg hover:ring-2 hover:ring-red-500 transition-all relative
                           ${isSelected ? 'ring-2 ring-red-600' : ''}
                         `}
                       >
-                        <div className="absolute top-1 left-1 text-xs font-bold text-gray-800">
+                        <div className="font-bold text-sm text-gray-800">
                           {date.getDate()}
                         </div>
                         {totalCount > 0 && (
-                          <div className="absolute bottom-1 right-1 text-xs font-bold text-gray-800">
-                            {totalCount}
+                          <div className="text-xs font-bold text-gray-700 mt-1">
+                            {totalCount} news
                           </div>
                         )}
                       </button>
