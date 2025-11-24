@@ -1370,7 +1370,6 @@ HTML_TEMPLATE = """
           const [loadingChart, setLoadingChart] = useState(false);
           const [searchTerm, setSearchTerm] = useState('');
           const [days, setDays] = useState(30);
-          const [sortBy, setSortBy] = useState('mentions');
           const [filterImpact, setFilterImpact] = useState('all');
           const [showStats, setShowStats] = useState(true);
           const [viewMode, setViewMode] = useState('tickers'); // 'tickers', 'calendar' lub 'rejected'
@@ -1464,15 +1463,14 @@ HTML_TEMPLATE = """
           );
 
           const sortedTickers = [...filteredTickers].sort((a, b) => {
-            // Najpierw sortuj po statusie portfolio (in_portfolio na górze)
+            // Sortowanie: portfolio -> ulubione -> impact
             if (a.in_portfolio !== b.in_portfolio) {
-              return b.in_portfolio ? 1 : -1;
+                return b.in_portfolio - a.in_portfolio;
             }
-            // Potem według wybranego kryterium
-            if (sortBy === 'impact') {
-              return b.avg_sentiment - a.avg_sentiment;
+            if (a.is_favorite !== b.is_favorite) {
+                return b.is_favorite - a.is_favorite;
             }
-            return b.mentions - a.mentions;
+            return b.avg_sentiment - a.avg_sentiment;
           });
 
           const filteredAnalyses = analyses.filter(a => {
@@ -1613,19 +1611,6 @@ HTML_TEMPLATE = """
                         <option value="365">1 rok</option>
                       </select>
                     </div>
-                    {viewMode === 'tickers' && (
-                      <div className="flex items-center gap-2">
-                        <label className="text-xs text-gray-600">Sortuj:</label>
-                        <select
-                          value={sortBy}
-                          onChange={(e) => setSortBy(e.target.value)}
-                          className="px-2 py-1 text-sm border border-gray-300 rounded-lg"
-                        >
-                          <option value="mentions">Po wzmianach</option>
-                          <option value="impact">Po sile impactu</option>
-                        </select>
-                      </div>
-                    )}
                   </div>
                 </div>
 
@@ -1666,6 +1651,24 @@ HTML_TEMPLATE = """
                             console.error('Error toggling portfolio:', error);
                           }
                         };
+                        const toggleFavorite = async (e) => {
+                          e.stopPropagation();
+                          try {
+                            const response = await fetch('/api/toggle_favorite', {
+                              method: 'POST',
+                              headers: { 'Content-Type': 'application/json' },
+                              body: JSON.stringify({
+                                ticker: ticker.ticker,
+                                is_favorite: !ticker.is_favorite
+                              })
+                            });
+                            if (response.ok) {
+                              fetchTickers();
+                            }
+                          } catch (error) {
+                            console.error('Error toggling favorite:', error);
+                          }
+                        };
 
                         return (
                           <div
@@ -1676,6 +1679,10 @@ HTML_TEMPLATE = """
                                 ? (selectedTicker?.ticker === ticker.ticker
                                   ? 'bg-gradient-to-r from-green-100 to-emerald-100 border-2 border-blue-500'
                                   : 'bg-gradient-to-r from-green-50 to-emerald-50 hover:from-green-100 hover:to-emerald-100 border-2 border-green-200')
+                                : ticker.is_favorite
+                                ? (selectedTicker?.ticker === ticker.ticker
+                                  ? 'bg-gradient-to-r from-blue-100 to-cyan-100 border-2 border-blue-500'
+                                  : 'bg-gradient-to-r from-blue-50 to-cyan-50 hover:from-blue-100 hover:to-cyan-100 border-2 border-blue-200')
                                 : (selectedTicker?.ticker === ticker.ticker
                                   ? 'bg-blue-50 border-2 border-blue-500'
                                   : 'bg-gray-50 hover:bg-gray-100 border-2 border-transparent')
@@ -1692,11 +1699,16 @@ HTML_TEMPLATE = """
                                       Portfolio
                                     </span>
                                   )}
+                                   {ticker.is_favorite && (
+                                    <span className="text-xs bg-blue-600 text-white px-1.5 py-0.5 rounded-full font-semibold">
+                                      Ulubione
+                                    </span>
+                                  )}
                                 </div>
                                 <p className="text-xs text-gray-600 truncate">{ticker.company_name || 'Brak nazwy'}</p>
                                 <p className="text-xs text-gray-500">{ticker.sector || 'Brak sektora'}</p>
                               </div>
-                              <div className="flex items-center gap-2 ml-2">
+                              <div className="flex flex-col items-center gap-2 ml-2">
                                 <div className="text-right">
                                   <div className={`text-base font-bold ${getSentimentColor(ticker.avg_sentiment)}`}>
                                     {ticker.avg_sentiment > 0 ? '+' : ''}{Number(ticker.avg_sentiment).toFixed(2)}
@@ -1705,6 +1717,14 @@ HTML_TEMPLATE = """
                                     {ticker.mentions} wzm.
                                   </div>
                                 </div>
+                                 <div className="flex items-center gap-2">
+                                <input
+                                  type="checkbox"
+                                  checked={ticker.is_favorite}
+                                  onChange={toggleFavorite}
+                                  className="w-4 h-4 cursor-pointer accent-blue-600"
+                                  title="Dodaj/usuń z ulubionych"
+                                />
                                 <input
                                   type="checkbox"
                                   checked={ticker.in_portfolio}
@@ -1712,6 +1732,7 @@ HTML_TEMPLATE = """
                                   className="w-4 h-4 cursor-pointer accent-green-600"
                                   title="Dodaj/usuń z portfolio"
                                 />
+                                </div>
                               </div>
                             </div>
                           </div>
@@ -2031,7 +2052,8 @@ def get_tickers():
         AVG(ts.impact::numeric) as avg_sentiment,
         AVG(ts.confidence::numeric) as avg_confidence,
         MAX(na.date) as last_mention,
-        COALESCE(t.in_portfolio, 0) as in_portfolio
+        COALESCE(t.in_portfolio, 0) as in_portfolio,
+        COALESCE(t.is_favorite, false) as is_favorite
     FROM {schema}.ticker_sentiment ts
     JOIN {schema}.analysis_result ar ON ts.analysis_id = ar.id
     JOIN {schema}.news_articles na ON ar.news_id = na.id
@@ -2039,7 +2061,7 @@ def get_tickers():
     WHERE ts.ticker IS NOT NULL
         AND na.date >= CURRENT_DATE - INTERVAL '{days} days'
         AND na.id NOT IN (SELECT news_id FROM {schema}.news_not_analyzed WHERE reason = 'duplicate')
-    GROUP BY ts.ticker, t.company_name, t.sector, t.in_portfolio
+    GROUP BY ts.ticker, t.company_name, t.sector, t.in_portfolio, t.is_favorite
     HAVING COUNT(*) >= 1
     ORDER BY COUNT(*) DESC, ts.ticker
     """)
@@ -2056,7 +2078,8 @@ def get_tickers():
                 'avg_sentiment': float(row[4]) if row[4] else 0,
                 'avg_confidence': float(row[5]) if row[5] else 0,
                 'last_mention': row[6].strftime('%Y-%m-%d') if row[6] else None,
-                'in_portfolio': bool(row[7]) if row[7] else False
+                'in_portfolio': bool(row[7]) if row[7] else False,
+                'is_favorite': bool(row[8]) if row[8] else False
             })
 
     return jsonify(tickers)
@@ -2490,6 +2513,58 @@ def toggle_portfolio():
 
     except Exception as e:
         print(f"Error toggling portfolio: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/toggle_favorite', methods=['POST'])
+def toggle_favorite():
+    """Endpoint do przełączania statusu ulubionych dla tickera"""
+    try:
+        data = request.get_json()
+        ticker_symbol = data.get('ticker')
+        is_favorite = data.get('is_favorite', False)
+
+        if not ticker_symbol:
+            return jsonify({'error': 'Missing ticker'}), 400
+
+        with engine.connect() as conn:
+            # Sprawdź czy ticker istnieje
+            check_query = text(f"""
+                SELECT ticker FROM {schema}.tickers WHERE ticker = :ticker
+            """)
+            result = conn.execute(check_query, {'ticker': ticker_symbol})
+            exists = result.fetchone()
+
+            if not exists:
+                # Utwórz ticker jeśli nie istnieje
+                insert_query = text(f"""
+                    INSERT INTO {schema}.tickers (ticker, is_favorite)
+                    VALUES (:ticker, :is_favorite)
+                """)
+                conn.execute(insert_query, {
+                    'ticker': ticker_symbol,
+                    'is_favorite': is_favorite
+                })
+            else:
+                # Zaktualizuj istniejący ticker
+                update_query = text(f"""
+                    UPDATE {schema}.tickers
+                    SET is_favorite = :is_favorite
+                    WHERE ticker = :ticker
+                """)
+                conn.execute(update_query, {
+                    'ticker': ticker_symbol,
+                    'is_favorite': is_favorite
+                })
+
+            conn.commit()
+
+        return jsonify({'success': True, 'ticker': ticker_symbol, 'is_favorite': is_favorite})
+
+    except Exception as e:
+        print(f"Error toggling favorite: {e}")
         import traceback
         traceback.print_exc()
         return jsonify({'error': str(e)}), 500
