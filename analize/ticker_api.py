@@ -303,6 +303,15 @@ HTML_TEMPLATE = """
     <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <style>
+        .ticker-select-container .ticker-select__control {
+            border-radius: 0.5rem;
+            border-color: #d1d5db;
+        }
+        .ticker-select-container .ticker-select__multi-value {
+            background-color: #dbeafe;
+        }
+    </style>
 </head>
 <body class="bg-gray-50">
     <div id="root"></div>
@@ -752,6 +761,85 @@ HTML_TEMPLATE = """
           );
         }
 
+        // Komponent MultiSelect
+        function TickerSelect({ analysisId, onSave }) {
+            const [allTickers, setAllTickers] = useState([]);
+            const [selectedTickers, setSelectedTickers] = useState([]);
+            const [isLoading, setIsLoading] = useState(false);
+
+            useEffect(() => {
+                fetch('/api/all_tickers')
+                    .then(res => res.json())
+                    .then(data => setAllTickers(data))
+                    .catch(err => console.error("Error fetching all tickers:", err));
+            }, []);
+
+            const handleSave = async () => {
+                setIsLoading(true);
+                try {
+                    const response = await fetch('/api/update_analysis_tickers', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            analysis_id: analysisId,
+                            tickers: selectedTickers
+                        })
+                    });
+                    if (response.ok) {
+                        alert('Tickery zostały zaktualizowane.');
+                        if (onSave) {
+                            onSave();
+                        }
+                    } else {
+                        alert('Wystąpił błąd podczas zapisywania tickerów.');
+                    }
+                } catch (error) {
+                    console.error('Error saving tickers:', error);
+                    alert('Wystąpił błąd sieci.');
+                } finally {
+                    setIsLoading(false);
+                }
+            };
+
+            const toggleTicker = (tickerValue) => {
+                setSelectedTickers(prev =>
+                    prev.includes(tickerValue)
+                        ? prev.filter(t => t !== tickerValue)
+                        : [...prev, tickerValue]
+                );
+            };
+
+            return (
+                <div className="mt-2 p-2 border border-blue-200 bg-blue-50 rounded-lg">
+                    <p className="text-xs font-semibold text-blue-800 mb-2">Przypisz tickery do tej analizy:</p>
+                    <div className="max-h-32 overflow-y-auto border bg-white rounded p-1 text-xs mb-2">
+                        {allTickers.map(ticker => (
+                            <label key={ticker.value} className="flex items-center p-1 hover:bg-gray-100 rounded">
+                                <input
+                                    type="checkbox"
+                                    checked={selectedTickers.includes(ticker.value)}
+                                    onChange={() => toggleTicker(ticker.value)}
+                                    className="h-3 w-3 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                                />
+                                <span className="ml-2 text-gray-700">{ticker.label}</span>
+                            </label>
+                        ))}
+                    </div>
+                    <button
+                        onClick={handleSave}
+                        disabled={isLoading || selectedTickers.length === 0}
+                        className={`w-full px-2 py-1 text-xs font-semibold text-white rounded-md transition-colors ${
+                            (isLoading || selectedTickers.length === 0)
+                                ? 'bg-gray-400 cursor-not-allowed'
+                                : 'bg-blue-600 hover:bg-blue-700'
+                        }`}
+                    >
+                        {isLoading ? 'Zapisywanie...' : 'Zapisz'}
+                    </button>
+                </div>
+            );
+        }
+        
         // Komponent widoku kalendarzowego
         function CalendarView({ days, onBack }) {
           const [calendarStats, setCalendarStats] = useState([]);
@@ -1022,15 +1110,28 @@ HTML_TEMPLATE = """
 
                               {/* Tickery */}
                               <div className="flex items-center gap-2 mb-2 flex-wrap">
-                                {news.tickers && news.tickers.map((ticker, tidx) => (
-                                  <span
-                                    key={tidx}
-                                    className="px-2 py-0.5 bg-blue-100 text-blue-800 text-xs font-bold rounded"
-                                  >
-                                    {ticker.ticker}
-                                  </span>
-                                ))}
+                                {news.tickers && news.tickers.length > 0 ? (
+                                    news.tickers.map((ticker, tidx) => (
+                                      <span
+                                        key={tidx}
+                                        className="px-2 py-0.5 bg-blue-100 text-blue-800 text-xs font-bold rounded"
+                                      >
+                                        {ticker.ticker}
+                                      </span>
+                                    ))
+                                ) : (
+                                    <span className="px-2 py-0.5 bg-yellow-100 text-yellow-800 text-xs font-semibold rounded">
+                                        Brak przypisanych tickerów
+                                    </span>
+                                )}
                               </div>
+
+                              {news.tickers && news.tickers.length === 0 && (
+                                <TickerSelect
+                                    analysisId={news.analysis_id}
+                                    onSave={() => fetchNewsForDate(selectedDate)}
+                                />
+                              )}
 
                               <div className="flex items-center gap-2 text-xs text-gray-500 mb-2">
                                 <span>{news.source}</span>
@@ -2245,6 +2346,92 @@ def mark_duplicate():
         return jsonify({'error': str(e)}), 500
 
 
+@app.route('/api/all_tickers')
+def get_all_tickers():
+    """Endpoint zwracający listę wszystkich dostępnych tickerów"""
+    query = text(f"""
+    SELECT ticker, company_name FROM {schema}.tickers ORDER BY ticker
+    """)
+    with engine.connect() as conn:
+        result = conn.execute(query)
+        tickers = [{'value': row[0], 'label': f"{row[0]} - {row[1]}"} for row in result]
+    return jsonify(tickers)
+
+
+@app.route('/api/update_analysis_tickers', methods=['POST'])
+def update_analysis_tickers():
+    """Endpoint do aktualizacji tickerów dla danej analizy"""
+    try:
+        data = request.get_json()
+        analysis_id = data.get('analysis_id')
+        tickers = data.get('tickers')
+
+        if not analysis_id or not isinstance(tickers, list):
+            return jsonify({'error': 'Missing analysis_id or tickers'}), 400
+
+        with engine.connect() as conn:
+            # Rozpocznij transakcję
+            trans = conn.begin()
+            try:
+                # 1. Pobierz impact i confidence z analizy, jeśli nie ma jeszcze tickerów
+                get_analysis_details_query = text(f"""
+                    SELECT summary FROM {schema}.analysis_result WHERE id = :analysis_id
+                """)
+                res = conn.execute(get_analysis_details_query, {'analysis_id': analysis_id}).fetchone()
+                if not res:
+                    return jsonify({'error': 'Analysis not found'}), 404
+
+                summary_data = {}
+                try:
+                    if res[0] and isinstance(res[0], str):
+                        summary_data = json.loads(res[0])
+                    elif isinstance(res[0], dict):
+                        summary_data = res[0]
+                except json.JSONDecodeError:
+                    pass
+
+                impact = summary_data.get('ticker_impact')
+                confidence = summary_data.get('confidence')
+                occasion = summary_data.get('occasion')
+                
+                impact = float(impact) if impact is not None else 0.4
+                confidence = float(confidence) if confidence is not None else 0.7
+
+                # 2. Usuń istniejące powiązania tickerów dla tej analizy
+                delete_query = text(f"""
+                    DELETE FROM {schema}.ticker_sentiment WHERE analysis_id = :analysis_id
+                """)
+                conn.execute(delete_query, {'analysis_id': analysis_id})
+
+                # 3. Wstaw nowe tickery
+                if tickers:
+                    insert_query = text(f"""
+                        INSERT INTO {schema}.ticker_sentiment (analysis_id, ticker, impact, confidence, occasion)
+                        VALUES (:analysis_id, :ticker, :impact, :confidence, :occasion)
+                    """)
+                    for ticker in tickers:
+                        conn.execute(insert_query, {
+                            'analysis_id': analysis_id,
+                            'ticker': ticker,
+                            'impact': impact,
+                            'confidence': confidence,
+                            'occasion': occasion
+                        })
+
+                trans.commit()
+                return jsonify({'success': True, 'message': 'Tickers updated successfully'})
+
+            except Exception as e:
+                trans.rollback()
+                raise e
+
+    except Exception as e:
+        print(f"Error updating tickers: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+
+
 @app.route('/api/calendar_stats')
 def get_calendar_stats():
     """Endpoint zwracający statystyki newsów dla każdego dnia (dla color coding kalendarza)"""
@@ -2257,9 +2444,10 @@ def get_calendar_stats():
         AVG(ts.impact::numeric) as avg_impact
     FROM {schema}.news_articles na
     JOIN {schema}.analysis_result ar ON ar.news_id = na.id
-    JOIN {schema}.ticker_sentiment ts ON ts.analysis_id = ar.id
+    LEFT JOIN {schema}.ticker_sentiment ts ON ts.analysis_id = ar.id
     WHERE na.date >= CURRENT_DATE - INTERVAL '{days} days'
         AND na.id NOT IN (SELECT news_id FROM {schema}.news_not_analyzed WHERE reason = 'duplicate')
+        AND ar.summary IS NOT NULL
     GROUP BY na.date
     ORDER BY na.date DESC
     """)
@@ -2281,75 +2469,79 @@ def get_calendar_stats():
 def get_news_by_date(date):
     """Endpoint zwracający wszystkie newsy z wybranego dnia z tickerami"""
     query = text(f"""
-    SELECT DISTINCT ON (na.id)
+    SELECT
         na.id as news_id,
         ar.id as analysis_id,
         na.date,
         na.title,
         na.source,
         na.url,
-        ts.impact,
-        ts.confidence,
-        ts.occasion,
-        ar.summary,
-        ts.ticker
+        ar.summary
     FROM {schema}.news_articles na
     JOIN {schema}.analysis_result ar ON ar.news_id = na.id
-    JOIN {schema}.ticker_sentiment ts ON ts.analysis_id = ar.id
     WHERE na.date = :date
+        AND ar.summary IS NOT NULL
         AND na.id NOT IN (SELECT news_id FROM {schema}.news_not_analyzed WHERE reason = 'duplicate')
-    ORDER BY na.id, ts.impact DESC
+    ORDER BY na.id
     """)
 
     with engine.connect() as conn:
         result = conn.execute(query, {'date': date})
-        news_list = []
-
-        # Grupujemy newsy i ich tickery
         news_dict = {}
+
         for row in result:
             news_id = row[0]
-            if news_id not in news_dict:
-                news_dict[news_id] = {
-                    'news_id': news_id,
-                    'analysis_id': row[1],
-                    'date': row[2].strftime('%Y-%m-%d') if row[2] else None,
-                    'title': row[3],
-                    'source': row[4],
-                    'url': row[5],
-                    'impact': float(row[6]) if row[6] else 0,
-                    'confidence': float(row[7]) if row[7] else 0,
-                    'occasion': row[8],
-                    'summary': format_summary(row[9]),
-                    'tickers': []
-                }
+            summary_data = {}
+            try:
+                if row[6] and isinstance(row[6], str):
+                    summary_data = json.loads(row[6])
+                elif isinstance(row[6], dict):
+                    summary_data = row[6]
+            except json.JSONDecodeError:
+                pass 
 
-            # Dodaj ticker do listy tickerów dla tego newsa
-            if row[10]:  # ticker
-                ticker_info = {
-                    'ticker': row[10],
-                    'impact': float(row[6]) if row[6] else 0
-                }
-                if ticker_info not in news_dict[news_id]['tickers']:
-                    news_dict[news_id]['tickers'].append(ticker_info)
+            impact = summary_data.get('ticker_impact')
+            confidence = summary_data.get('confidence')
+            
+            news_dict[news_id] = {
+                'news_id': news_id,
+                'analysis_id': row[1],
+                'date': row[2].strftime('%Y-%m-%d') if row[2] else None,
+                'title': row[3],
+                'source': row[4],
+                'url': row[5],
+                'impact': float(impact) if impact is not None else 0.4,
+                'confidence': float(confidence) if confidence is not None else 0.7,
+                'occasion': summary_data.get('occasion'),
+                'summary': format_summary(summary_data),
+                'tickers': []
+            }
 
-        # Pobieramy wszystkie tickery dla każdego newsa
-        for news_id in news_dict:
-            ticker_query = text(f"""
-                SELECT ts.ticker, ts.impact
-                FROM {schema}.ticker_sentiment ts
-                WHERE ts.analysis_id = :analysis_id
-                AND ts.ticker IS NOT NULL
-                ORDER BY ts.impact DESC
-            """)
-            ticker_result = conn.execute(ticker_query, {'analysis_id': news_dict[news_id]['analysis_id']})
-            news_dict[news_id]['tickers'] = [
-                {'ticker': row[0], 'impact': float(row[1]) if row[1] else 0}
-                for row in ticker_result
-            ]
+        if news_dict:
+            # Create a map from analysis_id to the news item object
+            analysis_id_to_news = {data['analysis_id']: data for data in news_dict.values()}
+            analysis_ids = list(analysis_id_to_news.keys())
+
+            if analysis_ids:
+                ticker_query = text(f"""
+                    SELECT ts.analysis_id, ts.ticker, ts.impact
+                    FROM {schema}.ticker_sentiment ts
+                    WHERE ts.analysis_id = ANY(:analysis_ids)
+                    AND ts.ticker IS NOT NULL
+                    ORDER BY ts.impact DESC
+                """)
+                ticker_result = conn.execute(ticker_query, {'analysis_ids': analysis_ids})
+
+                for ticker_row in ticker_result:
+                    analysis_id = ticker_row[0]
+                    news_item = analysis_id_to_news.get(analysis_id)
+                    if news_item:
+                        news_item['tickers'].append({
+                            'ticker': ticker_row[1],
+                            'impact': float(ticker_row[2]) if ticker_row[2] else 0
+                        })
 
         news_list = list(news_dict.values())
-        # Sortuj po impact malejąco
         news_list.sort(key=lambda x: abs(x['impact']), reverse=True)
 
     return jsonify(news_list)
@@ -2363,7 +2555,7 @@ def get_rejected_calendar_stats():
     query = text(f"""
     SELECT
         na.date,
-        COUNT(DISTINCT na.id) as news_count,
+        COUNT(DISTINCT nna.id) as news_count,
         nna.reason
     FROM {schema}.news_articles na
     JOIN {schema}.news_not_analyzed nna ON nna.news_id = na.id
