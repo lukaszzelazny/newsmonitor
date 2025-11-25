@@ -841,7 +841,7 @@ HTML_TEMPLATE = """
         }
         
         // Komponent widoku kalendarzowego
-        function CalendarView({ days, onBack }) {
+        function CalendarView({ days, onBack, onTickerSelect }) {
           const [calendarStats, setCalendarStats] = useState([]);
           const [selectedDate, setSelectedDate] = useState(null);
           const [newsForDate, setNewsForDate] = useState([]);
@@ -1112,12 +1112,19 @@ HTML_TEMPLATE = """
                               <div className="flex items-center gap-2 mb-2 flex-wrap">
                                 {news.tickers && news.tickers.length > 0 ? (
                                     news.tickers.map((ticker, tidx) => (
-                                      <span
+                                      <a
+                                        href="#"
                                         key={tidx}
-                                        className="px-2 py-0.5 bg-blue-100 text-blue-800 text-xs font-bold rounded"
+                                        onClick={(e) => {
+                                            e.preventDefault();
+                                            if (onTickerSelect) {
+                                                onTickerSelect(ticker.ticker);
+                                            }
+                                        }}
+                                        className="px-2 py-0.5 bg-blue-100 text-blue-800 text-xs font-bold rounded hover:bg-blue-200 cursor-pointer"
                                       >
                                         {ticker.ticker}
-                                      </span>
+                                      </a>
                                     ))
                                 ) : (
                                     <span className="px-2 py-0.5 bg-yellow-100 text-yellow-800 text-xs font-semibold rounded">
@@ -1475,6 +1482,16 @@ HTML_TEMPLATE = """
           const [showStats, setShowStats] = useState(true);
           const [viewMode, setViewMode] = useState('tickers'); // 'tickers', 'calendar' lub 'rejected'
 
+          const handleTickerSelectFromCalendar = (tickerSymbol) => {
+            const tickerData = tickers.find(t => t.ticker === tickerSymbol);
+            if (tickerData) {
+                setSelectedTicker(tickerData);
+            } else {
+                setSelectedTicker({ ticker: tickerSymbol });
+            }
+            setViewMode('tickers');
+          };
+
           useEffect(() => {
             fetchTickers();
           }, [days]);
@@ -1716,7 +1733,7 @@ HTML_TEMPLATE = """
                 </div>
 
                 {viewMode === 'calendar' ? (
-                  <CalendarView days={days} />
+                  <CalendarView days={days} onTickerSelect={handleTickerSelectFromCalendar} />
                 ) : viewMode === 'rejected' ? (
                   <CalendarRejectedView days={days} />
                 ) : (
