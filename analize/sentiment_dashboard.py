@@ -385,6 +385,7 @@ class SentimentAnalyzer:
             f.write('</body></html>')
 
         print("Raport zapisany jako: sentiment_report.html")
+        print("Report generation complete.")
 
 
 if __name__ == "__main__":
@@ -399,4 +400,3 @@ if __name__ == "__main__":
 
     # Opcja 3: Analiza konkretnych tickerów
     # fig = analyzer.plot_sentiment_timeline(tickers=['AAPL', 'MSFT', 'GOOGL'], days=60)
-    # fig.show()

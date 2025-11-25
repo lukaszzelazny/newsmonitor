@@ -12,6 +12,7 @@ from providers.pap_provider import PAPProvider
 from providers.strefa_investorow_provider import StrefaInwestorowProvider
 from providers.rekomendacje_provider import RekomendacjeProvider
 from providers.base_provider import BaseProvider
+from actions import run_ticker_scraper
 
 
 # Load environment variables
@@ -103,12 +104,23 @@ def main():
         '--mode',
         dest='mode',
         type=str,
-        choices=['si', 'sir'],
+        choices=['si', 'sir', 'sit'],
         default='si',
-        help='Scraping mode: si (Strefa Inwestorow news, default) or sir (Strefa Inwestorow Rekomendacje)'
+        help='Scraping mode: si (Strefa Inwestorow news, default), sir (Strefa Inwestorow Rekomendacje), sit (Strefa Inwestorow Ticker)'
+    )
+
+    parser.add_argument(
+        '--ticker',
+        dest='ticker',
+        type=str,
+        default=None,
+        help='Ticker symbol to scrape for (used with sit mode)'
     )
 
     args = parser.parse_args()
+
+    if args.mode == 'sit' and not args.ticker:
+        parser.error("--ticker is required when --mode is sit")
 
     # Load configuration
     config = Config()
@@ -155,73 +167,38 @@ def main():
 
         print("\n✓ Recommendations scraping completed!")
 
-    else:
-        # News mode (si) - use page arguments
-        # Determine page range
-        page_from = args.page_from
-        page_to = args.page_to
-
-        # If single number provided, use it as page count from 0
-        if args.pages is not None:
-            page_from = 0
-            page_to = args.pages - 1
-        # If --to provided without --from, use default from (0)
-        elif page_to is None:
-            # Default: scrape 5 pages (0-4) for SI mode
-            page_from = 0
-            page_to = 4
-
-        # Validate range
-        if page_from < 0:
-            print("✗ Error: --from must be >= 0")
-            return
-        if page_to < page_from:
-            print("✗ Error: --to must be >= --from")
-            return
-
+    elif args.mode == 'sit':
+        # Ticker mode for Strefa Inwestorow
         print("="*80)
-        print("NEWS MONITOR - NEWS SCRAPING")
+        print("NEWS MONITOR - TICKER SCRAPING (STREFA INWESTOROW)")
         print("="*80)
         print(f"\nStart time: {datetime.now()}")
         print(f"\nConfiguration:")
         print(f"  Database: {config.db_path}")
-        print(f"  Providers: {len(config.providers)}")
+        print(f"  Mode: Ticker (SIT)")
+        print(f"  Ticker: {args.ticker}")
+
+        # Determine page range (defaults to 0-4 if not specified)
+        page_from = args.page_from
+        page_to = args.page_to
+        if args.pages is not None:
+            page_from = 0
+            page_to = args.pages - 1
+        elif page_to is None:
+            page_from = 0
+            page_to = 4  # Default for SIT mode
+
         print(f"  Page range: {page_from} to {page_to} ({page_to - page_from + 1} pages)")
-        print(f"  Mode: News (SI)")
 
-        # Initialize database
-        db = Database(config.db_path)
+        stats = run_ticker_scraper(args.ticker, page_from, page_to)
 
-        # Create providers
-        providers = ProviderFactory.create_providers(config)
+        if "error" in stats:
+            print(f"\n✗ Error: {stats['error']}")
+        else:
+            print(f"\nProvider: {stats['provider']}")
+            print(f"  Company: {stats['company_name']}")
+            print(f"  Total checked: {stats['total_checked']}")
+            print(f"  New articles: {stats['new_articles']}")
+            print(f"  Skipped (already exists): {stats['skipped_articles']}")
 
-        if not providers:
-            print("\n✗ No providers configured or available")
-            return
-
-        # Initialize scraper
-        scraper = Scraper(db)
-
-        # Scrape from all providers
-        for provider in providers:
-            try:
-                stats = scraper.scrape_provider(provider, page_from, page_to)
-
-                print(f"\nProvider: {stats['provider']}")
-                print(f"  Total checked: {stats['total_checked']}")
-                print(f"  New articles: {stats['new_articles']}")
-                print(f"  Skipped (already exists): {stats['skipped_articles']}")
-            except Exception as e:
-                print(f"\n✗ Error processing provider {provider.name}: {e}")
-
-        # Print summary
-        scraper.print_summary()
-
-        # Close database
-        db.close()
-
-        print("\n✓ Scraping completed!")
-
-
-if __name__ == '__main__':
-    main()
+        print("\n✓ Ticker scraping task finished.")

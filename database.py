@@ -190,9 +190,17 @@ class Database:
             return db_article
         finally:
             session.close()
-    
-    def get_articles_by_source(self, source: str, limit: Optional[int] = None):
-        """Get articles by source."""
+
+    def get_article_by_url(self, url: str) -> Optional[NewsArticle]:
+        """Get a single article by its URL."""
+        session = self.Session()
+        try:
+            return session.query(NewsArticle).filter(NewsArticle.url == url).first()
+        finally:
+            session.close()
+
+    def get_company_name_by_ticker(self, ticker: str) -> Optional[str]:
+        """Get company name by ticker symbol."""
         session = self.Session()
         try:
             query = session.query(NewsArticle).filter(NewsArticle.source == source)
@@ -214,6 +222,15 @@ class Database:
         """Close database connection."""
         if self.engine:
             self.engine.dispose()
+
+    def get_company_name_by_ticker(self, ticker: str) -> Optional[str]:
+        """Get company name by ticker symbol."""
+        session = self.Session()
+        try:
+            ticker_obj = session.query(Ticker).filter(Ticker.ticker == ticker).first()
+            return ticker_obj.company_name if ticker_obj else None
+        finally:
+            session.close()
 
     """
     Add these methods to your Database class in database.py

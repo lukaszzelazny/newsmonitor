@@ -1,15 +1,17 @@
 """Main scraper orchestration logic."""
 
+import re
 from typing import List, Optional
 from datetime import date, datetime
 from providers.base_provider import BaseProvider, NewsArticle
 from database import Database
+from ai_analist import analyze_articles, is_article_analyzed, contains_pattern, NEGATIVE_KEYWORDS, save_not_analyzed
 
 
 class Scraper:
     """Main scraper orchestrator."""
     
-    def __init__(self, db: Database, telegram):
+    def __init__(self, db: Database, telegram=None):
         self.db = db
         self.scraped_count = 0
         self.skipped_count = 0
@@ -278,3 +280,93 @@ class Scraper:
 
         print(f"\nFinished at: {datetime.now()}")
         print(f"{'='*60}")
+
+    def scrape_ticker(self, provider: BaseProvider, company_name: str, page_from: int = 0, page_to: int = 4) -> dict:
+        """
+        Scrape articles for a specific company.
+        """
+        # Simplify company name for better matching
+        simple_company_name = company_name.replace(" SA", "").replace(" S.A.", "").strip()
+        print(f"\n{'='*60}")
+        print(f"Scraping for: {simple_company_name} (Original: {company_name})")
+        print(f"Provider: {provider.name}")
+        print(f"Page range: {page_from} to {page_to}")
+        print(f"{'='*60}")
+
+        total_articles = 0
+        new_articles = 0
+        skipped_articles = 0
+        found_articles = 0
+
+        try:
+            total_pages = page_to - page_from + 1
+            print(f"Total pages to scrape: {total_pages}")
+
+            for page_num in range(page_from, page_to + 1):
+                print(f"\nProcessing page {page_num} ({page_num - page_from + 1}/{total_pages})...")
+                articles = provider.get_articles_for_page(page_num)
+
+                if not articles:
+                    print(f"No articles found on page {page_num}")
+                    continue
+
+                for article in articles:
+                    total_articles += 1
+
+                    # Use regex with word boundaries for precise matching
+                    pattern = r'\b' + re.escape(simple_company_name.lower()) + r'\b'
+                    
+                    title_match = re.search(pattern, article.title.lower())
+                    
+                    # Fetch content once
+                    if not article.content:
+                        article.content = provider.clean_content(provider.get_article_content(article))
+
+                    content_match = None
+                    if article.content:
+                        content_match = re.search(pattern, article.content.lower())
+
+                    if title_match or content_match:
+                        # 1. Check for negative keywords
+                        has_negative, keyword = contains_pattern(NEGATIVE_KEYWORDS, article.title, article.content or "")
+                        if has_negative:
+                            print(f"  - Skipped (negative keyword '{keyword}'): {article.title[:60]}")
+                            if not self.db.exists(article.url):
+                                db_article = self.db.add_article(article)
+                                save_not_analyzed(self.db, db_article.id, f"Contains negative keyword: '{keyword}'", 0.0)
+                            continue
+
+                        # 2. Process the article if no negative keywords
+                        existing_article = self.db.get_article_by_url(article.url)
+                        if existing_article:
+                            skipped_articles += 1
+                            if not is_article_analyzed(self.db, existing_article.id):
+                                print(f"  → Re-analyzing existing article ID: {existing_article.id}")
+                                analyze_articles(self.db, mode='id', article_id=existing_article.id, skip_relevance_check=True)
+                            else:
+                                print(f"  ✓ Skipped (already exists and analyzed): {article.title[:60]}")
+                        else:  # New article
+                            if article.content:
+                                db_article = self.db.add_article(article)
+                                new_articles += 1
+                                date_str = f" ({article.date})" if article.date else ""
+                                print(f"    ✓ Saved{date_str} with ID: {db_article.id}")
+                                
+                                # Trigger AI analysis
+                                print(f"    → Triggering AI analysis for article ID: {db_article.id}")
+                                analyze_articles(self.db, mode='id', article_id=db_article.id, skip_relevance_check=True)
+                            else:
+                                print(f"    ✗ Failed to fetch content for new article")
+
+        except Exception as e:
+            print(f"\n✗ Error scraping for {company_name}: {e}")
+            self.errors.append(f"{company_name}: {str(e)}")
+
+        stats = {
+            'provider': provider.name,
+            'company_name': company_name,
+            'total_checked': total_articles,
+            'new_articles': new_articles,
+            'skipped_articles': skipped_articles
+        }
+        return stats

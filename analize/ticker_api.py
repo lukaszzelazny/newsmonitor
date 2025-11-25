@@ -12,6 +12,7 @@ import os
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from flask import Flask, render_template_string, jsonify, request
+from actions import run_ticker_scraper
 from sqlalchemy import create_engine, text
 from tools.ticker_analizer import getScoreWithDetails, RATING_LABELS
 from tools.moving_analizer import calculate_moving_averages_signals
@@ -1481,6 +1482,8 @@ HTML_TEMPLATE = """
           const [filterImpact, setFilterImpact] = useState('all');
           const [showStats, setShowStats] = useState(true);
           const [viewMode, setViewMode] = useState('tickers'); // 'tickers', 'calendar' lub 'rejected'
+          const [scrapingTicker, setScrapingTicker] = useState(null);
+          const [notification, setNotification] = useState({ message: '', type: '' });
 
           const handleTickerSelectFromCalendar = (tickerSymbol) => {
             const tickerData = tickers.find(t => t.ticker === tickerSymbol);
@@ -1732,6 +1735,12 @@ HTML_TEMPLATE = """
                   </div>
                 </div>
 
+                {notification.message && (
+                    <div className={`p-3 mb-4 rounded-lg text-sm ${notification.type === 'success' ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}`}>
+                        {notification.message}
+                    </div>
+                )}
+
                 {viewMode === 'calendar' ? (
                   <CalendarView days={days} onTickerSelect={handleTickerSelectFromCalendar} />
                 ) : viewMode === 'rejected' ? (
@@ -1749,7 +1758,7 @@ HTML_TEMPLATE = """
                       />
                     </div>
 
-                    <div className="space-y-1.5 overflow-y-auto" style={{ maxHeight: 'calc(100vh - 10rem)' }}>
+                      <div className="space-y-1.5 overflow-y-auto" style={{ maxHeight: 'calc(100vh - 10rem)' }}>
                       {sortedTickers.map((ticker) => {
                         const togglePortfolio = async (e) => {
                           e.stopPropagation();
@@ -1786,6 +1795,34 @@ HTML_TEMPLATE = """
                           } catch (error) {
                             console.error('Error toggling favorite:', error);
                           }
+                        };
+
+                        const handleScrape = async (e) => {
+                            e.stopPropagation();
+                            if (!confirm(`Do you want to scrape Strefa Inwestorow for ${ticker.ticker}?`)) return;
+                            
+                            setScrapingTicker(ticker.ticker);
+                            setNotification({ message: '', type: '' });
+
+                            try {
+                                const response = await fetch('/api/scrape_ticker', {
+                                    method: 'POST',
+                                    headers: { 'Content-Type': 'application/json' },
+                                    body: JSON.stringify({ ticker: ticker.ticker })
+                                });
+                                const data = await response.json();
+                                
+                                if (response.ok) {
+                                    setNotification({ message: `Scraping for ${ticker.ticker} complete! New articles: ${data.new_articles}`, type: 'success' });
+                                    fetchAnalyses(ticker.ticker);
+                                } else {
+                                    setNotification({ message: `Error scraping ${ticker.ticker}: ${data.error}`, type: 'error' });
+                                }
+                            } catch (error) {
+                                setNotification({ message: `Network error while scraping ${ticker.ticker}.`, type: 'error' });
+                            } finally {
+                                setScrapingTicker(null);
+                            }
                         };
 
                         return (
@@ -1827,6 +1864,9 @@ HTML_TEMPLATE = """
                                 <p className="text-xs text-gray-500">{ticker.sector || 'Brak sektora'}</p>
                               </div>
                               <div className="flex flex-col items-center gap-2 ml-2">
+                                <button onClick={handleScrape} disabled={scrapingTicker === ticker.ticker} className={`text-white px-2 py-1 rounded text-xs ${scrapingTicker === ticker.ticker ? 'bg-gray-400' : 'bg-blue-500'}`}>
+                                    {scrapingTicker === ticker.ticker ? 'Scraping...' : 'Scrape'}
+                                </button>
                                 <div className="text-right">
                                   <div className={`text-base font-bold ${getSentimentColor(ticker.avg_sentiment)}`}>
                                     {ticker.avg_sentiment > 0 ? '+' : ''}{Number(ticker.avg_sentiment).toFixed(2)}
@@ -2823,6 +2863,29 @@ def get_technical_analysis_endpoint(ticker):
         print(f"Error in technical analysis endpoint: {e}")
         import traceback
         traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/scrape_ticker', methods=['POST'])
+def scrape_ticker_endpoint():
+    """Endpoint to trigger ticker scraping."""
+    try:
+        data = request.get_json()
+        ticker = data.get('ticker')
+        page_from = data.get('page_from', 0)
+        page_to = data.get('page_to', 4)
+
+        if not ticker:
+            return jsonify({'error': 'Missing ticker'}), 400
+
+        stats = run_ticker_scraper(ticker, page_from, page_to)
+
+        if "error" in stats:
+            return jsonify(stats), 500
+        
+        return jsonify(stats)
+
+    except Exception as e:
         return jsonify({'error': str(e)}), 500
 
 
