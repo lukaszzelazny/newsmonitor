@@ -767,6 +767,7 @@ HTML_TEMPLATE = """
             const [allTickers, setAllTickers] = useState([]);
             const [selectedTickers, setSelectedTickers] = useState([]);
             const [isLoading, setIsLoading] = useState(false);
+            const [searchTerm, setSearchTerm] = useState('');
 
             useEffect(() => {
                 fetch('/api/all_tickers')
@@ -813,11 +814,22 @@ HTML_TEMPLATE = """
                 );
             };
 
+            const filteredTickers = allTickers.filter(ticker =>
+                ticker.label.toLowerCase().includes(searchTerm.toLowerCase())
+            );
+
             return (
                 <div className="mt-2 p-2 border border-blue-200 bg-blue-50 rounded-lg">
                     <p className="text-xs font-semibold text-blue-800 mb-2">Przypisz tickery do tej analizy:</p>
+                    <input
+                        type="text"
+                        placeholder="Szukaj tickera..."
+                        value={searchTerm}
+                        onChange={(e) => setSearchTerm(e.target.value)}
+                        className="w-full px-2 py-1 mb-2 text-xs border border-gray-300 rounded-md"
+                    />
                     <div className="max-h-32 overflow-y-auto border bg-white rounded p-1 text-xs mb-2">
-                        {allTickers.map(ticker => (
+                        {filteredTickers.map(ticker => (
                             <label key={ticker.value} className="flex items-center p-1 hover:bg-gray-100 rounded">
                                 <input
                                     type="checkbox"
