@@ -10,6 +10,8 @@ from tools.normalizer import get_normalizer
 from sklearn.metrics.pairwise import cosine_similarity
 from sqlalchemy import text
 
+normalizer = get_normalizer()
+
 load_dotenv()
 
 client = OpenAI(api_key=os.getenv('OPENAI_API', ''))
@@ -215,6 +217,8 @@ Twoim zadaniem jest analizować wiadomości ekonomiczne, giełdowe i biznesowe
 - Oba jednocześnie
 
 Zasady analizy:
+{ticker_context}
+
 1. **Rozpoznaj typ wiadomości**:
    - 🏢 Spółka
    - 🏭 Sektor
@@ -316,6 +320,7 @@ Tekst, który otrzymasz, może zawierać wiele krótkich newsów lub streszczeń
 Dla każdego fragmentu (newsa) zastosuj poniższe zasady analizy i zwróć listę obiektów JSON – po jednym dla każdej istotnej informacji.
 
 Zasady analizy:
+{ticker_context}
 
 1. **Rozpoznaj typ wiadomości**:
    - 🏢 Spółka – dotyczy konkretnego podmiotu lub kilku spółek
@@ -441,7 +446,8 @@ def analyze_summary(headline, lead):
         JSON string z listą analiz (array)
     """
     news_summary_text = f"{headline}\n\n{lead}"
-    prompt = PROMPT_SUMMARY_FIXED.format(news_summary_text=news_summary_text)
+    ticker_context = normalizer.get_prompt_context()
+    prompt = PROMPT_SUMMARY_FIXED.format(news_summary_text=news_summary_text, ticker_context=ticker_context)
 
     response = client.chat.completions.create(
         model="gpt-4o",
@@ -462,7 +468,8 @@ def analyze_news(headline, lead):
     Returns:
         JSON string z wynikiem analizy
     """
-    prompt = PROMPT_NEWS.format(headline=headline, lead=lead)
+    ticker_context = normalizer.get_prompt_context()
+    prompt = PROMPT_NEWS.format(headline=headline, lead=lead, ticker_context=ticker_context)
 
     response = client.chat.completions.create(
         model="gpt-4o",  # Zaktualizowana nazwa modelu
@@ -552,7 +559,18 @@ def _save_single_analysis(session, news_id: int, analysis_data: dict, analysis_r
         analysis_result_id: ID utworzonego rekordu AnalysisResult
     """
     # Pobierz pola z JSON
-    related_tickers = analysis_data.get('related_tickers', [])
+    related_tickers_raw = analysis_data.get('related_tickers', [])
+    # Normalizuj tickery
+    related_tickers = []
+    for ticker_raw in related_tickers_raw:
+        normalized_ticker, reason = normalizer.normalize(ticker_raw)
+        if reason:
+            print(f"Normalizacja tickera: {ticker_raw} -> {normalized_ticker} ({reason})")
+        if normalized_ticker:
+            related_tickers.append(normalized_ticker)
+        else:
+            print(f"Pominięto nieznany ticker: {ticker_raw}")
+
     ticker_impact = analysis_data.get('ticker_impact')
     sector_impact = analysis_data.get('sector_impact')
     confidence_value = analysis_data.get('confidence')
@@ -1178,7 +1196,7 @@ if __name__ == "__main__":
     from config import Config
 
     config = Config()
-    db = Database(config.db_path)
+    db = Database()
 
     if len(sys.argv) > 1:
         if sys.argv[1] == '--id' and len(sys.argv) > 2:
