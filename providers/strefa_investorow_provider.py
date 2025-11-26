@@ -58,7 +58,8 @@ class StrefaInwestorowProvider(BaseProvider):
                             title=title,
                             url=href,
                             source=self.name,
-                            date=article_date
+                            date=article_date,
+                            published_at=None
                         )
                         articles.append(article)
 
@@ -106,12 +107,12 @@ class StrefaInwestorowProvider(BaseProvider):
             soup = BeautifulSoup(response.content, 'lxml')
 
             # If date wasn't extracted from URL, try to find it in the article
-            if not article.date:
+            if not article.date or not article.published_at:
                 # Try to find date in various formats
                 date_patterns = [
-                    (r'(\d{2})\s+(stycznia|lutego|marca|kwietnia|maja|czerwca|lipca|sierpnia|września|października|listopada|grudnia)\s+(\d{4})', 'polish'),
-                    (r'(\d{4})-(\d{2})-(\d{2})', 'iso'),
-                    (r'(\d{2})\.(\d{2})\.(\d{4})', 'dots'),
+                    (r'(\d{2})\s+(stycznia|lutego|marca|kwietnia|maja|czerwca|lipca|sierpnia|września|października|listopada|grudnia)\s+(\d{4}),\s*(\d{2}:\d{2})', 'polish_datetime'),
+                    (r'(\d{4})-(\d{2})-(\d{2})\s*(\d{2}:\d{2})', 'iso_datetime'),
+                    (r'(\d{2})\.(\d{2})\.(\d{4}),\s*(\d{2}:\d{2})', 'dots_datetime'),
                 ]
 
                 page_text = soup.get_text()
@@ -119,22 +120,28 @@ class StrefaInwestorowProvider(BaseProvider):
                     match = re.search(pattern, page_text)
                     if match:
                         try:
-                            if fmt == 'polish':
-                                day, month_name, year = match.groups()
+                            if fmt == 'polish_datetime':
+                                day, month_name, year, time_str = match.groups()
                                 months = {
                                     'stycznia': 1, 'lutego': 2, 'marca': 3, 'kwietnia': 4,
                                     'maja': 5, 'czerwca': 6, 'lipca': 7, 'sierpnia': 8,
                                     'września': 9, 'października': 10, 'listopada': 11, 'grudnia': 12
                                 }
-                                article.date = date(int(year), months[month_name], int(day))
+                                hour, minute = map(int, time_str.split(':'))
+                                article.published_at = datetime(int(year), months[month_name], int(day), hour, minute)
+                                article.date = article.published_at.date()
                                 break
-                            elif fmt == 'iso':
-                                year, month, day = match.groups()
-                                article.date = date(int(year), int(month), int(day))
+                            elif fmt == 'iso_datetime':
+                                year, month, day, time_str = match.groups()
+                                hour, minute = map(int, time_str.split(':'))
+                                article.published_at = datetime(int(year), int(month), int(day), hour, minute)
+                                article.date = article.published_at.date()
                                 break
-                            elif fmt == 'dots':
-                                day, month, year = match.groups()
-                                article.date = date(int(year), int(month), int(day))
+                            elif fmt == 'dots_datetime':
+                                day, month, year, time_str = match.groups()
+                                hour, minute = map(int, time_str.split(':'))
+                                article.published_at = datetime(int(year), int(month), int(day), hour, minute)
+                                article.date = article.published_at.date()
                                 break
                         except (ValueError, KeyError):
                             continue

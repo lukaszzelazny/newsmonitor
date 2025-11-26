@@ -2,17 +2,18 @@
 
 from abc import ABC, abstractmethod
 from typing import List, Dict, Optional
-from datetime import date
+from datetime import date, datetime
 import re
 
 class NewsArticle:
     """Represents a single news article."""
     
-    def __init__(self, title: str, url: str, source: str, date: Optional[date] = None):
+    def __init__(self, title: str, url: str, source: str, date: Optional[date] = None, published_at: Optional[datetime] = None):
         self.title = title
         self.url = url
         self.source = source
         self.date = date
+        self.published_at = published_at
         self.content = None
         self.scraped_at = None
 

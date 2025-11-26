@@ -1142,6 +1142,7 @@ HTML_TEMPLATE = """
                               )}
 
                               <div className="flex items-center gap-2 text-xs text-gray-500 mb-2">
+                                {news.published_at && <span className="font-semibold">{news.published_at}</span>}
                                 <span>{news.source}</span>
                                 {news.url && (
                                   <>
@@ -2530,6 +2531,7 @@ def get_news_by_date(date):
         na.id as news_id,
         ar.id as analysis_id,
         na.date,
+        na.published_at,
         na.title,
         na.source,
         na.url,
@@ -2539,7 +2541,7 @@ def get_news_by_date(date):
     WHERE na.date = :date
         AND ar.summary IS NOT NULL
         AND na.id NOT IN (SELECT news_id FROM {schema}.news_not_analyzed WHERE reason = 'duplicate')
-    ORDER BY na.id
+    ORDER BY na.published_at DESC
     """)
 
     with engine.connect() as conn:
@@ -2550,23 +2552,24 @@ def get_news_by_date(date):
             news_id = row[0]
             summary_data = {}
             try:
-                if row[6] and isinstance(row[6], str):
-                    summary_data = json.loads(row[6])
-                elif isinstance(row[6], dict):
-                    summary_data = row[6]
+                if row[7] and isinstance(row[7], str):
+                    summary_data = json.loads(row[7])
+                elif isinstance(row[7], dict):
+                    summary_data = row[7]
             except json.JSONDecodeError:
-                pass 
+                pass
 
             impact = summary_data.get('ticker_impact')
             confidence = summary_data.get('confidence')
-            
+
             news_dict[news_id] = {
                 'news_id': news_id,
                 'analysis_id': row[1],
                 'date': row[2].strftime('%Y-%m-%d') if row[2] else None,
-                'title': row[3],
-                'source': row[4],
-                'url': row[5],
+                'published_at': row[3].strftime('%H:%M') if row[3] else None,
+                'title': row[4],
+                'source': row[5],
+                'url': row[6],
                 'impact': float(impact) if impact is not None else 0.4,
                 'confidence': float(confidence) if confidence is not None else 0.7,
                 'occasion': summary_data.get('occasion'),
@@ -2599,7 +2602,9 @@ def get_news_by_date(date):
                         })
 
         news_list = list(news_dict.values())
-        news_list.sort(key=lambda x: abs(x['impact']), reverse=True)
+        # Sort by impact if no published_at is available
+        news_list.sort(key=lambda x: x.get('published_at') or '00:00', reverse=True)
+
 
     return jsonify(news_list)
 

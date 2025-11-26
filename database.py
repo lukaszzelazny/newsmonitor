@@ -21,6 +21,7 @@ class NewsArticle(Base):
     url = Column(String(1000), nullable=False, unique=True)
     source = Column(String(100), nullable=False)
     date = Column(Date, nullable=True)
+    published_at = Column(DateTime, nullable=True)
     scraped_at = Column(DateTime, default=datetime.now, nullable=False)
     
     # Index for faster lookups
@@ -179,6 +180,7 @@ class Database:
             url=article.url,
             source=article.source,
             date=article.date,
+            published_at=article.published_at,
             scraped_at=datetime.now()
         )
         
@@ -199,17 +201,6 @@ class Database:
         finally:
             session.close()
 
-    def get_company_name_by_ticker(self, ticker: str) -> Optional[str]:
-        """Get company name by ticker symbol."""
-        session = self.Session()
-        try:
-            query = session.query(NewsArticle).filter(NewsArticle.source == source)
-            if limit:
-                query = query.limit(limit)
-            return query.all()
-        finally:
-            session.close()
-    
     def get_articles_by_date(self, target_date: date_type):
         """Get articles by date."""
         session = self.Session()
