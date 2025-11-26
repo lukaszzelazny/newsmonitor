@@ -787,16 +787,19 @@ HTML_TEMPLATE = """
                         })
                     });
                     if (response.ok) {
-                        alert('Tickery zostały zaktualizowane.');
                         if (onSave) {
-                            onSave();
+                            onSave(true, 'Tickery zaktualizowane pomyślnie.');
                         }
                     } else {
-                        alert('Wystąpił błąd podczas zapisywania tickerów.');
+                        if (onSave) {
+                            onSave(false, 'Błąd podczas zapisywania tickerów.');
+                        }
                     }
                 } catch (error) {
                     console.error('Error saving tickers:', error);
-                    alert('Wystąpił błąd sieci.');
+                    if (onSave) {
+                        onSave(false, 'Błąd sieci podczas zapisywania.');
+                    }
                 } finally {
                     setIsLoading(false);
                 }
@@ -842,7 +845,7 @@ HTML_TEMPLATE = """
         }
         
         // Komponent widoku kalendarzowego
-        function CalendarView({ days, onBack, onTickerSelect }) {
+        function CalendarView({ days, onBack, onTickerSelect, showNotification }) {
           const [calendarStats, setCalendarStats] = useState([]);
           const [selectedDate, setSelectedDate] = useState(null);
           const [newsForDate, setNewsForDate] = useState([]);
@@ -876,9 +879,19 @@ HTML_TEMPLATE = """
               setLoading(false);
             }
           };
+          
+          const handleTickerSave = (success, message) => {
+            if (showNotification) {
+              showNotification(message, success ? 'success' : 'error');
+            }
+            fetchNewsForDate(selectedDate);
+          };
 
           const markAsDuplicate = async (newsId) => {
-            if (!confirm('Czy na pewno chcesz oznaczyć ten news jako duplikat?')) return;
+            // Optimistic UI update
+            const originalNews = [...newsForDate];
+            const updatedNews = newsForDate.filter(news => news.news_id !== newsId);
+            setNewsForDate(updatedNews);
 
             try {
               const response = await fetch('/api/mark_duplicate', {
@@ -887,16 +900,18 @@ HTML_TEMPLATE = """
                 body: JSON.stringify({ news_id: newsId })
               });
 
-              if (response.ok) {
-                fetchNewsForDate(selectedDate);
-                fetchCalendarStats();
-                alert('News oznaczony jako duplikat');
+              if (!response.ok) {
+                // Revert on failure
+                setNewsForDate(originalNews);
+                if (showNotification) showNotification('Błąd przy oznaczaniu newsa jako duplikat', 'error');
               } else {
-                alert('Błąd przy oznaczaniu newsa jako duplikat');
+                if (showNotification) showNotification('News oznaczony jako duplikat', 'success');
+                fetchCalendarStats(); // Refresh calendar colors
               }
             } catch (error) {
               console.error('Error marking as duplicate:', error);
-              alert('Błąd połączenia z serwerem');
+              setNewsForDate(originalNews); // Revert on network error
+              if (showNotification) showNotification('Błąd połączenia z serwerem', 'error');
             }
           };
 
@@ -1137,7 +1152,7 @@ HTML_TEMPLATE = """
                               {news.tickers && news.tickers.length === 0 && (
                                 <TickerSelect
                                     analysisId={news.analysis_id}
-                                    onSave={() => fetchNewsForDate(selectedDate)}
+                                    onSave={handleTickerSave}
                                 />
                               )}
 
@@ -1484,7 +1499,20 @@ HTML_TEMPLATE = """
           const [showStats, setShowStats] = useState(true);
           const [viewMode, setViewMode] = useState('tickers'); // 'tickers', 'calendar' lub 'rejected'
           const [scrapingTicker, setScrapingTicker] = useState(null);
-          const [notification, setNotification] = useState({ message: '', type: '' });
+          const [notification, setNotification] = useState(null);
+          const notificationTimeout = useRef(null);
+          
+          const showNotification = (message, type = 'success') => {
+            setNotification({ message, type });
+            
+            if (notificationTimeout.current) {
+                clearTimeout(notificationTimeout.current);
+            }
+
+            notificationTimeout.current = setTimeout(() => {
+                setNotification(null);
+            }, 5000);
+          };
 
           const handleTickerSelectFromCalendar = (tickerSymbol) => {
             const tickerData = tickers.find(t => t.ticker === tickerSymbol);
@@ -1555,27 +1583,30 @@ HTML_TEMPLATE = """
             }
           };
 
-          const markAsDuplicate = async (analysisId, newsId) => {
-            if (!confirm('Czy na pewno chcesz oznaczyć ten news jako duplikat?')) return;
-            
+          const markAsDuplicate = async (newsId) => {
+            // Optimistic UI update
+            const originalAnalyses = [...analyses];
+            const updatedAnalyses = analyses.filter(a => a.news_id !== newsId);
+            setAnalyses(updatedAnalyses);
+
             try {
-              const response = await fetch('/api/mark_duplicate', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ news_id: newsId })
-              });
-              
-              if (response.ok) {
-                // Odśwież listę analiz
-                fetchAnalyses(selectedTicker.ticker);
-                fetchTickers(); // Odśwież statystyki tickerów
-                alert('News oznaczony jako duplikat i usunięty z widoku');
-              } else {
-                alert('Błąd przy oznaczaniu newsa jako duplikat');
-              }
+                const response = await fetch('/api/mark_duplicate', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ news_id: newsId })
+                });
+
+                if (response.ok) {
+                    showNotification('News oznaczony jako duplikat.', 'success');
+                    fetchTickers(); // Odśwież statystyki tickerów
+                } else {
+                    setAnalyses(originalAnalyses); // Revert on failure
+                    showNotification('Błąd przy oznaczaniu newsa jako duplikat.', 'error');
+                }
             } catch (error) {
-              console.error('Error marking as duplicate:', error);
-              alert('Błąd połączenia z serwerem');
+                console.error('Error marking as duplicate:', error);
+                setAnalyses(originalAnalyses); // Revert on error
+                showNotification('Błąd sieci przy oznaczaniu jako duplikat.', 'error');
             }
           };
 
@@ -1736,14 +1767,17 @@ HTML_TEMPLATE = """
                   </div>
                 </div>
 
-                {notification.message && (
-                    <div className={`p-3 mb-4 rounded-lg text-sm ${notification.type === 'success' ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}`}>
+                {notification && (
+                    <div 
+                        className={`fixed top-5 right-5 p-4 rounded-lg shadow-lg text-sm z-50 transition-opacity duration-300 ${notification.type === 'success' ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}`}
+                        onClick={() => setNotification(null)}
+                    >
                         {notification.message}
                     </div>
                 )}
 
                 {viewMode === 'calendar' ? (
-                  <CalendarView days={days} onTickerSelect={handleTickerSelectFromCalendar} />
+                  <CalendarView days={days} onTickerSelect={handleTickerSelectFromCalendar} showNotification={showNotification} />
                 ) : viewMode === 'rejected' ? (
                   <CalendarRejectedView days={days} />
                 ) : (
@@ -1798,33 +1832,32 @@ HTML_TEMPLATE = """
                           }
                         };
 
-                        const handleScrape = async (e) => {
-                            e.stopPropagation();
-                            if (!confirm(`Do you want to scrape Strefa Inwestorow for ${ticker.ticker}?`)) return;
-                            
-                            setScrapingTicker(ticker.ticker);
-                            setNotification({ message: '', type: '' });
+                                const handleScrape = async (e) => {
+                                    e.stopPropagation();
+                                    
+                                    setScrapingTicker(ticker.ticker);
+                                    showNotification(`Rozpoczynam scraping dla ${ticker.ticker}...`, 'success');
 
-                            try {
-                                const response = await fetch('/api/scrape_ticker', {
-                                    method: 'POST',
-                                    headers: { 'Content-Type': 'application/json' },
-                                    body: JSON.stringify({ ticker: ticker.ticker })
-                                });
-                                const data = await response.json();
-                                
-                                if (response.ok) {
-                                    setNotification({ message: `Scraping for ${ticker.ticker} complete! New articles: ${data.new_articles}`, type: 'success' });
-                                    fetchAnalyses(ticker.ticker);
-                                } else {
-                                    setNotification({ message: `Error scraping ${ticker.ticker}: ${data.error}`, type: 'error' });
-                                }
-                            } catch (error) {
-                                setNotification({ message: `Network error while scraping ${ticker.ticker}.`, type: 'error' });
-                            } finally {
-                                setScrapingTicker(null);
-                            }
-                        };
+                                    try {
+                                        const response = await fetch('/api/scrape_ticker', {
+                                            method: 'POST',
+                                            headers: { 'Content-Type': 'application/json' },
+                                            body: JSON.stringify({ ticker: ticker.ticker })
+                                        });
+                                        const data = await response.json();
+                                        
+                                        if (response.ok) {
+                                            showNotification(`Scraping dla ${ticker.ticker} zakończony! Nowe artykuły: ${data.new_articles}`, 'success');
+                                            fetchAnalyses(ticker.ticker);
+                                        } else {
+                                            showNotification(`Błąd podczas scrapingu ${ticker.ticker}: ${data.error}`, 'error');
+                                        }
+                                    } catch (error) {
+                                        showNotification(`Błąd sieci podczas scrapingu ${ticker.ticker}.`, 'error');
+                                    } finally {
+                                        setScrapingTicker(null);
+                                    }
+                                };
 
                         return (
                           <div
@@ -2024,7 +2057,7 @@ HTML_TEMPLATE = """
                                         className="border border-gray-200 rounded-lg p-3 hover:shadow-md transition-shadow relative"
                                       >
                                         <button
-                                          onClick={() => markAsDuplicate(analysis.analysis_id, analysis.news_id)}
+                                          onClick={() => markAsDuplicate(analysis.news_id)}
                                           className="absolute top-1.5 right-1.5 w-6 h-6 flex items-center justify-center bg-red-500 hover:bg-red-600 text-white rounded-full text-sm font-bold transition-colors"
                                           title="Oznacz jako duplikat"
                                         >
