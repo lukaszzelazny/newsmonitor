@@ -863,6 +863,7 @@ HTML_TEMPLATE = """
           const [newsForDate, setNewsForDate] = useState([]);
           const [loading, setLoading] = useState(false);
           const [currentMonth, setCurrentMonth] = useState(new Date());
+          const [activeTickerFilters, setActiveTickerFilters] = useState([]);
 
           useEffect(() => {
             fetchCalendarStats();
@@ -885,6 +886,9 @@ HTML_TEMPLATE = """
               const data = await response.json();
               setNewsForDate(data);
               setSelectedDate(date);
+              const allTickers = data.flatMap(news => news.tickers.map(t => t.ticker));
+              const uniqueTickers = [...new Set(allTickers)].sort();
+              setActiveTickerFilters(uniqueTickers);
             } catch (error) {
               console.error('Error fetching news for date:', error);
             } finally {
@@ -1003,6 +1007,30 @@ HTML_TEMPLATE = """
           const calendarDays = generateCalendarDays();
           const monthNames = ['Styczeń', 'Luty', 'Marzec', 'Kwiecień', 'Maj', 'Czerwiec',
                             'Lipiec', 'Sierpień', 'Wrzesień', 'Październik', 'Listopad', 'Grudzień'];
+                            
+          const dayTickers = React.useMemo(() => {
+            if (!newsForDate || newsForDate.length === 0) return [];
+            const allTickers = newsForDate.flatMap(news => news.tickers.map(t => t.ticker));
+            return [...new Set(allTickers)].sort();
+          }, [newsForDate]);
+
+          const handleTickerFilterClick = (ticker) => {
+            setActiveTickerFilters(prev =>
+              prev.includes(ticker)
+                ? prev.filter(t => t !== ticker)
+                : [...prev, ticker]
+            );
+          };
+
+          const filteredNews = React.useMemo(() => {
+            const inactiveFilters = dayTickers.filter(t => !activeTickerFilters.includes(t));
+            if (inactiveFilters.length === 0) {
+              return newsForDate;
+            }
+            return newsForDate.filter(news => {
+              return !news.tickers.some(t => inactiveFilters.includes(t.ticker));
+            });
+          }, [newsForDate, activeTickerFilters, dayTickers]);
 
           return (
             <div className="space-y-4">
@@ -1105,18 +1133,40 @@ HTML_TEMPLATE = """
               {selectedDate && (
                 <div className="bg-white rounded-lg shadow p-4">
                   <h3 className="text-lg font-bold text-gray-900 mb-3">
-                    Newsy z {selectedDate} ({newsForDate.length})
+                    Newsy z {selectedDate} ({filteredNews.length})
                   </h3>
+
+                  {dayTickers.length > 0 && (
+                    <div className="flex items-center gap-2 mb-4 flex-wrap p-2 bg-gray-50 rounded-lg">
+                        <span className="text-sm font-semibold text-gray-700">Filtruj tickery:</span>
+                        {dayTickers.map(ticker => {
+                            const isActive = activeTickerFilters.includes(ticker);
+                            return (
+                                <button
+                                    key={ticker}
+                                    onClick={() => handleTickerFilterClick(ticker)}
+                                    className={`px-3 py-1 text-xs font-bold rounded-full transition-all duration-200 ${
+                                        isActive
+                                            ? 'bg-blue-600 text-white shadow'
+                                            : 'bg-gray-200 text-gray-800 hover:bg-gray-300'
+                                    }`}
+                                >
+                                    {ticker}
+                                </button>
+                            );
+                        })}
+                    </div>
+                  )}
 
                   {loading ? (
                     <div className="flex items-center justify-center py-12">
                       <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500"></div>
                     </div>
-                  ) : newsForDate.length === 0 ? (
-                    <p className="text-gray-500 text-center py-8">Brak newsów z tego dnia</p>
+                  ) : filteredNews.length === 0 ? (
+                    <p className="text-gray-500 text-center py-8">Brak newsów spełniających kryteria filtrowania.</p>
                   ) : (
                     <div className="space-y-3">
-                      {newsForDate.map((news, idx) => (
+                      {filteredNews.map((news, idx) => (
                         <div key={idx} className="border border-gray-200 rounded-lg p-3 hover:shadow-md transition-shadow relative">
                           <button
                             onClick={() => markAsDuplicate(news.news_id)}
