@@ -864,6 +864,7 @@ HTML_TEMPLATE = """
           const [loading, setLoading] = useState(false);
           const [currentMonth, setCurrentMonth] = useState(new Date());
           const [activeTickerFilters, setActiveTickerFilters] = useState([]);
+          const [showUnassigned, setShowUnassigned] = useState(true);
 
           useEffect(() => {
             fetchCalendarStats();
@@ -889,6 +890,7 @@ HTML_TEMPLATE = """
               const allTickers = data.flatMap(news => news.tickers.map(t => t.ticker));
               const uniqueTickers = [...new Set(allTickers)].sort();
               setActiveTickerFilters(uniqueTickers);
+              setShowUnassigned(true);
             } catch (error) {
               console.error('Error fetching news for date:', error);
             } finally {
@@ -1022,15 +1024,20 @@ HTML_TEMPLATE = """
             );
           };
 
+          const hasUnassignedNews = React.useMemo(() => {
+            return newsForDate.some(news => news.tickers.length === 0);
+          }, [newsForDate]);
+
           const filteredNews = React.useMemo(() => {
-            const inactiveFilters = dayTickers.filter(t => !activeTickerFilters.includes(t));
-            if (inactiveFilters.length === 0) {
-              return newsForDate;
-            }
-            return newsForDate.filter(news => {
-              return !news.tickers.some(t => inactiveFilters.includes(t.ticker));
-            });
-          }, [newsForDate, activeTickerFilters, dayTickers]);
+              return newsForDate.filter(news => {
+                  const hasTickers = news.tickers.length > 0;
+                  if (hasTickers) {
+                      return news.tickers.some(t => activeTickerFilters.includes(t.ticker));
+                  } else {
+                      return showUnassigned;
+                  }
+              });
+          }, [newsForDate, activeTickerFilters, showUnassigned]);
 
           return (
             <div className="space-y-4">
@@ -1136,9 +1143,9 @@ HTML_TEMPLATE = """
                     Newsy z {selectedDate} ({filteredNews.length})
                   </h3>
 
-                  {dayTickers.length > 0 && (
+                  {(dayTickers.length > 0 || hasUnassignedNews) && (
                     <div className="flex items-center gap-2 mb-4 flex-wrap p-2 bg-gray-50 rounded-lg">
-                        <span className="text-sm font-semibold text-gray-700">Filtruj tickery:</span>
+                        <span className="text-sm font-semibold text-gray-700">Filtruj:</span>
                         {dayTickers.map(ticker => {
                             const isActive = activeTickerFilters.includes(ticker);
                             return (
@@ -1155,6 +1162,18 @@ HTML_TEMPLATE = """
                                 </button>
                             );
                         })}
+                        {hasUnassignedNews && (
+                            <button
+                                onClick={() => setShowUnassigned(prev => !prev)}
+                                className={`px-3 py-1 text-xs font-bold rounded-full transition-all duration-200 ${
+                                    showUnassigned
+                                        ? 'bg-blue-600 text-white shadow'
+                                        : 'bg-gray-200 text-gray-800 hover:bg-gray-300'
+                                }`}
+                            >
+                                NIEPRZYPISANE
+                            </button>
+                        )}
                     </div>
                   )}
 
