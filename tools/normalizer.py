@@ -4,6 +4,7 @@ Moduł do normalizacji tickerów i zapobiegania duplikatom
 from sqlalchemy import create_engine, text
 from difflib import SequenceMatcher
 import os
+import json
 
 def get_db_engine():
     db_url = "postgresql:///?service=stock"
@@ -411,9 +412,80 @@ def fill_missing_company_names():
         conn.commit()
         print("\n✅ Uzupełnianie nazw zakończone!")
 
+def migrate_summary_tickers(dry_run=True):
+    """
+    Normalizuje tickery w polu `related_tickers` w `analysis_result.summary`
+    """
+    normalizer = get_normalizer()
+    print("\n🔍 Szukam tickerów do normalizacji w `analysis_result.summary`...")
+
+    with engine.connect() as conn:
+        # Użyj jsonb_path_exists dla wydajności
+        # Użyj standardowych operatorów JSON zamiast jsonb_path_exists, aby uniknąć problemów ze składnią
+        result = conn.execute(text(f"""
+            SELECT id, summary
+            FROM {schema}.analysis_result
+            WHERE summary IS NOT NULL 
+              AND TRIM(summary) LIKE '{{%'
+              AND (summary::jsonb) ? 'related_tickers'
+              AND jsonb_typeof(summary::jsonb -> 'related_tickers') = 'array'
+              AND jsonb_array_length(summary::jsonb -> 'related_tickers') > 0
+        """))
+
+        updates_to_perform = []
+        for id, summary_str in result:
+            try:
+                summary = json.loads(summary_str)
+                if not isinstance(summary, dict) or 'related_tickers' not in summary or not summary['related_tickers']:
+                    continue
+            except json.JSONDecodeError:
+                continue  # Pomiń nieprawidłowy JSON
+
+            original_tickers = summary.get('related_tickers', [])
+            normalized_tickers = []
+            changed = False
+
+            for ticker in original_tickers:
+                # Użyj auto_add_alias=True, aby upewnić się, że nowe aliasy są rozpoznawane
+                normalized, reason = normalizer.normalize(ticker, auto_add_alias=True)
+                normalized_tickers.append(normalized)
+                if normalized != ticker:
+                    changed = True
+                    print(f"  (ID: {id}) {ticker} -> {normalized} ({reason})")
+
+            if changed:
+                new_summary = summary.copy()
+                new_summary['related_tickers'] = normalized_tickers
+                updates_to_perform.append({'id': id, 'summary': new_summary})
+
+        if not updates_to_perform:
+            print("✓ Nie znaleziono tickerów do aktualizacji w `summary`!")
+            return
+
+        print(f"\n📊 Znaleziono {len(updates_to_perform)} rekordów `analysis_result` do aktualizacji.")
+
+        if dry_run:
+            print("\n⚠️  DRY RUN - żadne zmiany nie zostały zapisane w `analysis_result`")
+            return
+
+        print("\n🔧 Aktualizuję `analysis_result.summary`...")
+        for update in updates_to_perform:
+            # Serializuj słownik z powrotem do JSON string przed zapisem
+            summary_json_str = json.dumps(update['summary'], ensure_ascii=False)
+            conn.execute(text(f"""
+                UPDATE {schema}.analysis_result
+                SET summary = :summary
+                WHERE id = :id
+            """), {'summary': summary_json_str, 'id': update['id']})
+            print(f"  ✓ Zaktualizowano ID: {update['id']}")
+        
+        conn.commit()
+        print("✅ Aktualizacja `summary` zakończona!")
+
+
 def migrate_duplicate_tickers(dry_run=True):
     """
-    Znajduje i łączy duplikaty tickerów w bazie
+    Znajduje i łączy duplikaty tickerów w bazie (w ticker_sentiment)
 
     Args:
         dry_run: Jeśli True, tylko pokazuje co by się stało
@@ -473,7 +545,7 @@ def migrate_duplicate_tickers(dry_run=True):
                 print(f"  ✓ {alias} -> {canonical}")
 
         conn.commit()
-        print("\n✅ Migracja zakończona!")
+        print("\n✅ Migracja `ticker_sentiment` zakończona!")
 
 
 if __name__ == '__main__':
@@ -492,6 +564,7 @@ if __name__ == '__main__':
         elif command == 'migrate':
             dry_run = '--dry-run' in sys.argv or '-n' in sys.argv
             migrate_duplicate_tickers(dry_run=dry_run)
+            migrate_summary_tickers(dry_run=dry_run)
             sys.exit(0)
         elif command == 'help':
             print("""
