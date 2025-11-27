@@ -1331,6 +1331,7 @@ HTML_TEMPLATE = """
           const [newsForDate, setNewsForDate] = useState([]);
           const [loading, setLoading] = useState(false);
           const [reanalyzing, setReanalyzing] = useState({});
+          const [reanalysisStatus, setReanalysisStatus] = useState({});
           const [currentMonth, setCurrentMonth] = useState(new Date());
 
           useEffect(() => {
@@ -1365,6 +1366,8 @@ HTML_TEMPLATE = """
             if (!confirm('Czy na pewno chcesz ponownie przeanalizować ten news przez AI?')) return;
 
             setReanalyzing(prev => ({ ...prev, [newsId]: true }));
+            setReanalysisStatus(prev => ({ ...prev, [newsId]: null }));
+
             try {
               const response = await fetch('/api/reanalyze_news', {
                 method: 'POST',
@@ -1372,20 +1375,22 @@ HTML_TEMPLATE = """
                 body: JSON.stringify({ news_id: newsId })
               });
 
-              const result = await response.json();
-
               if (response.ok) {
-                alert('News został pomyślnie przeanalizowany przez AI!');
-                fetchNewsForDate(selectedDate);
-                fetchCalendarStats();
+                setReanalysisStatus(prev => ({ ...prev, [newsId]: 'success' }));
+                setTimeout(() => {
+                    setNewsForDate(prevNews => prevNews.filter(n => n.news_id !== newsId));
+                    fetchCalendarStats();
+                }, 1500);
               } else {
-                alert(`Błąd analizy: ${result.error}`);
+                setReanalysisStatus(prev => ({ ...prev, [newsId]: 'error' }));
               }
             } catch (error) {
               console.error('Error reanalyzing news:', error);
-              alert('Błąd połączenia z serwerem');
+              setReanalysisStatus(prev => ({ ...prev, [newsId]: 'error' }));
             } finally {
-              setReanalyzing(prev => ({ ...prev, [newsId]: false }));
+              setTimeout(() => {
+                setReanalyzing(prev => ({ ...prev, [newsId]: false }));
+              }, 1500);
             }
           };
 
@@ -1581,14 +1586,24 @@ HTML_TEMPLATE = """
 
                             <button
                               onClick={() => reanalyzeNews(news.news_id)}
-                              disabled={reanalyzing[news.news_id]}
-                              className={`flex-shrink-0 px-4 py-2 rounded-lg font-semibold text-sm transition-colors ${
+                              disabled={reanalyzing[news.news_id] || reanalysisStatus[news.news_id] === 'success'}
+                              className={`flex-shrink-0 px-4 py-2 rounded-lg font-semibold text-sm transition-colors w-28 text-center ${
                                 reanalyzing[news.news_id]
                                   ? 'bg-gray-300 text-gray-600 cursor-not-allowed'
+                                  : reanalysisStatus[news.news_id] === 'success'
+                                  ? 'bg-green-500 text-white'
+                                  : reanalysisStatus[news.news_id] === 'error'
+                                  ? 'bg-red-500 text-white'
                                   : 'bg-blue-500 hover:bg-blue-600 text-white'
                               }`}
                             >
-                              {reanalyzing[news.news_id] ? 'Analizowanie...' : 'Analizuj AI'}
+                              {reanalyzing[news.news_id] 
+                                ? 'Analizowanie...' 
+                                : reanalysisStatus[news.news_id] === 'success'
+                                ? 'Przeanalizowano'
+                                : reanalysisStatus[news.news_id] === 'error'
+                                ? 'Błąd'
+                                : 'Analizuj AI'}
                             </button>
                           </div>
                         </div>
