@@ -818,16 +818,37 @@ HTML_TEMPLATE = """
                 ticker.label.toLowerCase().includes(searchTerm.toLowerCase())
             );
 
+            const toggleSelectAll = () => {
+                const allVisibleTickerValues = filteredTickers.map(t => t.value);
+                const allSelected = allVisibleTickerValues.every(v => selectedTickers.includes(v));
+
+                if (allSelected) {
+                    // Deselect all visible
+                    setSelectedTickers(prev => prev.filter(t => !allVisibleTickerValues.includes(t)));
+                } else {
+                    // Select all visible
+                    setSelectedTickers(prev => [...new Set([...prev, ...allVisibleTickerValues])]);
+                }
+            };
+
             return (
                 <div className="mt-2 p-2 border border-blue-200 bg-blue-50 rounded-lg">
                     <p className="text-xs font-semibold text-blue-800 mb-2">Przypisz tickery do tej analizy:</p>
-                    <input
-                        type="text"
-                        placeholder="Szukaj tickera..."
-                        value={searchTerm}
-                        onChange={(e) => setSearchTerm(e.target.value)}
-                        className="w-full px-2 py-1 mb-2 text-xs border border-gray-300 rounded-md"
-                    />
+                    <div className="flex items-center gap-2 mb-2">
+                        <input
+                            type="text"
+                            placeholder="Szukaj tickera..."
+                            value={searchTerm}
+                            onChange={(e) => setSearchTerm(e.target.value)}
+                            className="flex-grow px-2 py-1 text-xs border border-gray-300 rounded-md"
+                        />
+                        <button
+                            onClick={toggleSelectAll}
+                            className="px-2 py-1 text-xs font-semibold text-white bg-blue-500 rounded-md hover:bg-blue-600 transition-colors"
+                        >
+                            Zaznacz/Odznacz
+                        </button>
+                    </div>
                     <div className="max-h-32 overflow-y-auto border bg-white rounded p-1 text-xs mb-2">
                         {filteredTickers.map(ticker => (
                             <label key={ticker.value} className="flex items-center p-1 hover:bg-gray-100 rounded">
@@ -1024,6 +1045,16 @@ HTML_TEMPLATE = """
             );
           };
 
+          const selectAllDayTickers = () => {
+              setActiveTickerFilters(dayTickers);
+              setShowUnassigned(true);
+          };
+
+          const deselectAllDayTickers = () => {
+              setActiveTickerFilters([]);
+              setShowUnassigned(false);
+          };
+
           const hasUnassignedNews = React.useMemo(() => {
             return newsForDate.some(news => news.tickers.length === 0);
           }, [newsForDate]);
@@ -1146,6 +1177,11 @@ HTML_TEMPLATE = """
                   {(dayTickers.length > 0 || hasUnassignedNews) && (
                     <div className="flex items-center gap-2 mb-4 flex-wrap p-2 bg-gray-50 rounded-lg">
                         <span className="text-sm font-semibold text-gray-700">Filtruj:</span>
+                        <div className="flex items-center gap-1">
+                            <button onClick={selectAllDayTickers} className="px-2 py-0.5 text-xs bg-gray-600 text-white rounded hover:bg-gray-700">Wszystkie</button>
+                            <button onClick={deselectAllDayTickers} className="px-2 py-0.5 text-xs bg-gray-600 text-white rounded hover:bg-gray-700">Żadne</button>
+                        </div>
+                        <div className="border-l border-gray-300 h-5 mx-1"></div>
                         {dayTickers.map(ticker => {
                             const isActive = activeTickerFilters.includes(ticker);
                             return (
