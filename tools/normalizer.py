@@ -59,7 +59,7 @@ class TickerNormalizer:
                     if company_without_sa != company.upper():
                         self.company_to_ticker[company_without_sa] = ticker
 
-            print(f"✓ Załadowano {len(tickers)} tickerów i {len(self.company_to_ticker)} mapowań nazw")
+            print(f"Zaladowano {len(tickers)} tickerow i {len(self.company_to_ticker)} mapowan nazw")
 
             return tickers
 

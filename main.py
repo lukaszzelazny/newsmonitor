@@ -1,7 +1,7 @@
 """Main entry point for the news scraper application."""
 
 import argparse
-from datetime import datetime, date
+from datetime import datetime
 from typing import List
 from dotenv import load_dotenv
 
@@ -12,7 +12,9 @@ from providers.pap_provider import PAPProvider
 from providers.strefa_investorow_provider import StrefaInwestorowProvider
 from providers.rekomendacje_provider import RekomendacjeProvider
 from providers.base_provider import BaseProvider
-from actions import run_ticker_scraper
+from tools.actions import run_ticker_scraper, import_xtb_transactions
+from portfolio.analysis import calculate_portfolio_return, calculate_group_return, get_holdings
+from portfolio.models import Portfolio, Asset
 
 
 # Load environment variables
@@ -104,9 +106,9 @@ def main():
         '--mode',
         dest='mode',
         type=str,
-        choices=['si', 'sir', 'sit'],
+        choices=['si', 'sir', 'sit', 'import_xtb', 'analyze'],
         default='si',
-        help='Scraping mode: si (Strefa Inwestorow news, default), sir (Strefa Inwestorow Rekomendacje), sit (Strefa Inwestorow Ticker)'
+        help='Scraping mode: si (Strefa Inwestorow news, default), sir (Strefa Inwestorow Rekomendacje), sit (Strefa Inwestorow Ticker), import_xtb (Import XTB transactions), analyze (Analyze portfolio)'
     )
 
     parser.add_argument(
@@ -117,10 +119,29 @@ def main():
         help='Ticker symbol to scrape for (used with sit mode)'
     )
 
+    parser.add_argument(
+        '--file',
+        dest='file_path',
+        type=str,
+        default=None,
+        help='Path to the file to import (used with import_xtb mode)'
+    )
+
+    parser.add_argument(
+        '--portfolio',
+        dest='portfolio_name',
+        type=str,
+        default=None,
+        help='Name of the portfolio to analyze (used with analyze mode)'
+    )
+
     args = parser.parse_args()
 
     if args.mode == 'sit' and not args.ticker:
         parser.error("--ticker is required when --mode is sit")
+    
+    if args.mode == 'import_xtb' and not args.file_path:
+        parser.error("--file is required when --mode is import_xtb")
 
     # Load configuration
     config = Config()
@@ -202,3 +223,68 @@ def main():
             print(f"  Skipped (already exists): {stats['skipped_articles']}")
 
         print("\n✓ Ticker scraping task finished.")
+    
+    elif args.mode == 'import_xtb':
+        print("="*80)
+        print("NEWS MONITOR - XTB TRANSACTION IMPORT")
+        print("="*80)
+        print(f"\nStart time: {datetime.now()}")
+        print(f"\nConfiguration:")
+        print(f"  File path: {args.file_path}")
+
+        result = import_xtb_transactions(args.file_path)
+
+        if "error" in result:
+            print(f"\n✗ Error: {result['error']}")
+        else:
+            print(f"\n✓ {result['message']}")
+
+    elif args.mode == 'analyze':
+        print("="*80)
+        print("NEWS MONITOR - PORTFOLIO ANALYSIS")
+        print("="*80)
+        
+        db = Database()
+        session = db.Session()
+        try:
+            if args.portfolio_name:
+                portfolio = session.query(Portfolio).filter_by(name=args.portfolio_name).first()
+                if not portfolio:
+                    print(f"\n✗ Error: Portfolio '{args.portfolio_name}' not found.")
+                    return
+
+                print(f"--- Analysis for Portfolio: {portfolio.name} ---")
+                # Holdings
+                current_holdings = get_holdings(session, portfolio.id)
+                print("\nCurrent Holdings:")
+                for ticker, qty in current_holdings.items():
+                    print(f"  {ticker}: {qty:.2f}")
+
+                # Per-asset return
+                print("\nAsset Returns:")
+                assets = session.query(Asset.id, Asset.ticker).join(Transaction).filter(Transaction.portfolio_id == portfolio.id).distinct().all()
+                for asset_id, ticker in assets:
+                    asset_return = calculate_asset_return(session, portfolio.id, asset_id)
+                    print(f"  {ticker}:")
+                    print(f"    Realized PnL: {asset_return['realized_pnl']:.2f}")
+                    print(f"    Rate of Return: {asset_return['rate_of_return']:.2f}%")
+
+                # Portfolio return
+                portfolio_return = calculate_portfolio_return(session, portfolio.id)
+                print("\nPortfolio Summary:")
+                print(f"  Total Cost: {portfolio_return['total_cost']:.2f}")
+                print(f"  Total Revenue: {portfolio_return['total_revenue']:.2f}")
+                print(f"  Realized PnL: {portfolio_return['realized_pnl']:.2f}")
+                print(f"  Rate of Return: {portfolio_return['rate_of_return']:.2f}%")
+
+            else:
+                # Group return for all portfolios
+                group_return = calculate_group_return(session)
+                print("\n--- Group Analysis (All Portfolios) ---")
+                print(f"  Total Cost: {group_return['total_cost']:.2f}")
+                print(f"  Total Revenue: {group_return['total_revenue']:.2f}")
+                print(f"  Realized PnL: {group_return['realized_pnl']:.2f}")
+                print(f"  Rate of Return: {group_return['rate_of_return']:.2f}%")
+        finally:
+            session.close()
+            db.close()
