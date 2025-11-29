@@ -193,31 +193,24 @@ if __name__ == '__main__':
 
 def calculate_roi_over_time(session: Session, portfolio_id: int):
     """
-    Oblicza stopę zwrotu portfela w czasie.
-
-    Metoda: Modified Dietz (przybliżenie TWR uwzględniające timing przepływów)
-    ROI = (Wartość końcowa - Wartość początkowa - Przepływy netto) / (Wartość początkowa + Ważone przepływy)
-
-    Returns:
-        Lista słowników z kluczami: 'date', 'rate_of_return', 'market_value', 'invested'
+    Oblicza stopę zwrotu portfela w czasie używając Time-Weighted Return (TWR).
+    
+    TWR eliminuje wpływ wpłat i wypłat na wynik procentowy.
+    TWR = (1 + r1) * (1 + r2) * ... * (1 + rn) - 1
+    gdzie ri = (EV - (BV + CF)) / (BV + CF)
+    EV: End Value, BV: Begin Value, CF: Cash Flow
     """
-    print(f"\n=== Rozpoczynam obliczanie ROI dla portfela {portfolio_id} ===")
-
     # Pobierz wszystkie transakcje
     transactions = session.query(Transaction).filter_by(
         portfolio_id=portfolio_id
     ).order_by(Transaction.transaction_date).all()
 
     if not transactions:
-        print("Brak transakcji!")
         return []
-
-    print(f"Znaleziono {len(transactions)} transakcji")
 
     # Zakres dat
     start_date = transactions[0].transaction_date
     end_date = pd.Timestamp.today().date()
-    print(f"Okres: {start_date} - {end_date}")
 
     # Pobierz unikalne tickery
     asset_ids = session.query(Transaction.asset_id).filter_by(
@@ -229,52 +222,31 @@ def calculate_roi_over_time(session: Session, portfolio_id: int):
         if ticker:
             tickers.append(ticker)
 
-    print(f"Tickery w portfelu: {tickers}")
-
     if not tickers:
-        print("Brak tickerów!")
         return []
 
     # Przygotuj dane walutowe
     try:
         currency_by_ticker = {t: get_currency_for_ticker(t) for t in tickers}
         currencies = sorted({c for c in currency_by_ticker.values() if c != "PLN"})
-        fx_series_map = _fetch_fx_series(currencies, start_date,
-                                         end_date) if currencies else {}
-        print(f"Pobrano kursy walut dla: {currencies}")
+        fx_series_map = _fetch_fx_series(currencies, start_date, end_date) if currencies else {}
     except Exception as e:
         print(f"Błąd pobierania kursów walut: {e}")
         currency_by_ticker = {t: "PLN" for t in tickers}
         fx_series_map = {}
 
     # Pobierz historyczne ceny dla wszystkich tickerów
-    print("Pobieram historyczne ceny...")
     historical_prices = get_historical_prices_for_tickers(tickers, start_date, end_date)
-
-    print(f"DEBUG: Otrzymane dane cenowe dla {len(historical_prices)} tickerów")
-    for ticker, prices in historical_prices.items():
-        if prices:
-            print(f"  {ticker}: {len(prices)} punktów cenowych")
-            first_date = min(prices.keys())
-            last_date = max(prices.keys())
-            print(f"    Zakres: {first_date} - {last_date}")
-            print(f"    Przykładowa cena: {prices[last_date]}")
-        else:
-            print(f"  {ticker}: BRAK DANYCH!")
 
     # Funkcja pomocnicza do konwersji ceny na PLN
     def convert_to_pln(price, ticker, date):
-        """Konwertuje cenę na PLN używając kursu z danego dnia"""
         currency = currency_by_ticker.get(ticker, "PLN")
         if currency == "PLN":
             return float(price)
-
         fx_ticker = fx_symbol_to_pln(currency)
         fx_series = fx_series_map.get(fx_ticker)
-
         if fx_series is None or fx_series.empty:
             return float(price)
-
         date_ts = pd.Timestamp(date)
         if date_ts in fx_series.index:
             fx_rate = float(fx_series.loc[date_ts])
@@ -284,146 +256,122 @@ def calculate_roi_over_time(session: Session, portfolio_id: int):
                 fx_rate = float(fx_series.loc[prev_dates.max()])
             else:
                 fx_rate = float(fx_series.iloc[0])
-
         return float(price) * fx_rate
 
-    # Funkcja do pobierania ceny z danego dnia lub wcześniejszej
     def get_price_on_or_before(ticker, date):
-        """Pobiera cenę w PLN z danego dnia lub najbliższą wcześniejszą"""
         if ticker not in historical_prices or not historical_prices[ticker]:
             return None
-
         prices = historical_prices[ticker]
         date_ts = pd.Timestamp(date)
-
         if date_ts in prices:
             return convert_to_pln(prices[date_ts], ticker, date_ts)
-
         prev_dates = [d for d in prices.keys() if d <= date_ts]
         if prev_dates:
             prev_date = max(prev_dates)
             return convert_to_pln(prices[prev_date], ticker, prev_date)
-
         return None
 
-    # Utwórz zakres dat (dzienne)
     date_range = pd.date_range(start=start_date, end=end_date, freq='D')
-
-    # Agreguj przepływy pieniężne według dat (w PLN)
+    
+    # Agreguj przepływy pieniężne według dat
     cash_flows_by_date = defaultdict(float)
-
-    print("\nPrzetwarzam transakcje:")
     for t in transactions:
         date = t.transaction_date
-        ticker = t.asset.ticker
-        print(
-            f"  {date}: {t.transaction_type.value} {t.quantity} x {ticker} @ {t.price}")
-
-        price_pln = convert_to_pln(t.price, ticker, date)
+        price_pln = convert_to_pln(t.price, t.asset.ticker, date)
         gross = float(t.quantity) * price_pln
         commission = float(t.commission or 0.0)
 
         if t.transaction_type == TransactionType.BUY:
-            # Kupno = wydatek (wartość ujemna)
-            cash_flow = -(gross + commission)
+            cash_flow = (gross + commission) # Inflow to assets (Cost)
             cash_flows_by_date[date] += cash_flow
-            print(f"    Wydatek: {cash_flow:.2f} PLN (cena PLN: {price_pln:.2f})")
         elif t.transaction_type == TransactionType.SELL:
-            # Sprzedaż = wpływ (wartość dodatnia)
-            cash_flow = (gross - commission)
+            cash_flow = -(gross - commission) # Outflow from assets (Proceeds)
             cash_flows_by_date[date] += cash_flow
-            print(f"    Wpływ: {cash_flow:.2f} PLN (cena PLN: {price_pln:.2f})")
 
-    print(f"\nDni z transakcjami: {len(cash_flows_by_date)}")
-    total_flows = sum(cash_flows_by_date.values())
-    print(f"Suma przepływów: {total_flows:.2f} PLN")
-
-    # Śledź stan portfela dzień po dniu
-    holdings = defaultdict(float)  # ticker -> ilość
+    holdings = defaultdict(float)
     results = []
+    
+    cumulative_twr = 1.0
+    prev_market_value = 0.0
+    cumulative_invested = 0.0
 
-    cumulative_invested = 0.0  # Skumulowany kapitał zainwestowany (netto)
-
-    days_with_value = 0
     for date in date_range:
         date_obj = date.date()
+        
+        # Calculate market value BEFORE transactions (Start Value)
+        # Actually TWR usually assumes transactions happen at start or end.
+        # If we use Daily valuation: 
+        # r = (V_end - V_begin - CF) / (V_begin + CF) if CF at start
+        # or r = (V_end - V_begin - CF) / V_begin if CF at end
+        # We will assume CF happens at START of day for simplicity (invested immediately affects exposure).
+        
+        # Apply transactions to holdings
+        # Note: holdings need to be updated to calculate End Value
+        
+        current_holdings_value = 0.0
+        # Calculate value of PREVIOUS holdings at CURRENT prices (to approximate return including day's move)
+        # But standard way is:
+        # 1. Get Market Value at End of Day (with new holdings)
+        # 2. Get Cash Flow sum for the day
+        # 3. Previous Market Value is V_begin
+        
+        # Update holdings for the day
+        daily_cash_flow = cash_flows_by_date.get(date_obj, 0.0)
+        cumulative_invested += daily_cash_flow
 
-        # Zastosuj transakcje z tego dnia
         for t in [tr for tr in transactions if tr.transaction_date == date_obj]:
             if t.transaction_type == TransactionType.BUY:
                 holdings[t.asset.ticker] += t.quantity
             elif t.transaction_type == TransactionType.SELL:
                 holdings[t.asset.ticker] -= t.quantity
 
-        # Dodaj przepływy pieniężne z tego dnia do zainwestowanego kapitału
-        if date_obj in cash_flows_by_date:
-            cumulative_invested += cash_flows_by_date[date_obj]
-
-        # Oblicz bieżącą wartość rynkową portfela
+        # Calculate End Market Value
         market_value = 0.0
         for ticker, qty in holdings.items():
             if qty > 0:
                 price = get_price_on_or_before(ticker, date)
                 if price is not None and price > 0:
                     market_value += qty * price
-
-        if market_value > 0:
-            days_with_value += 1
-
-        # Oblicz ROI: (wartość bieżąca - kapitał zainwestowany) / kapitał zainwestowany * 100
-        if cumulative_invested > 0:
-            roi = ((market_value - cumulative_invested) / cumulative_invested) * 100.0
+        
+        # Calculate Daily Return
+        # Denominator: Capital at risk during the day.
+        # If we assume CF at start: V_begin + CF
+        denominator = prev_market_value + daily_cash_flow
+        
+        if denominator > 0.01: # Avoid division by zero or tiny amounts
+            daily_return = (market_value - denominator) / denominator
         else:
-            roi = 0.0
-
+            daily_return = 0.0
+            
+        cumulative_twr *= (1 + daily_return)
+        
         results.append({
             'date': date,
             'market_value': market_value,
             'invested': cumulative_invested,
-            'rate_of_return': roi
+            'rate_of_return': (cumulative_twr - 1) * 100.0
         })
-
-    print(f"\nObliczono wartości dla {len(results)} dni")
-    print(f"Dni z wartością > 0: {days_with_value}")
-
-    if results:
-        print(f"Kapitał zainwestowany: {results[-1]['invested']:.2f} PLN")
-        print(f"Wartość rynkowa: {results[-1]['market_value']:.2f} PLN")
-        print(f"ROI: {results[-1]['rate_of_return']:.2f}%")
+        
+        prev_market_value = market_value
 
     # Utwórz DataFrame i agreguj do tygodni
     df = pd.DataFrame(results)
     df['date'] = pd.to_datetime(df['date'])
-
-    # Forward fill wartości rynkowych (weekendy, święta)
+    
+    # Forward fill 
     df['market_value'] = df['market_value'].replace(0, pd.NA).ffill().fillna(0)
+    df['rate_of_return'] = df['rate_of_return'].ffill().fillna(0)
+    df['invested'] = df['invested'].ffill().fillna(0)
 
-    # Przelicz ROI po forward fill
-    df['rate_of_return'] = df.apply(
-        lambda row: ((row['market_value'] - row['invested']) / row['invested'] * 100.0)
-        if row['invested'] > 0 else 0.0,
-        axis=1
-    )
-
-    # Agregacja tygodniowa (ostatnia wartość z tygodnia)
-    df_weekly = df.set_index('date').resample('W-MON').last().reset_index()
-
-    # Formatuj wyniki
+    # Zwracaj dane dzienne (bez agregacji tygodniowej)
     roi_data = []
-    for _, row in df_weekly.iterrows():
+    for _, row in df.iterrows():
         roi_data.append({
             'date': row['date'].strftime('%Y-%m-%d'),
-            'rate_of_return': float(row['rate_of_return']) if pd.notna(
-                row['rate_of_return']) else 0.0,
-            'market_value': float(row['market_value']) if pd.notna(
-                row['market_value']) else 0.0,
-            'invested': float(row['invested']) if pd.notna(row['invested']) else 0.0
+            'rate_of_return': float(row['rate_of_return']),
+            'market_value': float(row['market_value']),
+            'invested': float(row['invested'])
         })
-
-    print(f"\nZwracam {len(roi_data)} punktów dla wykresu")
-    if roi_data:
-        print(f"Pierwszy punkt: {roi_data[0]}")
-        print(f"Ostatni punkt: {roi_data[-1]}")
 
     return roi_data
 
@@ -571,3 +519,99 @@ def calculate_portfolio_overview(session: Session, portfolio_id: int) -> dict:
         'gainers': gainers,
         'decliners': decliners
     }
+
+
+def calculate_portfolio_value_over_time(session: Session, portfolio_id: int):
+    """
+    Oblicza historyczną wartość portfela w czasie.
+
+    Returns:
+        Lista słowników z kluczami: 'date', 'value'.
+    """
+    transactions = session.query(Transaction).filter_by(
+        portfolio_id=portfolio_id
+    ).order_by(Transaction.transaction_date).all()
+
+    if not transactions:
+        return []
+
+    start_date = transactions[0].transaction_date
+    end_date = pd.Timestamp.today().date()
+
+    asset_ids = session.query(Transaction.asset_id).filter_by(
+        portfolio_id=portfolio_id
+    ).distinct().all()
+    tickers = [session.query(Asset.ticker).filter_by(id=asset_id[0]).scalar() for asset_id in asset_ids if session.query(Asset.ticker).filter_by(id=asset_id[0]).scalar()]
+
+    if not tickers:
+        return []
+
+    try:
+        currency_by_ticker = {t: get_currency_for_ticker(t) for t in tickers}
+        currencies = sorted({c for c in currency_by_ticker.values() if c != "PLN"})
+        fx_series_map = _fetch_fx_series(currencies, start_date, end_date) if currencies else {}
+    except Exception as e:
+        print(f"Błąd pobierania kursów walut: {e}")
+        currency_by_ticker = {t: "PLN" for t in tickers}
+        fx_series_map = {}
+
+    historical_prices = get_historical_prices_for_tickers(tickers, start_date, end_date)
+
+    def convert_to_pln(price, ticker, date):
+        currency = currency_by_ticker.get(ticker, "PLN")
+        if currency == "PLN":
+            return float(price)
+        fx_ticker = fx_symbol_to_pln(currency)
+        fx_series = fx_series_map.get(fx_ticker)
+        if fx_series is None or fx_series.empty:
+            return float(price)
+        date_ts = pd.Timestamp(date)
+        if date_ts in fx_series.index:
+            fx_rate = float(fx_series.loc[date_ts])
+        else:
+            prev_dates = fx_series.index[fx_series.index <= date_ts]
+            if len(prev_dates) > 0:
+                fx_rate = float(fx_series.loc[prev_dates.max()])
+            else:
+                fx_rate = float(fx_series.iloc[0])
+        return float(price) * fx_rate
+
+    def get_price_on_or_before(ticker, date):
+        if ticker not in historical_prices or not historical_prices[ticker]:
+            return None
+        prices = historical_prices[ticker]
+        date_ts = pd.Timestamp(date)
+        if date_ts in prices:
+            return convert_to_pln(prices[date_ts], ticker, date_ts)
+        prev_dates = [d for d in prices.keys() if d <= date_ts]
+        if prev_dates:
+            prev_date = max(prev_dates)
+            return convert_to_pln(prices[prev_date], ticker, prev_date)
+        return None
+
+    date_range = pd.date_range(start=start_date, end=end_date, freq='D')
+    holdings = defaultdict(float)
+    results = []
+
+    for date in date_range:
+        date_obj = date.date()
+
+        for t in [tr for tr in transactions if tr.transaction_date == date_obj]:
+            if t.transaction_type == TransactionType.BUY:
+                holdings[t.asset.ticker] += t.quantity
+            elif t.transaction_type == TransactionType.SELL:
+                holdings[t.asset.ticker] -= t.quantity
+
+        market_value = 0.0
+        for ticker, qty in holdings.items():
+            if qty > 0:
+                price = get_price_on_or_before(ticker, date)
+                if price is not None and price > 0:
+                    market_value += qty * price
+
+        results.append({'date': date.strftime('%Y-%m-%d'), 'value': market_value})
+        
+    df = pd.DataFrame(results)
+    df['value'] = df['value'].replace(0, pd.NA).ffill().fillna(0)
+
+    return df.to_dict('records')

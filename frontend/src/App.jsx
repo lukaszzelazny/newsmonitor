@@ -890,329 +890,6 @@ function CalendarView({ days, onBack, onTickerSelect, showNotification }) {
 
                     {loading ? (
                         <div className="flex items-center justify-center py-12">
-                            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500"></div>
-                        </div>
-                    ) : filteredNews.length === 0 ? (
-                        <p className="text-gray-500 text-center py-8">Brak newsów spełniających kryteria filtrowania.</p>
-                    ) : (
-                        <div className="space-y-3">
-                            {filteredNews.map((news, idx) => (
-                                <div key={idx} className="border border-gray-200 rounded-lg p-3 hover:shadow-md transition-shadow relative">
-                                    <button
-                                        onClick={() => markAsDuplicate(news.news_id)}
-                                        className="absolute top-1.5 right-1.5 w-6 h-6 flex items-center justify-center bg-red-500 hover:bg-red-600 text-white rounded-full text-sm font-bold"
-                                        title="Oznacz jako duplikat"
-                                    >
-                                        ✕
-                                    </button>
-
-                                    <div className="flex items-start gap-3">
-                                        <div className="flex-shrink-0">
-                                            <div className={`w-2 h-16 ${getImpactColor(news.impact)} rounded`}></div>
-                                        </div>
-
-                                        <div className="flex-1 pr-8">
-                                            <h4 className="font-semibold text-sm text-gray-900 mb-1">
-                                                {news.title}
-                                            </h4>
-
-                                            {/* Tickery */}
-                                            <div className="flex items-center gap-2 mb-2 flex-wrap">
-                                                {news.tickers && news.tickers.length > 0 ? (
-                                                    news.tickers.map((ticker, tidx) => (
-                                                        <a
-                                                            href="#"
-                                                            key={tidx}
-                                                            onClick={(e) => {
-                                                                e.preventDefault();
-                                                                if (onTickerSelect) {
-                                                                    onTickerSelect(ticker.ticker);
-                                                                }
-                                                            }}
-                                                            className="px-2 py-0.5 bg-blue-100 text-blue-800 text-xs font-bold rounded hover:bg-blue-200 cursor-pointer"
-                                                        >
-                                                            {ticker.ticker}
-                                                        </a>
-                                                    ))
-                                                ) : (
-                                                    <span className="px-2 py-0.5 bg-yellow-100 text-yellow-800 text-xs font-semibold rounded">
-                                                        Brak przypisanych tickerów
-                                                    </span>
-                                                )}
-                                            </div>
-
-                                            {news.tickers && news.tickers.length === 0 && (
-                                                <TickerSelect
-                                                    analysisId={news.analysis_id}
-                                                    onSave={handleTickerSave}
-                                                />
-                                            )}
-
-                                            <div className="flex items-center gap-2 text-xs text-gray-500 mb-2">
-                                                {news.published_at && <span className="font-semibold">{news.published_at}</span>}
-                                                <span>{news.source}</span>
-                                                {news.url && (
-                                                    <>
-                                                        <span>•</span>
-                                                        <a
-                                                            href={news.url}
-                                                            target="_blank"
-                                                            rel="noopener noreferrer"
-                                                            className="text-blue-600 hover:underline"
-                                                        >
-                                                            Link
-                                                        </a>
-                                                    </>
-                                                )}
-                                            </div>
-
-                                            <div className="flex items-center gap-3 mb-2">
-                                                <div className="flex items-center gap-1.5">
-                                                    <span className="text-xs text-gray-600">Impact:</span>
-                                                    <span className={`font-bold text-sm ${getSentimentColor(news.impact)}`}>
-                                                        {news.impact > 0 ? '+' : ''}{Number(news.impact).toFixed(2)}
-                                                    </span>
-                                                </div>
-                                                <div className="flex items-center gap-1.5">
-                                                    <span className="text-xs text-gray-600">Confidence:</span>
-                                                    <span className="font-bold text-sm text-blue-600">
-                                                        {(Number(news.confidence) * 100).toFixed(0)}%
-                                                    </span>
-                                                </div>
-                                            </div>
-
-                                            {news.summary && (
-                                                <div
-                                                    className="text-xs text-gray-700 leading-relaxed"
-                                                    dangerouslySetInnerHTML={{ __html: news.summary }}
-                                                />
-                                            )}
-                                        </div>
-                                    </div>
-                                </div>
-                            ))}
-                        </div>
-                    )}
-                </div>
-            )}
-        </div>
-    );
-}
-
-// Komponent widoku odrzuconych newsów
-function CalendarRejectedView({ days, onBack }) {
-    const [calendarStats, setCalendarStats] = useState([]);
-    const [selectedDate, setSelectedDate] = useState(null);
-    const [newsForDate, setNewsForDate] = useState([]);
-    const [loading, setLoading] = useState(false);
-    const [reanalyzing, setReanalyzing] = useState({});
-    const [reanalysisStatus, setReanalysisStatus] = useState({});
-    const [currentMonth, setCurrentMonth] = useState(new Date());
-
-    useEffect(() => {
-        fetchCalendarStats();
-    }, [days]);
-
-    const fetchCalendarStats = async () => {
-        try {
-            const response = await fetch(`/api/rejected_calendar_stats?days=${days}`);
-            const data = await response.json();
-            setCalendarStats(data);
-        } catch (error) {
-            console.error('Error fetching rejected calendar stats:', error);
-        }
-    };
-
-    const fetchNewsForDate = async (date) => {
-        setLoading(true);
-        try {
-            const response = await fetch(`/api/rejected_news_by_date/${date}`);
-            const data = await response.json();
-            setNewsForDate(data);
-            setSelectedDate(date);
-        } catch (error) {
-            console.error('Error fetching rejected news for date:', error);
-        } finally {
-            setLoading(false);
-        }
-    };
-
-    const reanalyzeNews = async (newsId) => {
-        if (!confirm('Czy na pewno chcesz ponownie przeanalizować ten news przez AI?')) return;
-
-        setReanalyzing(prev => ({ ...prev, [newsId]: true }));
-        setReanalysisStatus(prev => ({ ...prev, [newsId]: null }));
-
-        try {
-            const response = await fetch('/api/reanalyze_news', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ news_id: newsId })
-            });
-
-            if (response.ok) {
-                setReanalysisStatus(prev => ({ ...prev, [newsId]: 'success' }));
-                setTimeout(() => {
-                    setNewsForDate(prevNews => prevNews.filter(n => n.news_id !== newsId));
-                    fetchCalendarStats();
-                }, 1500);
-            } else {
-                setReanalysisStatus(prev => ({ ...prev, [newsId]: 'error' }));
-            }
-        } catch (error) {
-            console.error('Error reanalyzing news:', error);
-            setReanalysisStatus(prev => ({ ...prev, [newsId]: 'error' }));
-        } finally {
-            setTimeout(() => {
-                setReanalyzing(prev => ({ ...prev, [newsId]: false }));
-            }, 1500);
-        }
-    };
-
-    const getDayStats = (dateStr) => {
-        return calendarStats.filter(s => s.date === dateStr);
-    };
-
-    const getDayColor = (stats) => {
-        if (!stats || stats.length === 0) return 'bg-gray-50';
-
-        const totalCount = stats.reduce((sum, s) => sum + s.news_count, 0);
-
-        if (totalCount > 10) return 'bg-red-500';
-        if (totalCount > 5) return 'bg-red-400';
-        if (totalCount > 2) return 'bg-red-300';
-        return 'bg-red-200';
-    };
-
-    // Generuj dni dla kalendarza
-    const generateCalendarDays = () => {
-        const year = currentMonth.getFullYear();
-        const month = currentMonth.getMonth();
-
-        const firstDay = new Date(year, month, 1);
-        const lastDay = new Date(year, month + 1, 0);
-
-        const daysInMonth = lastDay.getDate();
-        const startDayOfWeek = (firstDay.getDay() + 6) % 7; // Monday = 0, Sunday = 6
-
-        const days = [];
-
-        // Puste dni przed pierwszym dniem miesiąca
-        for (let i = 0; i < startDayOfWeek; i++) {
-            days.push(null);
-        }
-
-        // Dni miesiąca
-        for (let day = 1; day <= daysInMonth; day++) {
-            days.push(new Date(year, month, day));
-        }
-
-        return days;
-    };
-
-    const calendarDays = generateCalendarDays();
-    const monthNames = ['Styczeń', 'Luty', 'Marzec', 'Kwiecień', 'Maj', 'Czerwiec',
-        'Lipiec', 'Sierpień', 'Wrzesień', 'Październik', 'Listopad', 'Grudzień'];
-
-    return (
-        <div className="space-y-4">
-            <div className="bg-white rounded-lg shadow p-4">
-                <div className="flex items-center justify-between mb-4">
-                    <h2 className="text-xl font-bold text-gray-900">
-                        Odrzucone Newsy - {monthNames[currentMonth.getMonth()]} {currentMonth.getFullYear()}
-                    </h2>
-                    <div className="flex items-center gap-2">
-                        <button
-                            onClick={() => setCurrentMonth(new Date(currentMonth.getFullYear(), currentMonth.getMonth() - 1))}
-                            className="px-3 py-1 bg-gray-200 hover:bg-gray-300 rounded-lg"
-                        >
-                            ←
-                        </button>
-                        <button
-                            onClick={() => setCurrentMonth(new Date())}
-                            className="px-3 py-1 bg-red-500 hover:bg-red-600 text-white rounded-lg text-sm"
-                        >
-                            Dziś
-                        </button>
-                        <button
-                            onClick={() => setCurrentMonth(new Date(currentMonth.getFullYear(), currentMonth.getMonth() + 1))}
-                            className="px-3 py-1 bg-gray-200 hover:bg-gray-300 rounded-lg"
-                        >
-                            →
-                        </button>
-                    </div>
-                </div>
-
-                {/* Legenda */}
-                <div className="mb-4 flex items-center gap-4 text-xs text-gray-600 flex-wrap">
-                    <span className="flex items-center gap-2">
-                        <span className="w-4 h-4 rounded bg-red-500"></span>
-                        Wiele odrzuconych (10+)
-                    </span>
-                    <span className="flex items-center gap-2">
-                        <span className="w-4 h-4 rounded bg-red-300"></span>
-                        Kilka odrzuconych (2-10)
-                    </span>
-                    <span className="flex items-center gap-2">
-                        <span className="w-4 h-4 rounded bg-red-200"></span>
-                        Mało odrzuconych (1-2)
-                    </span>
-                </div>
-
-                {/* Kalendarz */}
-                <div className="grid grid-cols-7 gap-2">
-                    {['Pn', 'Wt', 'Śr', 'Cz', 'Pt', 'Sb', 'Nd'].map(day => (
-                        <div key={day} className="text-center font-bold text-sm text-gray-600 py-2">
-                            {day}
-                        </div>
-                    ))}
-
-                    {calendarDays.map((date, idx) => {
-                        if (!date) {
-                            return <div key={idx} className="p-2"></div>;
-                        }
-
-                        const year = date.getFullYear();
-                        const month = (date.getMonth() + 1).toString().padStart(2, '0');
-                        const day = date.getDate().toString().padStart(2, '0');
-                        const dateStr = `${year}-${month}-${day}`;
-
-                        const stats = getDayStats(dateStr);
-                        const dayColor = getDayColor(stats);
-                        const isSelected = selectedDate === dateStr;
-                        const totalCount = stats.reduce((sum, s) => sum + s.news_count, 0);
-
-                        return (
-                            <button
-                                key={idx}
-                                onClick={() => fetchNewsForDate(dateStr)}
-                                className={`p-2 text-center ${dayColor} rounded-lg hover:ring-2 hover:ring-red-500 transition-all relative
-                          ${isSelected ? 'ring-2 ring-red-600' : ''}
-                        `}
-                            >
-                                <div className="font-bold text-sm text-gray-800">
-                                    {date.getDate()}
-                                </div>
-                                {totalCount > 0 && (
-                                    <div className="text-xs font-bold text-gray-700 mt-1">
-                                        {totalCount} news
-                                    </div>
-                                )}
-                            </button>
-                        );
-                    })}
-                </div>
-            </div>
-
-            {/* Lista odrzuconych newsów z wybranego dnia */}
-            {selectedDate && (
-                <div className="bg-white rounded-lg shadow p-4">
-                    <h3 className="text-lg font-bold text-gray-900 mb-3">
-                        Odrzucone newsy z {selectedDate} ({newsForDate.length})
-                    </h3>
-
-                    {loading ? (
-                        <div className="flex items-center justify-center py-12">
                             <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-red-500"></div>
                         </div>
                     ) : newsForDate.length === 0 ? (
@@ -1293,9 +970,13 @@ function CalendarRejectedView({ days, onBack }) {
 /* Komponent widoku portfela */
 function PortfolioView({ days }) {
     const [overview, setOverview] = useState(null);
-    const [roiSeries, setRoiSeries] = useState([]);
+    const [fullRoiSeries, setFullRoiSeries] = useState([]); // Pełne dane
+    const [roiSeries, setRoiSeries] = useState([]); // Przefiltrowane dane
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(null);
+    const [timeRange, setTimeRange] = useState('ALL');
+    const [hoveredPoint, setHoveredPoint] = useState(null);
+    const [mousePos, setMousePos] = useState({ x: 0, y: 0 });
     const canvasRef = useRef(null);
 
     const fmt = (n, digits = 2) => (n === null || n === undefined ? '-' : Number(n).toFixed(digits));
@@ -1307,12 +988,14 @@ function PortfolioView({ days }) {
             try {
                 const [ovrRes, roiRes] = await Promise.all([
                     fetch('/api/portfolio/overview'),
-                    fetch('/api/portfolio/roi') // Usunięto parametr `days`
+                    fetch('/api/portfolio/roi')
                 ]);
                 const ovr = await ovrRes.json();
                 const roi = await roiRes.json();
                 setOverview(ovr);
-                setRoiSeries(Array.isArray(roi) ? roi : []);
+                const series = Array.isArray(roi) ? roi : [];
+                setFullRoiSeries(series);
+                filterData(series, 'ALL');
             } catch (e) {
                 console.error('Error fetching portfolio data:', e);
                 setError('Błąd pobierania danych portfela');
@@ -1321,7 +1004,54 @@ function PortfolioView({ days }) {
             }
         };
         fetchData();
-    }, [days]);
+    }, [days]); // `days` wpływa na inne rzeczy w dashboardzie, ale ROI pobieramy raz i filtrujemy lokalnie
+
+    const filterData = (data, range) => {
+        if (!data || data.length === 0) {
+            setRoiSeries([]);
+            return;
+        }
+
+        const now = new Date();
+        let cutoffDate = new Date(data[0].date); 
+
+        if (range === '1M') cutoffDate = new Date(now.setMonth(now.getMonth() - 1));
+        else if (range === '3M') cutoffDate = new Date(now.setMonth(now.getMonth() - 3));
+        else if (range === '6M') cutoffDate = new Date(now.setMonth(now.getMonth() - 6));
+        else if (range === '1Y') cutoffDate = new Date(now.setFullYear(now.getFullYear() - 1));
+        
+        // Find closest start date
+        const startIndex = data.findIndex(d => new Date(d.date) >= cutoffDate);
+        if (startIndex === -1) {
+             setRoiSeries([]);
+             return;
+        }
+
+        const rawFiltered = data.slice(startIndex);
+        
+        // Normalizacja ROI do 0% na początku wybranego okresu
+        if (rawFiltered.length > 0) {
+            const startRoi = rawFiltered[0].rate_of_return;
+            // TWR: (1 + total) = (1 + start) * (1 + period)
+            // (1 + period) = (1 + total) / (1 + start)
+            // period = ... - 1
+            
+            const startFactor = 1 + (startRoi / 100.0);
+            
+            const rebased = rawFiltered.map(item => ({
+                ...item,
+                rate_of_return: (((1 + item.rate_of_return / 100.0) / startFactor) - 1) * 100.0
+            }));
+            setRoiSeries(rebased);
+        } else {
+            setRoiSeries(rawFiltered);
+        }
+    };
+
+    const handleTimeRangeChange = (range) => {
+        setTimeRange(range);
+        filterData(fullRoiSeries, range);
+    };
 
     useEffect(() => {
         const canvas = canvasRef.current;
@@ -1349,7 +1079,7 @@ function PortfolioView({ days }) {
         const values = roiSeries.map(p => Number(p.rate_of_return) || 0);
         const minV = Math.min(...values);
         const maxV = Math.max(...values);
-        const range = maxV - minV || 1;
+        const range = (maxV - minV) || 1;
 
         // axes
         ctx.strokeStyle = '#e5e7eb';
@@ -1390,23 +1120,94 @@ function PortfolioView({ days }) {
             else ctx.lineTo(x, y);
         });
         ctx.stroke();
+        
+        // Punkty na wykresie - tylko hover
+        if (hoveredPoint) {
+             const x = margin.left + (chartW / denom) * roiSeries.findIndex(p => p.date === hoveredPoint.date);
+             const y = margin.top + chartH - ((Number(hoveredPoint.rate_of_return) - minV) / range) * chartH;
+             
+             ctx.fillStyle = '#0ea5e9';
+             ctx.beginPath();
+             ctx.arc(x, y, 5, 0, 2 * Math.PI);
+             ctx.fill();
+             ctx.strokeStyle = '#fff';
+             ctx.lineWidth = 2;
+             ctx.stroke();
+        }
 
-        // x labels - pokaż etykietę dla KAŻDEGO tygodnia (daty RRRR-MM-DD), obrócone pod kątem dla czytelności
-        ctx.save();
+        // x labels - denser (roughly weekly if daily data)
         ctx.fillStyle = '#6b7280';
-        ctx.textAlign = 'right';
+        ctx.textAlign = 'center';
         ctx.font = '10px sans-serif';
-        for (let i = 0; i < roiSeries.length; i++) {
+        
+        // Calculate step to show labels roughly every 50-60px
+        const labelWidth = 50; 
+        const maxLabels = Math.floor(chartW / labelWidth);
+        const step = Math.max(1, Math.floor(roiSeries.length / maxLabels));
+
+        for (let i = 0; i < roiSeries.length; i += step) {
             const x = margin.left + (chartW / denom) * i;
-            const d = roiSeries[i]?.date || '';
+            const d = new Date(roiSeries[i]?.date);
+            
+            // Obrot etykiet jesli gesto
             ctx.save();
-            ctx.translate(x, height - margin.bottom + 26);
+            ctx.translate(x, height - margin.bottom + 25);
             ctx.rotate(-Math.PI / 4);
-            ctx.fillText(d, 0, 0);
+            ctx.textAlign = 'right';
+            const label = d.toISOString().split('T')[0]; // YYYY-MM-DD
+            ctx.fillText(label, 0, 0);
             ctx.restore();
         }
-        ctx.restore();
-    }, [roiSeries]);
+    }, [roiSeries, hoveredPoint]);
+
+    const handleMouseMove = (e) => {
+        const canvas = canvasRef.current;
+        if (!canvas || roiSeries.length === 0) return;
+        const rect = canvas.getBoundingClientRect();
+        const mouseX = e.clientX - rect.left;
+        const mouseY = e.clientY - rect.top;
+        
+        const width = canvas.width;
+        const height = canvas.height;
+        const margin = { top: 20, right: 20, bottom: 40, left: 60 };
+        const chartW = width - margin.left - margin.right;
+        const denom = Math.max(1, roiSeries.length - 1);
+
+        // Znajdź najbliższy punkt na osi X
+        let closestDist = Infinity;
+        let closestPoint = null;
+        let closestX = 0;
+        let closestY = 0;
+        
+        const values = roiSeries.map(p => Number(p.rate_of_return) || 0);
+        const minV = Math.min(...values);
+        const maxV = Math.max(...values);
+        const range = (maxV - minV) || 1;
+        const chartH = height - margin.top - margin.bottom;
+
+        roiSeries.forEach((pt, i) => {
+            const x = margin.left + (chartW / denom) * i;
+            const dist = Math.abs(mouseX - x);
+            if (dist < closestDist) {
+                closestDist = dist;
+                closestPoint = pt;
+                closestX = x;
+                closestY = margin.top + chartH - ((Number(pt.rate_of_return) - minV) / range) * chartH;
+            }
+        });
+
+        // Jeśli kursor jest wystarczająco blisko (np. 20px) w poziomie
+        if (closestDist < 20) {
+            setHoveredPoint(closestPoint);
+            setMousePos({ x: closestX, y: closestY });
+        } else {
+            setHoveredPoint(null);
+        }
+    };
+
+    const handleMouseLeave = () => {
+        setHoveredPoint(null);
+    };
 
     if (loading) {
         return (
@@ -1470,20 +1271,54 @@ function PortfolioView({ days }) {
                 </div>
             </div>
 
-            <div className="bg-white rounded-lg shadow-lg p-6">
+            <div className="bg-white rounded-lg shadow-lg p-6 relative">
                 <div className="flex items-center justify-between mb-4">
                     <div>
                         <h3 className="text-xl font-bold text-gray-900">Wykres ROI (MWR) portfela</h3>
-                        <p className="text-sm text-gray-600">{roiSeries.length} tygodni</p>
+                        <p className="text-sm text-gray-600">
+                            {roiSeries.length > 0 ? `${roiSeries.length} punktów` : 'Brak danych'}
+                        </p>
+                    </div>
+                    <div className="flex bg-gray-100 rounded-lg p-1">
+                        {['1M', '3M', '6M', '1Y', 'ALL'].map(range => (
+                            <button
+                                key={range}
+                                onClick={() => handleTimeRangeChange(range)}
+                                className={`px-3 py-1 text-xs font-semibold rounded-md transition-colors ${
+                                    timeRange === range ? 'bg-white text-blue-600 shadow' : 'text-gray-500 hover:bg-gray-200'
+                                }`}
+                            >
+                                {range}
+                            </button>
+                        ))}
                     </div>
                 </div>
-                <canvas
-                    ref={canvasRef}
-                    width={900}
-                    height={250}
-                    className="w-full"
-                    style={{ maxWidth: '100%', height: 'auto' }}
-                />
+                
+                <div className="relative">
+                    <canvas
+                        ref={canvasRef}
+                        width={900}
+                        height={250}
+                        className="w-full cursor-crosshair"
+                        style={{ maxWidth: '100%', height: 'auto' }}
+                        onMouseMove={handleMouseMove}
+                        onMouseLeave={handleMouseLeave}
+                    />
+                    {hoveredPoint && (
+                        <div
+                            className="absolute bg-black bg-opacity-80 text-white text-xs p-2 rounded pointer-events-none z-10"
+                            style={{
+                                left: mousePos.x + 10,
+                                top: mousePos.y - 40,
+                                transform: 'translateX(-50%)'
+                            }}
+                        >
+                            <div className="font-bold">{hoveredPoint.date}</div>
+                            <div>ROI: {hoveredPoint.rate_of_return.toFixed(2)}%</div>
+                            <div>Value: {hoveredPoint.market_value.toFixed(0)} PLN</div>
+                        </div>
+                    )}
+                </div>
             </div>
 
             {(overview.gainers?.length || overview.decliners?.length) ? (
@@ -1755,51 +1590,51 @@ function TickerDashboard() {
     return (
         <div className="min-h-screen bg-gray-50 p-4">
             <div className="max-w-7xl mx-auto">
-                <div className="flex items-center justify-between mb-4">
-                    <h1 className="text-2xl font-bold text-gray-900">
-                        Analiza Sentymentu Tickerów
-                    </h1>
-                    <div className="flex items-center gap-3">
-                        <div className="flex items-center gap-2">
-                            <button
-                                onClick={() => setViewMode('tickers')}
-                                className={`px-3 py-1 text-sm rounded-lg transition-colors ${viewMode === 'tickers'
+                    <div className="flex items-center justify-between mb-4">
+                        <h1 className="text-2xl font-bold text-gray-900">
+                            Analiza Sentymentu Tickerów
+                        </h1>
+                        <div className="flex items-center gap-3">
+                            <div className="flex items-center gap-2">
+                                <button
+                                    onClick={() => setViewMode('tickers')}
+                                    className={`px-3 py-1 text-sm rounded-lg transition-colors ${viewMode === 'tickers'
                                         ? 'bg-blue-500 text-white'
                                         : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
                                     }`}
-                            >
-                                Widok Tickerów
-                            </button>
-                            <button
-                                onClick={() => setViewMode('calendar')}
-                                className={`px-3 py-1 text-sm rounded-lg transition-colors ${viewMode === 'calendar'
+                                >
+                                    Widok Tickerów
+                                </button>
+                                <button
+                                    onClick={() => setViewMode('calendar')}
+                                    className={`px-3 py-1 text-sm rounded-lg transition-colors ${viewMode === 'calendar'
                                         ? 'bg-blue-500 text-white'
                                         : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
                                     }`}
-                            >
-                                Kalendarz Analiz
-                            </button>
-                            <button
-                                onClick={() => setViewMode('rejected')}
-                                className={`px-3 py-1 text-sm rounded-lg transition-colors ${viewMode === 'rejected'
+                                >
+                                    Kalendarz Analiz
+                                </button>
+                                <button
+                                    onClick={() => setViewMode('rejected')}
+                                    className={`px-3 py-1 text-sm rounded-lg transition-colors ${viewMode === 'rejected'
                                         ? 'bg-red-500 text-white'
                                         : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
                                     }`}
-                            >
-                                Odrzucone Newsy
-                            </button>
-                            <button
-                                onClick={() => setViewMode('portfolio')}
-                                className={`px-3 py-1 text-sm rounded-lg transition-colors ${viewMode === 'portfolio'
+                                >
+                                    Odrzucone Newsy
+                                </button>
+                                <button
+                                    onClick={() => setViewMode('portfolio')}
+                                    className={`px-3 py-1 text-sm rounded-lg transition-colors ${viewMode === 'portfolio'
                                         ? 'bg-green-600 text-white'
                                         : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
                                     }`}
-                            >
-                                Portfolio
-                            </button>
-                        </div>
-                        <div className="flex items-center gap-2">
-                            <label className="text-xs text-gray-600">Okres:</label>
+                                >
+                                    Portfolio
+                                </button>
+                            </div>
+                            <div className="flex items-center gap-2">
+                                <label className="text-xs text-gray-600">Okres:</label>
                             <select
                                 value={days}
                                 onChange={(e) => setDays(Number(e.target.value))}
