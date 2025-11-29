@@ -404,7 +404,7 @@ def calculate_portfolio_overview(session: Session, portfolio_id: int) -> dict:
     - ROI (TWR %) from calculate_roi_over_time
     - current profit (value - net invested capital)
     - annualized return (from TWR over period)
-    - top gainers / decliners (day-over-day for current holdings)
+    - assets details (list of holdings with metrics)
     """
     # Load transactions
     transactions = session.query(Transaction).filter_by(
@@ -420,8 +420,7 @@ def calculate_portfolio_overview(session: Session, portfolio_id: int) -> dict:
             'roi_pct': 0.0,
             'current_profit': 0.0,
             'annualized_return_pct': 0.0,
-            'gainers': [],
-            'decliners': []
+            'assets': []
         }
 
     start_date = transactions[0].transaction_date
@@ -434,39 +433,128 @@ def calculate_portfolio_overview(session: Session, portfolio_id: int) -> dict:
     except Exception:
         fx_series_map = {}
 
-    def to_pln(t):
-        px = float(t.price)
+    def get_fx_rate(ticker, date):
         currency = "PLN"
         try:
-            currency = get_currency_for_ticker(t.asset.ticker)
+            currency = get_currency_for_ticker(ticker)
         except Exception:
             pass
-        if currency != "PLN":
-            fx_ticker = fx_symbol_to_pln(currency)
-            fx_series = fx_series_map.get(fx_ticker)
-            if fx_series is not None and not fx_series.empty:
-                d = pd.Timestamp(t.transaction_date)
-                if d in fx_series.index:
-                    fx_rate = float(fx_series.loc[d])
-                else:
-                    prev_idx = fx_series.index[fx_series.index <= d]
-                    fx_rate = float(fx_series.loc[prev_idx.max()]) if len(prev_idx) > 0 else float(fx_series.iloc[0])
-                px *= fx_rate
-        return px
+        if currency == "PLN":
+            return 1.0
+        
+        fx_ticker = fx_symbol_to_pln(currency)
+        fx_series = fx_series_map.get(fx_ticker)
+        if fx_series is not None and not fx_series.empty:
+            d = pd.Timestamp(date)
+            if d in fx_series.index:
+                return float(fx_series.loc[d])
+            else:
+                prev_idx = fx_series.index[fx_series.index <= d]
+                return float(fx_series.loc[prev_idx.max()]) if len(prev_idx) > 0 else float(fx_series.iloc[0])
+        return 1.0
+
+    def to_pln(t):
+        px = float(t.price)
+        fx = get_fx_rate(t.asset.ticker, t.transaction_date)
+        return px * fx
 
     total_buys = sum(float(t.quantity) * to_pln(t) + float(t.commission or 0.0) for t in transactions if t.transaction_type == TransactionType.BUY)
     total_sells = sum(float(t.quantity) * to_pln(t) - float(t.commission or 0.0) for t in transactions if t.transaction_type == TransactionType.SELL)
     net_invested = total_buys - total_sells
 
+    # Calculate per-asset avg price (Original Currency) and Cost Basis (PLN)
+    # Handles both Long and Short positions correctly.
+    asset_metrics = {} # ticker -> {qty, avg_price_org, cost_basis_pln}
+
+    for t in transactions:
+        tkr = t.asset.ticker
+        if tkr not in asset_metrics:
+            asset_metrics[tkr] = {'qty': 0.0, 'avg_price_org': 0.0, 'cost_basis_pln': 0.0}
+        
+        curr = asset_metrics[tkr]
+        old_qty = curr['qty']
+        tx_qty = float(t.quantity)
+        tx_price = float(t.price)
+        tx_val_pln = tx_qty * to_pln(t)
+        
+        if t.transaction_type == TransactionType.BUY:
+            # Buying
+            if old_qty >= 0:
+                # Long: Add to position
+                new_qty = old_qty + tx_qty
+                # Avg Price Update
+                if new_qty > 0:
+                    curr['avg_price_org'] = ((old_qty * curr['avg_price_org']) + (tx_qty * tx_price)) / new_qty
+                
+                curr['cost_basis_pln'] += (tx_val_pln + float(t.commission or 0.0))
+                curr['qty'] = new_qty
+            else:
+                # Short: Covering
+                # Determine if we flip to long
+                abs_old = abs(old_qty)
+                if tx_qty >= abs_old:
+                    # Closed completely or flipped
+                    # First, close the short
+                    curr['qty'] = 0.0
+                    curr['avg_price_org'] = 0.0
+                    curr['cost_basis_pln'] = 0.0
+                    
+                    excess_qty = tx_qty - abs_old
+                    if excess_qty > 0:
+                        # Opened long
+                        curr['qty'] = excess_qty
+                        curr['avg_price_org'] = tx_price
+                        curr['cost_basis_pln'] = excess_qty * to_pln(t) # approx cost basis for new long
+                else:
+                    # Partial cover
+                    remaining_fraction = (abs_old - tx_qty) / abs_old
+                    curr['qty'] += tx_qty # -10 + 2 = -8
+                    # Reduce cost basis (Proceeds)
+                    curr['cost_basis_pln'] *= remaining_fraction
+
+        elif t.transaction_type == TransactionType.SELL:
+            # Selling
+            if old_qty <= 0:
+                # Short: Adding to position (or opening)
+                new_qty = old_qty - tx_qty # -5 - 5 = -10
+                abs_new = abs(new_qty)
+                
+                # Avg Price Update (Weighted avg of entry)
+                if abs_new > 0:
+                    curr['avg_price_org'] = ((abs(old_qty) * curr['avg_price_org']) + (tx_qty * tx_price)) / abs_new
+                
+                # Cost Basis (Proceeds) Update
+                curr['cost_basis_pln'] += (tx_val_pln - float(t.commission or 0.0))
+                curr['qty'] = new_qty
+            else:
+                # Long: Selling
+                if tx_qty >= old_qty:
+                    # Closed or flipped
+                    curr['qty'] = 0.0
+                    curr['avg_price_org'] = 0.0
+                    curr['cost_basis_pln'] = 0.0
+                    
+                    excess_qty = tx_qty - old_qty
+                    if excess_qty > 0:
+                        # Opened short
+                        curr['qty'] = -excess_qty
+                        curr['avg_price_org'] = tx_price
+                        curr['cost_basis_pln'] = excess_qty * to_pln(t) # Proceeds
+                else:
+                    # Partial sell
+                    fraction_remaining = (old_qty - tx_qty) / old_qty
+                    curr['qty'] -= tx_qty
+                    curr['cost_basis_pln'] *= fraction_remaining
+
     # Current holdings (ticker -> qty)
-    holdings = get_holdings(session, portfolio_id)
+    # Filter out near-zero quantities (both pos and neg)
+    holdings = {k: v for k, v in asset_metrics.items() if abs(v['qty']) > 0.000001}
     tickers = list(holdings.keys())
 
-    # Fetch recent historical prices for current holdings to compute day change
-    gainers = []
-    decliners = []
+    # Fetch recent historical prices for current holdings to compute day change and value
     current_value = 0.0
     prev_value = 0.0
+    assets_list = []
 
     if tickers:
         # Look back enough to find previous available trading day
@@ -489,24 +577,59 @@ def calculate_portfolio_overview(session: Session, portfolio_id: int) -> dict:
             else:
                 return last_p, None, last_d
 
-        for tkr, qty in holdings.items():
+        for tkr, metrics in holdings.items():
+            qty = metrics['qty']
             last_p, prev_p, last_d = last_and_prev_price(tkr)
-            if last_p is not None and math.isfinite(float(last_p)):
-                current_value += qty * float(last_p)
-            if prev_p is not None and math.isfinite(float(prev_p)):
-                prev_value += qty * float(prev_p)
-                # day-over-day percent for this ticker
-                if float(prev_p) > 0 and last_p is not None and math.isfinite(float(last_p)):
-                    pct = (float(last_p) - float(prev_p)) / float(prev_p) * 100.0
-                    entry = {'ticker': tkr, 'pct': pct}
-                    if pct >= 0:
-                        gainers.append(entry)
-                    else:
-                        decliners.append(entry)
+
+            # Prefer live current price (already in PLN). Fallback to last historical price (also PLN).
+            live_price = get_current_price(tkr)
+            price_pln = None
+            if live_price is not None and math.isfinite(float(live_price)) and float(live_price) > 0:
+                price_pln = float(live_price)
+            elif last_p is not None and math.isfinite(float(last_p)) and float(last_p) > 0:
+                price_pln = float(last_p)
             else:
-                # If no previous price, count previous value with last price (no change contribution)
-                if last_p is not None and math.isfinite(float(last_p)):
-                    prev_value += qty * float(last_p)
+                price_pln = 0.0
+
+            asset_val_pln = qty * price_pln
+            current_value += asset_val_pln
+
+            # Daily change based on historical previous price if available
+            daily_chg_pct = 0.0
+            if prev_p is not None and math.isfinite(float(prev_p)) and float(prev_p) > 0 and price_pln > 0:
+                prev_price_pln = float(prev_p)
+                prev_val_pln = qty * prev_price_pln
+                prev_value += prev_val_pln
+                daily_chg_pct = (price_pln - prev_price_pln) / prev_price_pln * 100.0
+
+            price_org = price_pln
+
+            # Profit calculation
+            cost_basis_pln = metrics['cost_basis_pln']
+            profit_pln = asset_val_pln - cost_basis_pln
+            
+            # Rate of Return % (on current holding)
+            return_pct = (profit_pln / cost_basis_pln * 100.0) if cost_basis_pln > 0 else 0.0
+            
+            assets_list.append({
+                'ticker': tkr,
+                'quantity': float(qty),
+                'avg_purchase_price': float(metrics['avg_price_org']),
+                'current_price': float(price_org) if price_org else 0.0,
+                'value': float(asset_val_pln),
+                'daily_change': float(daily_chg_pct),
+                'profit_pln': float(profit_pln),
+                'return_pct': float(return_pct),
+                'share_pct': 0.0 # to be calculated after total value
+            })
+
+    # Calculate share pct
+    if current_value > 0:
+        for asset in assets_list:
+            asset['share_pct'] = (asset['value'] / current_value) * 100.0
+            
+    # Sort assets by value descending
+    assets_list.sort(key=lambda x: x['value'], reverse=True)
 
     daily_change_value = current_value - prev_value
     daily_change_pct = (daily_change_value / prev_value * 100.0) if prev_value > 0 else 0.0
@@ -524,10 +647,6 @@ def calculate_portfolio_overview(session: Session, portfolio_id: int) -> dict:
     total_profit = current_value + total_sells - total_buys
     current_profit = current_value - net_invested
 
-    # Sort gainers/decliners
-    gainers = sorted(gainers, key=lambda x: x['pct'], reverse=True)[:5]
-    decliners = sorted(decliners, key=lambda x: x['pct'])[:5]
-
     return {
         'value': float(current_value),
         'daily_change_value': float(daily_change_value),
@@ -536,8 +655,7 @@ def calculate_portfolio_overview(session: Session, portfolio_id: int) -> dict:
         'roi_pct': float(roi_pct),
         'current_profit': float(current_profit),
         'annualized_return_pct': float(annualized_return_pct),
-        'gainers': gainers,
-        'decliners': decliners
+        'assets': assets_list
     }
 
 

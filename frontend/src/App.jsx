@@ -977,6 +977,7 @@ function PortfolioView({ days }) {
     const [timeRange, setTimeRange] = useState('ALL');
     const [hoveredPoint, setHoveredPoint] = useState(null);
     const [mousePos, setMousePos] = useState({ x: 0, y: 0 });
+    const [sortConfig, setSortConfig] = useState({ key: 'value', direction: 'desc' });
     const canvasRef = useRef(null);
 
     const fmt = (n, digits = 2) => (n === null || n === undefined ? '-' : Number(n).toFixed(digits));
@@ -1250,6 +1251,29 @@ function PortfolioView({ days }) {
     const roiColor = (overview.roi_pct || 0) >= 0 ? 'text-green-600' : 'text-red-600';
     const profitColor = (overview.total_profit || 0) >= 0 ? 'text-green-600' : 'text-red-600';
 
+    const handleSort = (key) => {
+        let direction = 'desc';
+        if (sortConfig.key === key && sortConfig.direction === 'desc') {
+            direction = 'asc';
+        }
+        setSortConfig({ key, direction });
+    };
+
+    const sortedAssets = [...(overview.assets || [])].sort((a, b) => {
+        if (a[sortConfig.key] < b[sortConfig.key]) {
+            return sortConfig.direction === 'asc' ? -1 : 1;
+        }
+        if (a[sortConfig.key] > b[sortConfig.key]) {
+            return sortConfig.direction === 'asc' ? 1 : -1;
+        }
+        return 0;
+    });
+
+    const SortIcon = ({ column }) => {
+        if (sortConfig.key !== column) return <span className="text-gray-300 ml-1">⇅</span>;
+        return sortConfig.direction === 'asc' ? <span className="ml-1">▲</span> : <span className="ml-1">▼</span>;
+    };
+
     return (
         <div className="space-y-4">
             <div className="grid grid-cols-6 gap-3">
@@ -1334,32 +1358,69 @@ function PortfolioView({ days }) {
                 </div>
             </div>
 
-            {(overview.gainers?.length || overview.decliners?.length) ? (
-                <div className="grid grid-cols-2 gap-4">
-                    <div className="bg-white rounded-lg shadow p-4">
-                        <h4 className="text-sm font-semibold text-gray-900 mb-2">Najwięksi zwycięzcy (dzień/dzień)</h4>
-                        <div className="space-y-1">
-                            {(overview.gainers || []).map((g, idx) => (
-                                <div key={idx} className="flex items-center justify-between text-sm">
-                                    <span className="font-mono text-gray-800">{g.ticker}</span>
-                                    <span className="font-semibold text-green-600">+{fmt(g.pct, 2)}%</span>
-                                </div>
-                            ))}
-                        </div>
+            {overview.assets && overview.assets.length > 0 && (
+                <div className="bg-white rounded-lg shadow-lg overflow-hidden">
+                    <div className="px-6 py-4 border-b border-gray-200">
+                        <h3 className="text-lg font-bold text-gray-900">Aktywa w portfelu</h3>
                     </div>
-                    <div className="bg-white rounded-lg shadow p-4">
-                        <h4 className="text-sm font-semibold text-gray-900 mb-2">Najwięksi przegrani (dzień/dzień)</h4>
-                        <div className="space-y-1">
-                            {(overview.decliners || []).map((d, idx) => (
-                                <div key={idx} className="flex items-center justify-between text-sm">
-                                    <span className="font-mono text-gray-800">{d.ticker}</span>
-                                    <span className="font-semibold text-red-600">{fmt(d.pct, 2)}%</span>
-                                </div>
-                            ))}
-                        </div>
+                    <div className="overflow-x-auto">
+                        <table className="min-w-full divide-y divide-gray-200">
+                            <thead className="bg-gray-50 select-none">
+                                <tr>
+                                    <th onClick={() => handleSort('ticker')} className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100">
+                                        Ticker <SortIcon column="ticker" />
+                                    </th>
+                                    <th onClick={() => handleSort('daily_change')} className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100">
+                                        Zmiana 1D <SortIcon column="daily_change" />
+                                    </th>
+                                    <th onClick={() => handleSort('quantity')} className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100">
+                                        Ilość <SortIcon column="quantity" />
+                                    </th>
+                                    <th onClick={() => handleSort('avg_purchase_price')} className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100">
+                                        Śr. cena zakupu <SortIcon column="avg_purchase_price" />
+                                    </th>
+                                    <th onClick={() => handleSort('current_price')} className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100">
+                                        Cena akt. <SortIcon column="current_price" />
+                                    </th>
+                                    <th onClick={() => handleSort('value')} className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100">
+                                        Wartość [PLN] <SortIcon column="value" />
+                                    </th>
+                                    <th onClick={() => handleSort('share_pct')} className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100">
+                                        Udział % <SortIcon column="share_pct" />
+                                    </th>
+                                    <th onClick={() => handleSort('return_pct')} className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100">
+                                        Zwrot % <SortIcon column="return_pct" />
+                                    </th>
+                                    <th onClick={() => handleSort('profit_pln')} className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100">
+                                        Zysk [PLN] <SortIcon column="profit_pln" />
+                                    </th>
+                                </tr>
+                            </thead>
+                            <tbody className="bg-white divide-y divide-gray-200">
+                                {sortedAssets.map((asset, idx) => (
+                                    <tr key={asset.ticker} className="hover:bg-gray-50">
+                                        <td className="px-6 py-4 whitespace-nowrap text-sm font-bold text-gray-900">{asset.ticker}</td>
+                                        <td className={`px-6 py-4 whitespace-nowrap text-sm text-right font-semibold ${asset.daily_change >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                                            {asset.daily_change >= 0 ? '+' : ''}{fmt(asset.daily_change, 2)}%
+                                        </td>
+                                        <td className="px-6 py-4 whitespace-nowrap text-sm text-right text-gray-500">{fmt(asset.quantity, 4)}</td>
+                                        <td className="px-6 py-4 whitespace-nowrap text-sm text-right text-gray-500">{fmt(asset.avg_purchase_price, 2)}</td>
+                                        <td className="px-6 py-4 whitespace-nowrap text-sm text-right text-gray-900 font-medium">{fmt(asset.current_price, 2)}</td>
+                                        <td className="px-6 py-4 whitespace-nowrap text-sm text-right text-gray-900 font-bold">{fmt(asset.value, 2)}</td>
+                                        <td className="px-6 py-4 whitespace-nowrap text-sm text-right text-gray-500">{fmt(asset.share_pct, 1)}%</td>
+                                        <td className={`px-6 py-4 whitespace-nowrap text-sm text-right font-bold ${asset.return_pct >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                                            {asset.return_pct >= 0 ? '+' : ''}{fmt(asset.return_pct, 2)}%
+                                        </td>
+                                        <td className={`px-6 py-4 whitespace-nowrap text-sm text-right font-bold ${asset.profit_pln >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                                            {asset.profit_pln >= 0 ? '+' : ''}{fmt(asset.profit_pln, 2)}
+                                        </td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
                     </div>
                 </div>
-            ) : null}
+            )}
         </div>
     );
 }
