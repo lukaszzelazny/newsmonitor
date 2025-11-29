@@ -197,7 +197,7 @@ def calculate_roi_over_time(session: Session, portfolio_id: int):
     
     TWR eliminuje wpływ wpłat i wypłat na wynik procentowy.
     TWR = (1 + r1) * (1 + r2) * ... * (1 + rn) - 1
-    gdzie ri = (EV - (BV + CF)) / (BV + CF)
+    gdzie ri = (EV - CF - BV) / BV
     EV: End Value, BV: Begin Value, CF: Cash Flow
     """
     # Pobierz wszystkie transakcje
@@ -235,10 +235,10 @@ def calculate_roi_over_time(session: Session, portfolio_id: int):
         currency_by_ticker = {t: "PLN" for t in tickers}
         fx_series_map = {}
 
-    # Pobierz historyczne ceny dla wszystkich tickerów
+    # Pobierz historyczne ceny dla wszystkich tickerów (już skonwertowane na PLN)
     historical_prices = get_historical_prices_for_tickers(tickers, start_date, end_date)
 
-    # Funkcja pomocnicza do konwersji ceny na PLN
+    # Funkcja pomocnicza do konwersji ceny na PLN (dla transakcji)
     def convert_to_pln(price, ticker, date):
         currency = currency_by_ticker.get(ticker, "PLN")
         if currency == "PLN":
@@ -258,22 +258,23 @@ def calculate_roi_over_time(session: Session, portfolio_id: int):
                 fx_rate = float(fx_series.iloc[0])
         return float(price) * fx_rate
 
+    # Pobierz cenę rynkową (już w PLN, bez ponownej konwersji)
     def get_price_on_or_before(ticker, date):
         if ticker not in historical_prices or not historical_prices[ticker]:
             return None
         prices = historical_prices[ticker]
         date_ts = pd.Timestamp(date)
         if date_ts in prices:
-            return convert_to_pln(prices[date_ts], ticker, date_ts)
+            return prices[date_ts] 
         prev_dates = [d for d in prices.keys() if d <= date_ts]
         if prev_dates:
             prev_date = max(prev_dates)
-            return convert_to_pln(prices[prev_date], ticker, prev_date)
+            return prices[prev_date]
         return None
 
     date_range = pd.date_range(start=start_date, end=end_date, freq='D')
     
-    # Agreguj przepływy pieniężne według dat
+    # Agreguj przepływy pieniężne według dat (PLN)
     cash_flows_by_date = defaultdict(float)
     for t in transactions:
         date = t.transaction_date
@@ -282,64 +283,84 @@ def calculate_roi_over_time(session: Session, portfolio_id: int):
         commission = float(t.commission or 0.0)
 
         if t.transaction_type == TransactionType.BUY:
-            cash_flow = (gross + commission) # Inflow to assets (Cost)
+            cash_flow = (gross + commission) # Inflow to assets
             cash_flows_by_date[date] += cash_flow
         elif t.transaction_type == TransactionType.SELL:
-            cash_flow = -(gross - commission) # Outflow from assets (Proceeds)
+            cash_flow = -(gross - commission) # Outflow from assets
             cash_flows_by_date[date] += cash_flow
 
     holdings = defaultdict(float)
+    last_known_prices = {} # Fallback prices from transactions
     results = []
     
     cumulative_twr = 1.0
     prev_market_value = 0.0
     cumulative_invested = 0.0
+    
+    split_ratios = {} # Ticker -> Ratio
 
     for date in date_range:
         date_obj = date.date()
         
-        # Calculate market value BEFORE transactions (Start Value)
-        # Actually TWR usually assumes transactions happen at start or end.
-        # If we use Daily valuation: 
-        # r = (V_end - V_begin - CF) / (V_begin + CF) if CF at start
-        # or r = (V_end - V_begin - CF) / V_begin if CF at end
-        # We will assume CF happens at START of day for simplicity (invested immediately affects exposure).
-        
-        # Apply transactions to holdings
-        # Note: holdings need to be updated to calculate End Value
-        
-        current_holdings_value = 0.0
-        # Calculate value of PREVIOUS holdings at CURRENT prices (to approximate return including day's move)
-        # But standard way is:
-        # 1. Get Market Value at End of Day (with new holdings)
-        # 2. Get Cash Flow sum for the day
-        # 3. Previous Market Value is V_begin
-        
-        # Update holdings for the day
+        # Update holdings and split heuristic
         daily_cash_flow = cash_flows_by_date.get(date_obj, 0.0)
         cumulative_invested += daily_cash_flow
 
-        for t in [tr for tr in transactions if tr.transaction_date == date_obj]:
+        # Process transactions for today
+        day_transactions = [tr for tr in transactions if tr.transaction_date == date_obj]
+        
+        for t in day_transactions:
+             # Heuristic Split Detection
+             # If transaction price (PLN) differs massively from market price (PLN), adjust quantity
+             market_p = get_price_on_or_before(t.asset.ticker, date)
+             trans_p = convert_to_pln(t.price, t.asset.ticker, date)
+             
+             if market_p and market_p > 0:
+                 ratio = trans_p / market_p
+                 # If ratio > 1.5 or < 0.6, assumesplit. But be careful of volatile assets.
+                 # Splits are usually integers like 2, 3, 4, 10, 20.
+                 # Reverse split: 0.1, 0.5.
+                 if ratio > 1.8 or ratio < 0.6:
+                     split_ratios[t.asset.ticker] = ratio
+                     # Also adjust last_known to market price to avoid skew
+                     last_known_prices[t.asset.ticker] = market_p
+                 else:
+                     last_known_prices[t.asset.ticker] = trans_p
+             else:
+                 last_known_prices[t.asset.ticker] = trans_p
+
+        # Apply quantity updates
+        for t in day_transactions:
+            ratio = split_ratios.get(t.asset.ticker, 1.0)
+            qty = t.quantity * ratio
+            
             if t.transaction_type == TransactionType.BUY:
-                holdings[t.asset.ticker] += t.quantity
+                holdings[t.asset.ticker] += qty
             elif t.transaction_type == TransactionType.SELL:
-                holdings[t.asset.ticker] -= t.quantity
+                holdings[t.asset.ticker] -= qty
 
         # Calculate End Market Value
         market_value = 0.0
         for ticker, qty in holdings.items():
             if qty > 0:
                 price = get_price_on_or_before(ticker, date)
+                
+                # Fallback
+                if price is None or price <= 0:
+                    price = last_known_prices.get(ticker)
+                else:
+                    last_known_prices[ticker] = price
+                
                 if price is not None and price > 0:
                     market_value += qty * price
         
-        # Calculate Daily Return
-        # Denominator: Capital at risk during the day.
-        # If we assume CF at start: V_begin + CF
-        denominator = prev_market_value + daily_cash_flow
-        
-        if denominator > 0.01: # Avoid division by zero or tiny amounts
-            daily_return = (market_value - denominator) / denominator
+        # Calculate Daily Return (End-of-Day TWR)
+        # r = (V_end - CF - V_begin) / V_begin
+        if prev_market_value > 0.01:
+            daily_return = (market_value - daily_cash_flow - prev_market_value) / prev_market_value
+        elif daily_cash_flow > 0.01:
+            # Initial funding or restart
+            daily_return = (market_value - daily_cash_flow) / daily_cash_flow
         else:
             daily_return = 0.0
             
@@ -354,7 +375,7 @@ def calculate_roi_over_time(session: Session, portfolio_id: int):
         
         prev_market_value = market_value
 
-    # Utwórz DataFrame i agreguj do tygodni
+    # Utwórz DataFrame
     df = pd.DataFrame(results)
     df['date'] = pd.to_datetime(df['date'])
     
@@ -363,7 +384,6 @@ def calculate_roi_over_time(session: Session, portfolio_id: int):
     df['rate_of_return'] = df['rate_of_return'].ffill().fillna(0)
     df['invested'] = df['invested'].ffill().fillna(0)
 
-    # Zwracaj dane dzienne (bez agregacji tygodniowej)
     roi_data = []
     for _, row in df.iterrows():
         roi_data.append({

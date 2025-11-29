@@ -221,52 +221,78 @@ def get_price_history(ticker_symbol: str, days: int = 90):
         return []
 
 
+@lru_cache(maxsize=16)
+def _get_historical_prices_cached(tickers_tuple, start_date, end_date):
+    """Cached implementation of get_historical_prices_for_tickers."""
+    tickers = list(tickers_tuple)
+    yf_symbols = [get_yf_symbol(t) for t in tickers]
+    
+    # Prepare FX conversion series upfront
+    currency_by_ticker: Dict[str, str] = {t: get_currency_for_ticker(t) for t in tickers}
+    unique_currencies = sorted({c for c in currency_by_ticker.values() if c != "PLN"})
+    fx_series_map = _fetch_fx_series(unique_currencies, start_date, end_date)
+    
+    price_dict = {}
+
+    # Helper to process a series
+    def process_series(ticker, series):
+        if series is None or series.empty:
+            return
+
+        # Ensure we have a Series, not a DataFrame (e.g. if duplicate cols)
+        if isinstance(series, pd.DataFrame):
+            # Take the first column if duplicates exist
+            series = series.iloc[:, 0]
+            
+        series = series.ffill().bfill()
+        
+        currency = currency_by_ticker.get(ticker, "PLN")
+        if currency != "PLN":
+            fx_ticker = fx_symbol_to_pln(currency)
+            fx_series = fx_series_map.get(fx_ticker)
+            if fx_series is not None and not fx_series.empty:
+                aligned_fx = fx_series.reindex(series.index).ffill().bfill()
+                series = series * aligned_fx
+        
+        price_dict[ticker] = series.to_dict()
+
+    # Try batch download first
+    try:
+        data = yf.download(yf_symbols, start=start_date, end=end_date, progress=False)
+        
+        if not data.empty:
+            prices = data["Close"]
+            prices = _normalize_to_dataframe(prices)
+
+            for ticker, yf_symbol in zip(tickers, yf_symbols):
+                series = None
+                if yf_symbol in prices.columns:
+                    series = prices[yf_symbol].copy()
+                elif isinstance(prices, pd.Series) and prices.name == yf_symbol:
+                    series = prices.copy()
+                
+                if series is not None and not series.dropna().empty:
+                     process_series(ticker, series)
+    except Exception as e:
+        print(f"Batch download failed: {e}")
+
+    # Fallback for missing tickers
+    for ticker, yf_symbol in zip(tickers, yf_symbols):
+        if ticker not in price_dict:
+            try:
+                # Download individual
+                single = yf.download(yf_symbol, start=start_date, end=end_date, progress=False)
+                if not single.empty and "Close" in single.columns:
+                     process_series(ticker, single["Close"])
+            except Exception:
+                pass
+    
+    return price_dict
+
 def get_historical_prices_for_tickers(tickers, start_date, end_date):
     """
     Fetches historical daily closing prices for a list of tickers in a given date range.
     All prices are converted to PLN using historical FX rates.
+    Wrapper to allow caching on tuple arguments.
     """
-    yf_symbols = [get_yf_symbol(t) for t in tickers]
-    try:
-        data = yf.download(yf_symbols, start=start_date, end=end_date, progress=False)
-        if data.empty:
-            return {}
-
-        prices = data["Close"]
-        prices = _normalize_to_dataframe(prices)
-
-        # Prepare FX conversion series
-        currency_by_ticker: Dict[str, str] = {t: get_currency_for_ticker(t) for t in tickers}
-        unique_currencies = sorted({c for c in currency_by_ticker.values() if c != "PLN"})
-        fx_series_map = _fetch_fx_series(unique_currencies, start_date, end_date)
-
-        price_dict = {}
-        for ticker, yf_symbol in zip(tickers, yf_symbols):
-            if yf_symbol not in prices.columns and isinstance(prices, pd.Series) and prices.name == yf_symbol:
-                ticker_series = prices.copy()
-            elif yf_symbol in prices.columns:
-                ticker_series = prices[yf_symbol].copy()
-            else:
-                # No data for this symbol
-                continue
-
-            # Fill missing values for the asset itself
-            ticker_series = ticker_series.ffill().bfill()
-
-            # Convert to PLN if needed
-            currency = currency_by_ticker.get(ticker, "PLN")
-            if currency != "PLN":
-                fx_ticker = fx_symbol_to_pln(currency)
-                fx_series = fx_series_map.get(fx_ticker)
-                if fx_series is not None and not fx_series.empty:
-                    # Align indices and fill
-                    aligned_fx = fx_series.reindex(ticker_series.index).ffill().bfill()
-                    ticker_series = ticker_series * aligned_fx
-
-            # Ensure pure Python dict keyed by pandas Timestamps
-            price_dict[ticker] = ticker_series.to_dict()
-
-        return price_dict
-    except Exception as e:
-        print(f"Error fetching historical data: {e}")
-        return {}
+    return _get_historical_prices_cached(tuple(tickers), start_date, end_date)

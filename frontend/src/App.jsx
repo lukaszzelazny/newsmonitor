@@ -1004,7 +1004,7 @@ function PortfolioView({ days }) {
             }
         };
         fetchData();
-    }, [days]); // `days` wpływa na inne rzeczy w dashboardzie, ale ROI pobieramy raz i filtrujemy lokalnie
+    }, []); // Pobieramy dane tylko raz po zamontowaniu komponentu
 
     const filterData = (data, range) => {
         if (!data || data.length === 0) {
@@ -1106,6 +1106,19 @@ function PortfolioView({ days }) {
             ctx.fillStyle = '#6b7280';
             ctx.textAlign = 'right';
             ctx.fillText(`${val.toFixed(1)}%`, margin.left - 10, y + 4);
+        }
+
+        // Zero line
+        if (minV <= 0 && maxV >= 0) {
+            const yZero = margin.top + chartH - ((0 - minV) / range) * chartH;
+            ctx.strokeStyle = '#9ca3af';
+            ctx.lineWidth = 2;
+            ctx.setLineDash([4, 4]);
+            ctx.beginPath();
+            ctx.moveTo(margin.left, yZero);
+            ctx.lineTo(width - margin.right, yZero);
+            ctx.stroke();
+            ctx.setLineDash([]);
         }
 
         // ROI line
