@@ -1178,8 +1178,14 @@ function PortfolioView({ days }) {
         const canvas = canvasRef.current;
         if (!canvas || roiSeries.length === 0) return;
         const rect = canvas.getBoundingClientRect();
-        const mouseX = e.clientX - rect.left;
-        const mouseY = e.clientY - rect.top;
+
+        // Skala CSS->canvas dla poprawnego mapowania pozycji kursora
+        const scaleX = canvas.width / rect.width;
+        const scaleY = canvas.height / rect.height;
+
+        // Pozycja kursora w przestrzeni canvas (px canvas)
+        const mouseX = (e.clientX - rect.left) * scaleX;
+        const mouseY = (e.clientY - rect.top) * scaleY;
         
         const width = canvas.width;
         const height = canvas.height;
@@ -1200,8 +1206,8 @@ function PortfolioView({ days }) {
         const chartH = height - margin.top - margin.bottom;
 
         roiSeries.forEach((pt, i) => {
-            const x = margin.left + (chartW / denom) * i;
-            const dist = Math.abs(mouseX - x);
+            const x = margin.left + (chartW / denom) * i; // canvas px
+            const dist = Math.abs(mouseX - x);           // canvas px
             if (dist < closestDist) {
                 closestDist = dist;
                 closestPoint = pt;
@@ -1210,10 +1216,12 @@ function PortfolioView({ days }) {
             }
         });
 
-        // Jeśli kursor jest wystarczająco blisko (np. 20px) w poziomie
-        if (closestDist < 20) {
+        // Próg bliskości w px ekranu -> przelicz na px canvas
+        const threshold = 20 * scaleX;
+        if (closestDist < threshold) {
             setHoveredPoint(closestPoint);
-            setMousePos({ x: closestX, y: closestY });
+            // Pozycja tooltipa powinna być w px CSS (nie canvas), więc przelicz w dół skalę
+            setMousePos({ x: closestX / scaleX, y: closestY / scaleY });
         } else {
             setHoveredPoint(null);
         }

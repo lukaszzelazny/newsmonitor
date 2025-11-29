@@ -582,14 +582,17 @@ def calculate_portfolio_overview(session: Session, portfolio_id: int) -> dict:
             last_p, prev_p, last_d = last_and_prev_price(tkr)
 
             # Prefer live current price (already in PLN). Fallback to last historical price (also PLN).
-            live_price = get_current_price(tkr)
             price_pln = None
-            if live_price is not None and math.isfinite(float(live_price)) and float(live_price) > 0:
-                price_pln = float(live_price)
-            elif last_p is not None and math.isfinite(float(last_p)) and float(last_p) > 0:
+            # Prefer last historical PLN price (spójne z wykresem i unikamy błędnych live cen dla NewConnect)
+            if last_p is not None and math.isfinite(float(last_p)) and float(last_p) > 0:
                 price_pln = float(last_p)
             else:
-                price_pln = 0.0
+                # Fallback do live price jeśli nie mamy historii
+                live_price = get_current_price(tkr)
+                if live_price is not None and math.isfinite(float(live_price)) and float(live_price) > 0:
+                    price_pln = float(live_price)
+                else:
+                    price_pln = 0.0
 
             asset_val_pln = qty * price_pln
             current_value += asset_val_pln
@@ -645,7 +648,9 @@ def calculate_portfolio_overview(session: Session, portfolio_id: int) -> dict:
 
     # Profits
     total_profit = current_value + total_sells - total_buys
-    current_profit = current_value - net_invested
+    # Bieżący zysk (unrealized): suma zysków pozycji w assets_list (spójne z tabelą)
+    current_profit = sum(a['profit_pln'] for a in assets_list) if assets_list else 0.0
+    realized_profit = total_profit - current_profit
 
     return {
         'value': float(current_value),
