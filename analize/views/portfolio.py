@@ -1,0 +1,83 @@
+from flask import Blueprint, jsonify, request
+from database import Database
+from portfolio.models import Portfolio
+from portfolio.analysis import calculate_portfolio_overview, calculate_roi_over_time
+
+portfolio_bp = Blueprint('portfolio', __name__)
+
+
+def _get_portfolio(session, name: str | None):
+    if name:
+        return session.query(Portfolio).filter_by(name=name).first()
+
+    # Prefer explicitly named portfolios first
+    preferred = session.query(Portfolio).filter(Portfolio.name.in_(['XTB', 'XTB IKE'])).order_by(Portfolio.id.desc()).first()
+    if preferred:
+        return preferred
+
+    # Fallback: pick portfolio with the highest number of transactions
+    portfolios = session.query(Portfolio).all()
+    if portfolios:
+        portfolios_sorted = sorted(portfolios, key=lambda p: len(p.transactions or []), reverse=True)
+        return portfolios_sorted[0]
+
+    # Last resort
+    return session.query(Portfolio).first()
+
+
+@portfolio_bp.route('/api/portfolio/overview')
+def portfolio_overview():
+    """
+    Zwraca podsumowanie portfela oparte na calculate_portfolio_overview.
+    Parametry (opcjonalne):
+      - name: nazwa portfela (jeśli brak, wybierany jest pierwszy z bazy)
+    """
+    db = Database()
+    session = db.Session()
+    try:
+        name = request.args.get('name', default=None, type=str)
+        portfolio = _get_portfolio(session, name)
+        if not portfolio:
+            return jsonify({'error': 'Brak portfela w bazie'}), 404
+
+        overview = calculate_portfolio_overview(session, portfolio.id) or {}
+        overview['portfolio'] = {
+            'id': portfolio.id,
+            'name': portfolio.name,
+            'broker': portfolio.broker,
+            'description': portfolio.description,
+        }
+        return jsonify(overview)
+    except Exception as e:
+        print(f"Error in /api/portfolio/overview: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+    finally:
+        session.close()
+
+
+@portfolio_bp.route('/api/portfolio/roi')
+def portfolio_roi():
+    """
+    Zwraca tygodniową serię ROI (MWR) portfela z calculate_roi_over_time.
+    Parametry (opcjonalne):
+      - name: nazwa portfela (jeśli brak, wybierany jest pierwszy z bazy)
+    """
+    db = Database()
+    session = db.Session()
+    try:
+        name = request.args.get('name', default=None, type=str)
+        portfolio = _get_portfolio(session, name)
+        if not portfolio:
+            return jsonify([])
+
+        series = calculate_roi_over_time(session, portfolio.id) or []
+        return jsonify(series)
+    except Exception as e:
+        print(f"Error in /api/portfolio/roi: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+    finally:
+        session.close()
