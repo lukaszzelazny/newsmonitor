@@ -9,6 +9,7 @@ from analize.utils import get_price_history, get_technical_analysis
 from analize.views.tickers import tickers_bp
 from analize.views.calendar import calendar_bp
 from analize.views.rejected import rejected_bp
+from analize.views.portfolio import portfolio_bp
 
 
 app = Flask(__name__)
@@ -18,6 +19,7 @@ CORS(app)
 app.register_blueprint(tickers_bp)
 app.register_blueprint(calendar_bp)
 app.register_blueprint(rejected_bp)
+app.register_blueprint(portfolio_bp)
 
 @app.route('/api/price_history/<ticker>')
 def get_price_history_endpoint(ticker):

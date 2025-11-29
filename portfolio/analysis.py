@@ -3,7 +3,7 @@
 from sqlalchemy.orm import Session
 from portfolio.models import Portfolio, Transaction, TransactionType
 from collections import defaultdict
-from tools.price_fetcher import get_current_price, get_historical_prices_for_tickers
+from tools.price_fetcher import get_current_price, get_historical_prices_for_tickers, get_currency_for_ticker, fx_symbol_to_pln, _fetch_fx_series
 from portfolio.models import Asset
 import pandas as pd
 from datetime import timedelta
@@ -188,32 +188,38 @@ if __name__ == '__main__':
 
     session.close()
 
+"""Poprawiona funkcja calculate_roi_over_time"""
+
 
 def calculate_roi_over_time(session: Session, portfolio_id: int):
     """
-    Calculates a daily time-weighted rate of return for the portfolio.
+    Oblicza stopę zwrotu portfela w czasie.
 
-    Returns a list of dictionaries with 'date' and 'rate_of_return' keys.
+    Metoda: Modified Dietz (przybliżenie TWR uwzględniające timing przepływów)
+    ROI = (Wartość końcowa - Wartość początkowa - Przepływy netto) / (Wartość początkowa + Ważone przepływy)
+
+    Returns:
+        Lista słowników z kluczami: 'date', 'rate_of_return', 'market_value', 'invested'
     """
-    print(f"\n=== DEBUG: Starting ROI calculation for portfolio {portfolio_id} ===")
+    print(f"\n=== Rozpoczynam obliczanie ROI dla portfela {portfolio_id} ===")
 
-    # Get all transactions for this portfolio
+    # Pobierz wszystkie transakcje
     transactions = session.query(Transaction).filter_by(
         portfolio_id=portfolio_id
     ).order_by(Transaction.transaction_date).all()
 
     if not transactions:
-        print("No transactions found!")
+        print("Brak transakcji!")
         return []
 
-    print(f"Found {len(transactions)} transactions")
+    print(f"Znaleziono {len(transactions)} transakcji")
 
-    # Determine date range
+    # Zakres dat
     start_date = transactions[0].transaction_date
     end_date = pd.Timestamp.today().date()
-    print(f"Date range: {start_date} to {end_date}")
+    print(f"Okres: {start_date} - {end_date}")
 
-    # Get all unique tickers in the portfolio
+    # Pobierz unikalne tickery
     asset_ids = session.query(Transaction.asset_id).filter_by(
         portfolio_id=portfolio_id
     ).distinct().all()
@@ -223,181 +229,203 @@ def calculate_roi_over_time(session: Session, portfolio_id: int):
         if ticker:
             tickers.append(ticker)
 
-    print(f"Tickers in portfolio: {tickers}")
+    print(f"Tickery w portfelu: {tickers}")
 
     if not tickers:
-        print("No tickers found!")
+        print("Brak tickerów!")
         return []
 
-    # Fetch historical prices for all tickers
-    print("Fetching historical prices...")
+    # Przygotuj dane walutowe
+    try:
+        currency_by_ticker = {t: get_currency_for_ticker(t) for t in tickers}
+        currencies = sorted({c for c in currency_by_ticker.values() if c != "PLN"})
+        fx_series_map = _fetch_fx_series(currencies, start_date,
+                                         end_date) if currencies else {}
+        print(f"Pobrano kursy walut dla: {currencies}")
+    except Exception as e:
+        print(f"Błąd pobierania kursów walut: {e}")
+        currency_by_ticker = {t: "PLN" for t in tickers}
+        fx_series_map = {}
+
+    # Pobierz historyczne ceny dla wszystkich tickerów
+    print("Pobieram historyczne ceny...")
     historical_prices = get_historical_prices_for_tickers(tickers, start_date, end_date)
 
-    # Debug: Check what prices we got
+    print(f"DEBUG: Otrzymane dane cenowe dla {len(historical_prices)} tickerów")
     for ticker, prices in historical_prices.items():
-        print(f"  {ticker}: {len(prices)} price points")
         if prices:
+            print(f"  {ticker}: {len(prices)} punktów cenowych")
             first_date = min(prices.keys())
             last_date = max(prices.keys())
-            print(f"    Date range: {first_date} to {last_date}")
+            print(f"    Zakres: {first_date} - {last_date}")
+            print(f"    Przykładowa cena: {prices[last_date]}")
+        else:
+            print(f"  {ticker}: BRAK DANYCH!")
 
-    # Create date range for daily calculations
-    date_range = pd.date_range(start=start_date, end=end_date, freq='D')
+    # Funkcja pomocnicza do konwersji ceny na PLN
+    def convert_to_pln(price, ticker, date):
+        """Konwertuje cenę na PLN używając kursu z danego dnia"""
+        currency = currency_by_ticker.get(ticker, "PLN")
+        if currency == "PLN":
+            return float(price)
 
-    # Initialize cash flows
-    cash_flows = pd.Series(0.0, index=date_range)
+        fx_ticker = fx_symbol_to_pln(currency)
+        fx_series = fx_series_map.get(fx_ticker)
 
-    # Record all cash flows
-    for t in transactions:
-        date = pd.Timestamp(t.transaction_date)
-        if t.transaction_type == TransactionType.BUY:
-            cash_flows[date] -= t.quantity * t.price + (t.commission or 0)
-        elif t.transaction_type == TransactionType.SELL:
-            cash_flows[date] += t.quantity * t.price - (t.commission or 0)
+        if fx_series is None or fx_series.empty:
+            return float(price)
 
-    print(f"\nTotal cash flows: {cash_flows.sum():.2f}")
-    print(f"Days with transactions: {(cash_flows != 0).sum()}")
+        date_ts = pd.Timestamp(date)
+        if date_ts in fx_series.index:
+            fx_rate = float(fx_series.loc[date_ts])
+        else:
+            prev_dates = fx_series.index[fx_series.index <= date_ts]
+            if len(prev_dates) > 0:
+                fx_rate = float(fx_series.loc[prev_dates.max()])
+            else:
+                fx_rate = float(fx_series.iloc[0])
 
-    # Calculate daily holdings, end-of-day market value, and TWR using cash-flow adjustment
-    holdings = defaultdict(float)  # end-of-day holdings after applying today's trades
-    daily_values = []              # end-of-day market value
-    daily_returns = []             # TWR subperiod returns r_t = (M_t - (M_{t-1} + F_t)) / M_{t-1}
+        return float(price) * fx_rate
 
-    def price_on_or_before(ticker, day_ts):
-        if ticker not in historical_prices:
+    # Funkcja do pobierania ceny z danego dnia lub wcześniejszej
+    def get_price_on_or_before(ticker, date):
+        """Pobiera cenę w PLN z danego dnia lub najbliższą wcześniejszą"""
+        if ticker not in historical_prices or not historical_prices[ticker]:
             return None
-        price_data = historical_prices[ticker]
-        if day_ts in price_data:
-            return price_data[day_ts]
-        prev_dates = [d for d in price_data.keys() if d <= day_ts]
+
+        prices = historical_prices[ticker]
+        date_ts = pd.Timestamp(date)
+
+        if date_ts in prices:
+            return convert_to_pln(prices[date_ts], ticker, date_ts)
+
+        prev_dates = [d for d in prices.keys() if d <= date_ts]
         if prev_dates:
-            return price_data[max(prev_dates)]
+            prev_date = max(prev_dates)
+            return convert_to_pln(prices[prev_date], ticker, prev_date)
+
         return None
 
-    def value_of(position_map, price_map):
-        total = 0.0
-        for tkr, qty in position_map.items():
+    # Utwórz zakres dat (dzienne)
+    date_range = pd.date_range(start=start_date, end=end_date, freq='D')
+
+    # Agreguj przepływy pieniężne według dat (w PLN)
+    cash_flows_by_date = defaultdict(float)
+
+    print("\nPrzetwarzam transakcje:")
+    for t in transactions:
+        date = t.transaction_date
+        ticker = t.asset.ticker
+        print(
+            f"  {date}: {t.transaction_type.value} {t.quantity} x {ticker} @ {t.price}")
+
+        price_pln = convert_to_pln(t.price, ticker, date)
+        gross = float(t.quantity) * price_pln
+        commission = float(t.commission or 0.0)
+
+        if t.transaction_type == TransactionType.BUY:
+            # Kupno = wydatek (wartość ujemna)
+            cash_flow = -(gross + commission)
+            cash_flows_by_date[date] += cash_flow
+            print(f"    Wydatek: {cash_flow:.2f} PLN (cena PLN: {price_pln:.2f})")
+        elif t.transaction_type == TransactionType.SELL:
+            # Sprzedaż = wpływ (wartość dodatnia)
+            cash_flow = (gross - commission)
+            cash_flows_by_date[date] += cash_flow
+            print(f"    Wpływ: {cash_flow:.2f} PLN (cena PLN: {price_pln:.2f})")
+
+    print(f"\nDni z transakcjami: {len(cash_flows_by_date)}")
+    total_flows = sum(cash_flows_by_date.values())
+    print(f"Suma przepływów: {total_flows:.2f} PLN")
+
+    # Śledź stan portfela dzień po dniu
+    holdings = defaultdict(float)  # ticker -> ilość
+    results = []
+
+    cumulative_invested = 0.0  # Skumulowany kapitał zainwestowany (netto)
+
+    days_with_value = 0
+    for date in date_range:
+        date_obj = date.date()
+
+        # Zastosuj transakcje z tego dnia
+        for t in [tr for tr in transactions if tr.transaction_date == date_obj]:
+            if t.transaction_type == TransactionType.BUY:
+                holdings[t.asset.ticker] += t.quantity
+            elif t.transaction_type == TransactionType.SELL:
+                holdings[t.asset.ticker] -= t.quantity
+
+        # Dodaj przepływy pieniężne z tego dnia do zainwestowanego kapitału
+        if date_obj in cash_flows_by_date:
+            cumulative_invested += cash_flows_by_date[date_obj]
+
+        # Oblicz bieżącą wartość rynkową portfela
+        market_value = 0.0
+        for ticker, qty in holdings.items():
             if qty > 0:
-                p = price_map.get(tkr)
-                if p is not None and p > 0:
-                    total += qty * p
-        return total
+                price = get_price_on_or_before(ticker, date)
+                if price is not None and price > 0:
+                    market_value += qty * price
 
-    prev_day = None
-    for day in date_range:
-        prices_today = {t: price_on_or_before(t, day) for t in tickers}
-        prices_prev = {t: price_on_or_before(t, prev_day) if prev_day is not None else prices_today.get(t) for t in tickers}
+        if market_value > 0:
+            days_with_value += 1
 
-        # Start-of-day market value (yesterday's EOD holdings valued at yesterday's prices)
-        mv_prev = value_of(holdings, prices_prev)
-
-        # Net external cash flow during the day, with deposits (buys) positive for TWR adjustment
-        C_t = float(-cash_flows.get(day, 0.0))
-
-        # Apply today's transactions to update holdings to end-of-day state
-        for tr in [tr for tr in transactions if tr.transaction_date == day.date()]:
-            if tr.transaction_type == TransactionType.BUY:
-                holdings[tr.asset.ticker] += tr.quantity
-            elif tr.transaction_type == TransactionType.SELL:
-                holdings[tr.asset.ticker] -= tr.quantity
-
-        # End-of-day market value on updated holdings
-        mv_eod = value_of(holdings, prices_today)
-
-        # Time-Weighted daily return using cash-flow adjustment
-        if mv_prev > 0:
-            r_t = (mv_eod - (mv_prev + C_t)) / mv_prev
+        # Oblicz ROI: (wartość bieżąca - kapitał zainwestowany) / kapitał zainwestowany * 100
+        if cumulative_invested > 0:
+            roi = ((market_value - cumulative_invested) / cumulative_invested) * 100.0
         else:
-            r_t = 0.0
+            roi = 0.0
 
-        daily_returns.append(r_t)
-        daily_values.append(mv_eod)
-        prev_day = day
-
-    print(f"\nMarket values calculated for {len(daily_values)} days")
-    non_zero = [v for v in daily_values if v > 0]
-    if non_zero:
-        print(f"Min market value: {min(non_zero):.2f}")
-        print(f"Max market value: {max(non_zero):.2f}")
-    print(f"Latest market value: {daily_values[-1] if daily_values else 0:.2f}")
-    print(f"Non-zero values: {sum(1 for v in daily_values if v > 0)}")
-
-    # Create DataFrame for calculations (align by date index to ensure proper cash flow alignment)
-    df = pd.DataFrame(
-        {
-            'market_value': daily_values,
-            'cash_flow': cash_flows
-        },
-        index=date_range
-    )
-    df['date'] = df.index
-
-    # Forward fill market values to handle weekends/holidays
-    df['market_value'] = df['market_value'].replace(0, pd.NA).ffill().fillna(0)
-
-    # Calculate invested capital over time (net amount still deployed)
-    df['invested_capital'] = (-cash_flows).cumsum()
-
-    # Time-Weighted Return (TWR) using price-only P&L on previous-day holdings
-    df['daily_return'] = pd.Series(daily_returns, index=date_range).astype(float)
-    df['daily_return'] = df['daily_return'].fillna(0.0).replace([float('inf'), -float('inf')], 0.0)
-
-    # Compound daily returns into cumulative TWR
-    df['twr'] = (1.0 + df['daily_return']).cumprod() - 1.0
-
-    # Percentage rate of return for charting
-    df['rate_of_return'] = (df['twr'] * 100).astype(float)
-
-    # For debugging and summary metrics
-    total_buys = (-cash_flows[cash_flows < 0]).sum()
-    total_sells = cash_flows[cash_flows > 0].sum()
-
-    print(f"\nFinal calculations:")
-    print(f"Total money invested (all purchases): {total_buys:.2f} PLN")
-    print(f"Money received from sales: {total_sells:.2f} PLN")
-    print(f"Current holdings value: {df['market_value'].iloc[-1]:.2f} PLN")
-    print(f"Total return (holdings + sales): {(df['market_value'].iloc[-1] + total_sells):.2f} PLN")
-    print(f"Net profit: {(df['market_value'].iloc[-1] + total_sells - total_buys):.2f} PLN")
-    print(f"ROI (TWR): {df['rate_of_return'].iloc[-1]:.2f}%")
-    print(f"\nCapital currently invested: {df['invested_capital'].iloc[-1]:.2f} PLN")
-
-    # Format for the chart (return ALL daily points to densify X axis)
-    roi_data = []
-    for idx in range(len(df)):
-        row = df.iloc[idx]
-        # Convert to Python native types, handling NaN
-        market_val = row['market_value']
-        if pd.isna(market_val):
-            market_val = 0.0
-        else:
-            market_val = float(market_val)
-
-        roi_val = row['rate_of_return']
-        if pd.isna(roi_val):
-            roi_val = 0.0
-        else:
-            roi_val = float(roi_val)
-
-        invested_val = row['invested_capital']
-        if pd.isna(invested_val):
-            invested_val = 0.0
-        else:
-            invested_val = float(invested_val)
-
-        roi_data.append({
-            'date': row['date'].strftime('%Y-%m-%d'),
-            'rate_of_return': roi_val,
-            'market_value': market_val,
-            'invested': invested_val
+        results.append({
+            'date': date,
+            'market_value': market_value,
+            'invested': cumulative_invested,
+            'rate_of_return': roi
         })
 
-    print(f"\nReturning {len(roi_data)} data points for chart")
+    print(f"\nObliczono wartości dla {len(results)} dni")
+    print(f"Dni z wartością > 0: {days_with_value}")
+
+    if results:
+        print(f"Kapitał zainwestowany: {results[-1]['invested']:.2f} PLN")
+        print(f"Wartość rynkowa: {results[-1]['market_value']:.2f} PLN")
+        print(f"ROI: {results[-1]['rate_of_return']:.2f}%")
+
+    # Utwórz DataFrame i agreguj do tygodni
+    df = pd.DataFrame(results)
+    df['date'] = pd.to_datetime(df['date'])
+
+    # Forward fill wartości rynkowych (weekendy, święta)
+    df['market_value'] = df['market_value'].replace(0, pd.NA).ffill().fillna(0)
+
+    # Przelicz ROI po forward fill
+    df['rate_of_return'] = df.apply(
+        lambda row: ((row['market_value'] - row['invested']) / row['invested'] * 100.0)
+        if row['invested'] > 0 else 0.0,
+        axis=1
+    )
+
+    # Agregacja tygodniowa (ostatnia wartość z tygodnia)
+    df_weekly = df.set_index('date').resample('W-MON').last().reset_index()
+
+    # Formatuj wyniki
+    roi_data = []
+    for _, row in df_weekly.iterrows():
+        roi_data.append({
+            'date': row['date'].strftime('%Y-%m-%d'),
+            'rate_of_return': float(row['rate_of_return']) if pd.notna(
+                row['rate_of_return']) else 0.0,
+            'market_value': float(row['market_value']) if pd.notna(
+                row['market_value']) else 0.0,
+            'invested': float(row['invested']) if pd.notna(row['invested']) else 0.0
+        })
+
+    print(f"\nZwracam {len(roi_data)} punktów dla wykresu")
     if roi_data:
-        print(f"First point: {roi_data[0]}")
-        print(f"Last point: {roi_data[-1]}")
+        print(f"Pierwszy punkt: {roi_data[0]}")
+        print(f"Ostatni punkt: {roi_data[-1]}")
 
     return roi_data
-
 
 def calculate_portfolio_overview(session: Session, portfolio_id: int) -> dict:
     """
@@ -431,9 +459,35 @@ def calculate_portfolio_overview(session: Session, portfolio_id: int) -> dict:
     start_date = transactions[0].transaction_date
     end_date = pd.Timestamp.today().date()
 
-    # Buys/Sells aggregations
-    total_buys = sum(t.quantity * t.price + (t.commission or 0) for t in transactions if t.transaction_type == TransactionType.BUY)
-    total_sells = sum(t.quantity * t.price - (t.commission or 0) for t in transactions if t.transaction_type == TransactionType.SELL)
+    # Buys/Sells aggregations in PLN by historical FX at transaction dates
+    try:
+        currencies = sorted({get_currency_for_ticker(t.asset.ticker) for t in transactions if get_currency_for_ticker(t.asset.ticker) != "PLN"})
+        fx_series_map = _fetch_fx_series(currencies, start_date, end_date) if currencies else {}
+    except Exception:
+        fx_series_map = {}
+
+    def to_pln(t):
+        px = float(t.price)
+        currency = "PLN"
+        try:
+            currency = get_currency_for_ticker(t.asset.ticker)
+        except Exception:
+            pass
+        if currency != "PLN":
+            fx_ticker = fx_symbol_to_pln(currency)
+            fx_series = fx_series_map.get(fx_ticker)
+            if fx_series is not None and not fx_series.empty:
+                d = pd.Timestamp(t.transaction_date)
+                if d in fx_series.index:
+                    fx_rate = float(fx_series.loc[d])
+                else:
+                    prev_idx = fx_series.index[fx_series.index <= d]
+                    fx_rate = float(fx_series.loc[prev_idx.max()]) if len(prev_idx) > 0 else float(fx_series.iloc[0])
+                px *= fx_rate
+        return px
+
+    total_buys = sum(float(t.quantity) * to_pln(t) + float(t.commission or 0.0) for t in transactions if t.transaction_type == TransactionType.BUY)
+    total_sells = sum(float(t.quantity) * to_pln(t) - float(t.commission or 0.0) for t in transactions if t.transaction_type == TransactionType.SELL)
     net_invested = total_buys - total_sells
 
     # Current holdings (ticker -> qty)

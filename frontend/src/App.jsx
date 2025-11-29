@@ -1290,6 +1290,232 @@ function CalendarRejectedView({ days, onBack }) {
     );
 }
 
+/* Komponent widoku portfela */
+function PortfolioView({ days }) {
+    const [overview, setOverview] = useState(null);
+    const [roiSeries, setRoiSeries] = useState([]);
+    const [loading, setLoading] = useState(true);
+    const [error, setError] = useState(null);
+    const canvasRef = useRef(null);
+
+    const fmt = (n, digits = 2) => (n === null || n === undefined ? '-' : Number(n).toFixed(digits));
+
+    useEffect(() => {
+        const fetchData = async () => {
+            setLoading(true);
+            setError(null);
+            try {
+                const [ovrRes, roiRes] = await Promise.all([
+                    fetch('/api/portfolio/overview'),
+                    fetch('/api/portfolio/roi') // Usunięto parametr `days`
+                ]);
+                const ovr = await ovrRes.json();
+                const roi = await roiRes.json();
+                setOverview(ovr);
+                setRoiSeries(Array.isArray(roi) ? roi : []);
+            } catch (e) {
+                console.error('Error fetching portfolio data:', e);
+                setError('Błąd pobierania danych portfela');
+            } finally {
+                setLoading(false);
+            }
+        };
+        fetchData();
+    }, [days]);
+
+    useEffect(() => {
+        const canvas = canvasRef.current;
+        if (!canvas) return;
+        const ctx = canvas.getContext('2d');
+        const width = canvas.width;
+        const height = canvas.height;
+        ctx.clearRect(0, 0, width, height);
+
+        if (!roiSeries || roiSeries.length === 0) {
+            // axes only
+            ctx.strokeStyle = '#e5e7eb';
+            ctx.beginPath();
+            ctx.moveTo(60, 20);
+            ctx.lineTo(60, height - 40);
+            ctx.lineTo(width - 20, height - 40);
+            ctx.stroke();
+            return;
+        }
+
+        const margin = { top: 20, right: 20, bottom: 40, left: 60 };
+        const chartW = width - margin.left - margin.right;
+        const chartH = height - margin.top - margin.bottom;
+
+        const values = roiSeries.map(p => Number(p.rate_of_return) || 0);
+        const minV = Math.min(...values);
+        const maxV = Math.max(...values);
+        const range = maxV - minV || 1;
+
+        // axes
+        ctx.strokeStyle = '#e5e7eb';
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(margin.left, margin.top);
+        ctx.lineTo(margin.left, height - margin.bottom);
+        ctx.lineTo(width - margin.right, height - margin.bottom);
+        ctx.stroke();
+
+        // grid + y labels
+        ctx.fillStyle = '#6b7280';
+        ctx.font = '12px sans-serif';
+        const ySteps = 5;
+        for (let i = 0; i <= ySteps; i++) {
+            const y = margin.top + (chartH / ySteps) * i;
+            const val = maxV - (range / ySteps) * i;
+            ctx.strokeStyle = '#f3f4f6';
+            ctx.beginPath();
+            ctx.moveTo(margin.left, y);
+            ctx.lineTo(width - margin.right, y);
+            ctx.stroke();
+
+            ctx.fillStyle = '#6b7280';
+            ctx.textAlign = 'right';
+            ctx.fillText(`${val.toFixed(1)}%`, margin.left - 10, y + 4);
+        }
+
+        // ROI line
+        ctx.strokeStyle = '#0ea5e9';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        const denom = Math.max(1, roiSeries.length - 1);
+        roiSeries.forEach((pt, i) => {
+            const x = margin.left + (chartW / denom) * i;
+            const y = margin.top + chartH - ((Number(pt.rate_of_return) - minV) / range) * chartH;
+            if (i === 0) ctx.moveTo(x, y);
+            else ctx.lineTo(x, y);
+        });
+        ctx.stroke();
+
+        // x labels - pokaż etykietę dla KAŻDEGO tygodnia (daty RRRR-MM-DD), obrócone pod kątem dla czytelności
+        ctx.save();
+        ctx.fillStyle = '#6b7280';
+        ctx.textAlign = 'right';
+        ctx.font = '10px sans-serif';
+        for (let i = 0; i < roiSeries.length; i++) {
+            const x = margin.left + (chartW / denom) * i;
+            const d = roiSeries[i]?.date || '';
+            ctx.save();
+            ctx.translate(x, height - margin.bottom + 26);
+            ctx.rotate(-Math.PI / 4);
+            ctx.fillText(d, 0, 0);
+            ctx.restore();
+        }
+        ctx.restore();
+    }, [roiSeries]);
+
+    if (loading) {
+        return (
+            <div className="bg-white rounded-lg shadow p-6 flex items-center justify-center" style={{ minHeight: '300px' }}>
+                <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500"></div>
+            </div>
+        );
+    }
+
+    if (error) {
+        return (
+            <div className="bg-white rounded-lg shadow p-6">
+                <div className="text-center text-red-600 py-8">{error}</div>
+            </div>
+        );
+    }
+
+    if (!overview) {
+        return (
+            <div className="bg-white rounded-lg shadow p-6">
+                <div className="text-center text-gray-500 py-8">Brak danych o portfelu</div>
+            </div>
+        );
+    }
+
+    const changeColor = overview.daily_change_value >= 0 ? 'text-green-600' : 'text-red-600';
+    const roiColor = (overview.roi_pct || 0) >= 0 ? 'text-green-600' : 'text-red-600';
+    const profitColor = (overview.total_profit || 0) >= 0 ? 'text-green-600' : 'text-red-600';
+
+    return (
+        <div className="space-y-4">
+            <div className="grid grid-cols-6 gap-3">
+                <div className="bg-white rounded-lg shadow p-4">
+                    <div className="text-xs text-gray-600">Wartość portfela</div>
+                    <div className="text-2xl font-bold text-gray-900">{fmt(overview.value)} PLN</div>
+                </div>
+                <div className="bg-white rounded-lg shadow p-4">
+                    <div className="text-xs text-gray-600">Dzisiejsza zmiana</div>
+                    <div className={`text-lg font-bold ${changeColor}`}>
+                        {overview.daily_change_value >= 0 ? '+' : ''}{fmt(overview.daily_change_value)} PLN
+                        <span className="ml-2 text-sm">({overview.daily_change_pct >= 0 ? '+' : ''}{fmt(overview.daily_change_pct, 2)}%)</span>
+                    </div>
+                </div>
+                <div className="bg-white rounded-lg shadow p-4">
+                    <div className="text-xs text-gray-600">Zysk łącznie</div>
+                    <div className={`text-lg font-bold ${profitColor}`}>{overview.total_profit >= 0 ? '+' : ''}{fmt(overview.total_profit)} PLN</div>
+                </div>
+                <div className="bg-white rounded-lg shadow p-4">
+                    <div className="text-xs text-gray-600">ROI (TWR)</div>
+                    <div className={`text-lg font-bold ${roiColor}`}>{overview.roi_pct >= 0 ? '+' : ''}{fmt(overview.roi_pct, 2)}%</div>
+                </div>
+                <div className="bg-white rounded-lg shadow p-4">
+                    <div className="text-xs text-gray-600">Bieżący zysk</div>
+                    <div className={`text-lg font-bold ${overview.current_profit >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                        {overview.current_profit >= 0 ? '+' : ''}{fmt(overview.current_profit)} PLN
+                    </div>
+                </div>
+                <div className="bg-white rounded-lg shadow p-4">
+                    <div className="text-xs text-gray-600">Stopa roczna (TWR)</div>
+                    <div className="text-lg font-bold text-gray-900">{fmt(overview.annualized_return_pct, 2)}%</div>
+                </div>
+            </div>
+
+            <div className="bg-white rounded-lg shadow-lg p-6">
+                <div className="flex items-center justify-between mb-4">
+                    <div>
+                        <h3 className="text-xl font-bold text-gray-900">Wykres ROI (MWR) portfela</h3>
+                        <p className="text-sm text-gray-600">{roiSeries.length} tygodni</p>
+                    </div>
+                </div>
+                <canvas
+                    ref={canvasRef}
+                    width={900}
+                    height={250}
+                    className="w-full"
+                    style={{ maxWidth: '100%', height: 'auto' }}
+                />
+            </div>
+
+            {(overview.gainers?.length || overview.decliners?.length) ? (
+                <div className="grid grid-cols-2 gap-4">
+                    <div className="bg-white rounded-lg shadow p-4">
+                        <h4 className="text-sm font-semibold text-gray-900 mb-2">Najwięksi zwycięzcy (dzień/dzień)</h4>
+                        <div className="space-y-1">
+                            {(overview.gainers || []).map((g, idx) => (
+                                <div key={idx} className="flex items-center justify-between text-sm">
+                                    <span className="font-mono text-gray-800">{g.ticker}</span>
+                                    <span className="font-semibold text-green-600">+{fmt(g.pct, 2)}%</span>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                    <div className="bg-white rounded-lg shadow p-4">
+                        <h4 className="text-sm font-semibold text-gray-900 mb-2">Najwięksi przegrani (dzień/dzień)</h4>
+                        <div className="space-y-1">
+                            {(overview.decliners || []).map((d, idx) => (
+                                <div key={idx} className="flex items-center justify-between text-sm">
+                                    <span className="font-mono text-gray-800">{d.ticker}</span>
+                                    <span className="font-semibold text-red-600">{fmt(d.pct, 2)}%</span>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                </div>
+            ) : null}
+        </div>
+    );
+}
+
 // Główny komponent dashboardu
 function TickerDashboard() {
     const [tickers, setTickers] = useState([]);
@@ -1303,7 +1529,7 @@ function TickerDashboard() {
     const [days, setDays] = useState(30);
     const [filterImpact, setFilterImpact] = useState('all');
     const [showStats, setShowStats] = useState(true);
-    const [viewMode, setViewMode] = useState('tickers'); // 'tickers', 'calendar' lub 'rejected'
+    const [viewMode, setViewMode] = useState('tickers'); // 'tickers', 'calendar', 'rejected' lub 'portfolio'
     const [scrapingTicker, setScrapingTicker] = useState(null);
     const [notification, setNotification] = useState(null);
     const notificationTimeout = useRef(null);
@@ -1429,8 +1655,19 @@ function TickerDashboard() {
         if (a.is_favorite !== b.is_favorite) {
             return b.is_favorite - a.is_favorite;
         }
-        return b.avg_sentiment - a.avg_sentiment;
-    });
+    return b.avg_sentiment - a.avg_sentiment;
+});
+    const listForView = viewMode === 'portfolio' ? sortedTickers.filter(t => t.in_portfolio) : sortedTickers;
+
+    // Auto-select first portfolio ticker when switching to Portfolio view
+    useEffect(() => {
+        if (viewMode === 'portfolio') {
+            const first = sortedTickers.find(t => t.in_portfolio);
+            if (first && (!selectedTicker || selectedTicker.ticker !== first.ticker)) {
+                setSelectedTicker(first);
+            }
+        }
+    }, [viewMode, sortedTickers]);
 
     const filteredAnalyses = analyses.filter(a => {
         if (filterImpact === 'all') return true;
@@ -1551,6 +1788,15 @@ function TickerDashboard() {
                             >
                                 Odrzucone Newsy
                             </button>
+                            <button
+                                onClick={() => setViewMode('portfolio')}
+                                className={`px-3 py-1 text-sm rounded-lg transition-colors ${viewMode === 'portfolio'
+                                        ? 'bg-green-600 text-white'
+                                        : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+                                    }`}
+                            >
+                                Portfolio
+                            </button>
                         </div>
                         <div className="flex items-center gap-2">
                             <label className="text-xs text-gray-600">Okres:</label>
@@ -1583,6 +1829,8 @@ function TickerDashboard() {
                     <CalendarView days={days} onTickerSelect={handleTickerSelectFromCalendar} showNotification={showNotification} />
                 ) : viewMode === 'rejected' ? (
                     <CalendarRejectedView days={days} />
+                ) : viewMode === 'portfolio' ? (
+                    <PortfolioView days={days} />
                 ) : (
                     <div className="grid grid-cols-12 gap-4">
                         <div className="col-span-3 bg-white rounded-lg shadow p-3 sticky top-4 self-start" style={{ maxHeight: 'calc(100vh - 2rem)' }}>
@@ -1597,7 +1845,7 @@ function TickerDashboard() {
                             </div>
 
                             <div className="space-y-1.5 overflow-y-auto" style={{ maxHeight: 'calc(100vh - 10rem)' }}>
-                                {sortedTickers.map((ticker) => {
+                                {listForView.map((ticker) => {
                                     const togglePortfolio = async (e) => {
                                         e.stopPropagation();
                                         try {
