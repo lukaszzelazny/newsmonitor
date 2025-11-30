@@ -440,18 +440,10 @@ function TechnicalAnalysis({ ticker }) {
 }
 
 // Komponent MultiSelect
-function TickerSelect({ analysisId, onSave }) {
-    const [allTickers, setAllTickers] = useState([]);
+function TickerSelect({ analysisId, onSave, allTickers = [] }) {
     const [selectedTickers, setSelectedTickers] = useState([]);
     const [isLoading, setIsLoading] = useState(false);
     const [searchTerm, setSearchTerm] = useState('');
-
-    useEffect(() => {
-        fetch('/api/all_tickers')
-            .then(res => res.json())
-            .then(data => setAllTickers(data))
-            .catch(err => console.error("Error fetching all tickers:", err));
-    }, []);
 
     const handleSave = async () => {
         setIsLoading(true);
@@ -563,10 +555,19 @@ function CalendarView({ days, onBack, onTickerSelect, showNotification }) {
     const [currentMonth, setCurrentMonth] = useState(new Date());
     const [activeTickerFilters, setActiveTickerFilters] = useState([]);
     const [showUnassigned, setShowUnassigned] = useState(true);
+    const [allTickers, setAllTickers] = useState([]);
 
     useEffect(() => {
         fetchCalendarStats();
+        fetchAllTickers();
     }, [days]);
+
+    const fetchAllTickers = () => {
+        fetch('/api/all_tickers')
+            .then(res => res.json())
+            .then(data => setAllTickers(data))
+            .catch(err => console.error("Error fetching all tickers:", err));
+    };
 
     const fetchCalendarStats = async () => {
         try {
@@ -617,12 +618,12 @@ function CalendarView({ days, onBack, onTickerSelect, showNotification }) {
             });
 
             if (response.ok) {
+                if (showNotification) showNotification('News oznaczony jako duplikat', 'success');
+                fetchCalendarStats(); // Refresh calendar colors
+            } else {
                 // Revert on failure
                 setNewsForDate(originalNews);
                 if (showNotification) showNotification('Błąd przy oznaczaniu newsa jako duplikat', 'error');
-            } else {
-                if (showNotification) showNotification('News oznaczony jako duplikat', 'success');
-                fetchCalendarStats(); // Refresh calendar colors
             }
         } catch (error) {
             console.error('Error marking as duplicate:', error);
@@ -721,6 +722,25 @@ function CalendarView({ days, onBack, onTickerSelect, showNotification }) {
         if (!newsForDate || newsForDate.length === 0) return [];
         const allTickers = newsForDate.flatMap(news => news.tickers.map(t => t.ticker));
         return [...new Set(allTickers)].sort();
+    }, [newsForDate]);
+
+    const dayTickerStats = React.useMemo(() => {
+        if (!newsForDate || newsForDate.length === 0) return {};
+        const stats = {};
+        newsForDate.forEach(news => {
+             news.tickers.forEach(t => {
+                 if (!stats[t.ticker]) {
+                     stats[t.ticker] = { totalImpact: 0, count: 0 };
+                 }
+                 stats[t.ticker].totalImpact += t.impact;
+                 stats[t.ticker].count += 1;
+             });
+        });
+        const result = {};
+        Object.keys(stats).forEach(ticker => {
+             result[ticker] = stats[ticker].totalImpact / stats[ticker].count;
+        });
+        return result;
     }, [newsForDate]);
 
     const handleTickerFilterClick = (ticker) => {
@@ -870,14 +890,28 @@ function CalendarView({ days, onBack, onTickerSelect, showNotification }) {
                             <div className="border-l border-gray-300 h-5 mx-1"></div>
                             {dayTickers.map(ticker => {
                                 const isActive = activeTickerFilters.includes(ticker);
+                                const impact = dayTickerStats[ticker] || 0;
+                                let bgClass = '';
+                                
+                                if (impact > 0.2) {
+                                    bgClass = isActive 
+                                        ? 'bg-green-600 text-white shadow-md hover:bg-green-700' 
+                                        : 'bg-green-100 text-green-800 hover:bg-green-200 border border-green-300';
+                                } else if (impact < -0.2) {
+                                    bgClass = isActive 
+                                        ? 'bg-red-600 text-white shadow-md hover:bg-red-700' 
+                                        : 'bg-red-100 text-red-800 hover:bg-red-200 border border-red-300';
+                                } else {
+                                    bgClass = isActive 
+                                        ? 'bg-gray-600 text-white shadow-md hover:bg-gray-700' 
+                                        : 'bg-gray-100 text-gray-800 hover:bg-gray-200 border border-gray-300';
+                                }
+
                                 return (
                                     <button
                                         key={ticker}
                                         onClick={() => handleTickerFilterClick(ticker)}
-                                        className={`px-3 py-1 text-xs font-bold rounded-full transition-all duration-200 ${isActive
-                                                ? 'bg-blue-600 text-white shadow'
-                                                : 'bg-gray-200 text-gray-800 hover:bg-gray-300'
-                                            }`}
+                                        className={`px-3 py-1 text-xs font-bold rounded-full transition-all duration-200 ${bgClass}`}
                                     >
                                         {ticker}
                                     </button>
@@ -934,18 +968,26 @@ function CalendarView({ days, onBack, onTickerSelect, showNotification }) {
                                                 )}
                                             </div>
 
-                                            {news.tickers && news.tickers.length > 0 && (
+                                            {news.tickers && news.tickers.length > 0 ? (
                                                 <div className="flex flex-wrap gap-1 mb-2">
                                                     {news.tickers.map((t, i) => (
                                                         <button
                                                             key={i}
                                                             onClick={() => onTickerSelect && onTickerSelect(t.ticker)}
-                                                            className={`px-2 py-0.5 rounded text-xs font-bold cursor-pointer hover:opacity-80 transition-opacity ${getSentimentBg(t.impact)} ${getSentimentColor(t.impact)}`}
+                                                            className="px-2 py-0.5 rounded text-xs font-bold cursor-pointer hover:opacity-80 transition-opacity bg-blue-100 text-blue-800 border border-blue-200"
                                                             title={`Pokaż analizę dla ${t.ticker}`}
                                                         >
                                                             {t.ticker} ({t.impact > 0 ? '+' : ''}{t.impact.toFixed(2)})
                                                         </button>
                                                     ))}
+                                                </div>
+                                            ) : (
+                                                <div className="mb-2">
+                                                    <TickerSelect 
+                                                        analysisId={news.analysis_id} 
+                                                        onSave={handleTickerSave}
+                                                        allTickers={allTickers}
+                                                    />
                                                 </div>
                                             )}
 
