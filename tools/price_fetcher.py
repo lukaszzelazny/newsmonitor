@@ -296,3 +296,54 @@ def get_historical_prices_for_tickers(tickers, start_date, end_date):
     Wrapper to allow caching on tuple arguments.
     """
     return _get_historical_prices_cached(tuple(tickers), start_date, end_date)
+
+
+def get_dividends_for_tickers(tickers, start_date, end_date):
+    """
+    Fetches dividend-per-share series for given tickers between dates, converted to PLN.
+
+    Returns:
+        Dict[str, pd.Series] where index are dates (Timestamp at date-resolution) and values are dividend-per-share in PLN.
+    """
+    if not tickers:
+        return {}
+
+    # Prepare FX conversion series upfront
+    currency_by_ticker: Dict[str, str] = {t: get_currency_for_ticker(t) for t in tickers}
+    unique_currencies = sorted({c for c in currency_by_ticker.values() if c != "PLN"})
+    fx_series_map = _fetch_fx_series(unique_currencies, start_date, end_date) if unique_currencies else {}
+
+    result: Dict[str, pd.Series] = {}
+    for ticker in tickers:
+        try:
+            yf_symbol = get_yf_symbol(ticker)
+            t = yf.Ticker(yf_symbol)
+            div = t.dividends  # Series indexed by Timestamp, values in native currency per share
+            if div is None or len(div) == 0:
+                continue
+
+            # Filter date range (inclusive)
+            s = div[(div.index.date >= start_date) & (div.index.date <= end_date)]
+            if s is None or s.empty:
+                continue
+
+            # Normalize index to date (no time)
+            s.index = pd.to_datetime([pd.Timestamp(d).date() for d in s.index])
+
+            # Convert to PLN if needed
+            curr = currency_by_ticker.get(ticker, "PLN")
+            if curr != "PLN":
+                fx_ticker = fx_symbol_to_pln(curr)
+                fx_series = fx_series_map.get(fx_ticker)
+                if fx_series is not None and not fx_series.empty:
+                    # Align by date and multiply
+                    aligned_fx = fx_series.reindex(s.index).ffill().bfill()
+                    s = s * aligned_fx
+
+            # Ensure float
+            s = s.astype(float)
+            result[ticker] = s
+        except Exception:
+            continue
+
+    return result

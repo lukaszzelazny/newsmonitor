@@ -3,7 +3,7 @@
 from sqlalchemy.orm import Session
 from portfolio.models import Portfolio, Transaction, TransactionType
 from collections import defaultdict
-from tools.price_fetcher import get_current_price, get_historical_prices_for_tickers, get_currency_for_ticker, fx_symbol_to_pln, _fetch_fx_series
+from tools.price_fetcher import get_current_price, get_historical_prices_for_tickers, get_currency_for_ticker, fx_symbol_to_pln, _fetch_fx_series, get_dividends_for_tickers
 from portfolio.models import Asset
 import pandas as pd
 from datetime import timedelta
@@ -646,11 +646,46 @@ def calculate_portfolio_overview(session: Session, portfolio_id: int) -> dict:
     twr_total = max(min(roi_pct / 100.0, 10.0), -0.9999)
     annualized_return_pct = ((1.0 + twr_total) ** (365.0 / days) - 1.0) * 100.0 if days > 0 else 0.0
 
+    # Dividends (PLN): sum over all dividend events of (div_per_share * quantity held on ex-date)
+    dividends_total_pln = 0.0
+    try:
+        all_tickers = sorted({t.asset.ticker for t in transactions})
+        div_map = get_dividends_for_tickers(all_tickers, start_date, end_date)
+        # Build transactions by ticker for quick qty lookup
+        tx_by_ticker = {}
+        for t in transactions:
+            tx_by_ticker.setdefault(t.asset.ticker, []).append(t)
+        # Sort transactions per ticker by date
+        for tkr in tx_by_ticker:
+            tx_by_ticker[tkr].sort(key=lambda tr: tr.transaction_date)
+
+        for tkr, series in (div_map or {}).items():
+            # series: pd.Series indexed by date -> dividend per share in PLN
+            tx_list = tx_by_ticker.get(tkr, [])
+            if not tx_list or series is None or series.empty:
+                continue
+            for dt, div_ps in series.items():
+                # Quantity held on dt (inclusive)
+                qty = 0.0
+                for tr in tx_list:
+                    if tr.transaction_date <= pd.Timestamp(dt).date():
+                        if tr.transaction_type == TransactionType.BUY:
+                            qty += float(tr.quantity)
+                        elif tr.transaction_type == TransactionType.SELL:
+                            qty -= float(tr.quantity)
+                if qty > 0 and div_ps and float(div_ps) != 0.0:
+                    dividends_total_pln += qty * float(div_ps)
+    except Exception as _e:
+        # Keep dividends_total_pln = 0.0 on errors
+        pass
+
     # Profits
-    total_profit = current_value + total_sells - total_buys
     # Bieżący zysk (unrealized): suma zysków pozycji w assets_list (spójne z tabelą)
     current_profit = sum(a['profit_pln'] for a in assets_list) if assets_list else 0.0
-    realized_profit = total_profit - current_profit
+    # Na życzenie: Zysk łącznie = bieżący zysk + dywidendy (bez realized)
+    total_profit = current_profit + float(dividends_total_pln or 0.0)
+    # realized pozostawiamy tylko jako wartość pochodną (nieeksponowaną)
+    realized_profit = (current_value + total_sells - total_buys) + float(dividends_total_pln or 0.0) - total_profit
 
     return {
         'value': float(current_value),
@@ -660,6 +695,7 @@ def calculate_portfolio_overview(session: Session, portfolio_id: int) -> dict:
         'roi_pct': float(roi_pct),
         'current_profit': float(current_profit),
         'annualized_return_pct': float(annualized_return_pct),
+        'dividends_total': float(dividends_total_pln),
         'assets': assets_list
     }
 
