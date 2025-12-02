@@ -157,7 +157,8 @@ def get_price_history(ticker_symbol: str, days: int = 90):
     currency = get_currency_for_ticker(ticker_symbol)
     try:
         ticker = yf.Ticker(yf_symbol)
-
+        print('check ticker')
+        print(ticker.info)
         # Primary fetch
         hist = ticker.history(period=f"{days}d")
 

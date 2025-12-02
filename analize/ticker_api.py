@@ -25,7 +25,9 @@ app.register_blueprint(portfolio_bp)
 def get_price_history_endpoint(ticker):
     """Endpoint zwracający historię cen tickera"""
     days = request.args.get('days', 90, type=int)
+    print('check get_price_history_endpoint', flush=True)
     price_data = get_price_history(ticker, days)
+    # print(jsonify(price_data)) # jsonify zwraca obiekt Response, nie string
     return jsonify(price_data)
 
 @app.route('/api/technical_analysis/<ticker>')
@@ -38,7 +40,7 @@ def get_technical_analysis_endpoint(ticker):
         analysis_data = get_technical_analysis(ticker, period)
         return jsonify(analysis_data)
     except Exception as e:
-        print(f"Error in technical analysis endpoint: {e}")
+        print(f"Error in technical analysis endpoint: {e}", flush=True)
         import traceback
         traceback.print_exc()
         return jsonify({'error': str(e)}), 500
@@ -66,6 +68,8 @@ def scrape_ticker_endpoint():
         return jsonify({'error': str(e)}), 500
 
 if __name__ == '__main__':
-    print("Uruchamiam dashboard...")
-    print("Otwórz przeglądarkę: http://localhost:5000")
-    app.run(debug=True, host='0.0.0.0', port=5000)
+    print("Uruchamiam backend API...", flush=True)
+    port = int(os.environ.get('PORT', 5000))
+    debug = os.environ.get('FLASK_DEBUG', 'True').lower() == 'true'
+    print(f"Server running on http://0.0.0.0:{port} (debug={debug})", flush=True)
+    app.run(debug=debug, host='0.0.0.0', port=port)

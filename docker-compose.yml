@@ -41,6 +41,29 @@ services:
         reservations:
           cpus: '0.5'
           memory: 512M
+
+  backend:
+    build: .
+    container_name: newsmonitor-backend
+    restart: unless-stopped
+    command: python analize/ticker_api.py
+    volumes:
+      # Mount entire app for development (hot reload)
+      - ./:/app
+      # Mount pg_service.conf
+      - ./pg_service.conf:/root/.pg_service.conf:ro
+    environment:
+      - TZ=Europe/Warsaw
+      - PGSERVICEFILE=/root/.pg_service.conf
+      - FLASK_DEBUG=true
+      - PORT=5000
+    ports:
+      - "5000:5000"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks:
+      - news-network
+
 networks:
   news-network:
     driver: bridge
