@@ -1,7 +1,7 @@
 from flask import Blueprint, jsonify, request
 from database import Database
 from portfolio.models import Portfolio
-from portfolio.analysis import calculate_portfolio_overview, calculate_roi_over_time, calculate_portfolio_value_over_time
+from portfolio.analysis import calculate_portfolio_overview, calculate_roi_over_time, calculate_portfolio_value_over_time, calculate_monthly_profit
 
 portfolio_bp = Blueprint('portfolio', __name__)
 
@@ -102,6 +102,30 @@ def portfolio_roi():
         return jsonify(series)
     except Exception as e:
         print(f"Error in /api/portfolio/roi: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+    finally:
+        session.close()
+
+
+@portfolio_bp.route('/api/portfolio/monthly_profit')
+def portfolio_monthly_profit():
+    """
+    Zwraca miesięczne zyski portfela.
+    """
+    db = Database()
+    session = db.Session()
+    try:
+        name = request.args.get('name', default=None, type=str)
+        portfolio = _get_portfolio(session, name)
+        if not portfolio:
+            return jsonify([])
+
+        stats = calculate_monthly_profit(session, portfolio.id) or []
+        return jsonify(stats)
+    except Exception as e:
+        print(f"Error in /api/portfolio/monthly_profit: {e}")
         import traceback
         traceback.print_exc()
         return jsonify({'error': str(e)}), 500

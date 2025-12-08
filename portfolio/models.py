@@ -1,6 +1,6 @@
 """Database models for the portfolio management feature."""
 
-from sqlalchemy import Column, Integer, String, DateTime, Date, ForeignKey, Float, Enum
+from sqlalchemy import Column, Integer, String, DateTime, Date, ForeignKey, Float, Enum, UniqueConstraint
 from sqlalchemy.orm import relationship
 from database import Base
 import enum
@@ -32,6 +32,7 @@ class Asset(Base):
     asset_type = Column(String(50), nullable=False)  # e.g., 'stock', 'etf'
 
     transactions = relationship('Transaction', back_populates='asset')
+    price_history = relationship('AssetPriceHistory', back_populates='asset', cascade="all, delete-orphan")
 
     def __repr__(self):
         return f"<Asset(id={self.id}, ticker='{self.ticker}')>"
@@ -76,3 +77,27 @@ class PortfolioSnapshot(Base):
 
     def __repr__(self):
         return f"<PortfolioSnapshot(id={self.id}, date='{self.date}', value={self.total_value})>"
+
+
+class AssetPriceHistory(Base):
+    """Stores historical price data for assets."""
+    __tablename__ = 'asset_price_history'
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    asset_id = Column(Integer, ForeignKey('assets.id'), nullable=False, index=True)
+    date = Column(Date, nullable=False, index=True)
+    open = Column(Float, nullable=True)
+    high = Column(Float, nullable=True)
+    low = Column(Float, nullable=True)
+    close = Column(Float, nullable=False)
+    volume = Column(Float, nullable=True)
+    adjusted_close = Column(Float, nullable=True)
+
+    asset = relationship('Asset', back_populates='price_history')
+
+    __table_args__ = (
+        UniqueConstraint('asset_id', 'date', name='uix_asset_date'),
+    )
+
+    def __repr__(self):
+        return f"<AssetPriceHistory(asset_id={self.asset_id}, date='{self.date}', close={self.close})>"

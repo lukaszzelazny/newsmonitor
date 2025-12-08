@@ -3,7 +3,7 @@
 from sqlalchemy.orm import Session
 from portfolio.models import Portfolio, Transaction, TransactionType
 from collections import defaultdict
-from tools.price_fetcher import get_current_price, get_historical_prices_for_tickers, get_currency_for_ticker, fx_symbol_to_pln, _fetch_fx_series, get_dividends_for_tickers
+from tools.price_fetcher import get_current_price, get_current_prices, get_historical_prices_for_tickers, get_currency_for_ticker, fx_symbol_to_pln, _fetch_fx_series, get_dividends_for_tickers
 from portfolio.models import Asset
 import pandas as pd
 from datetime import timedelta
@@ -34,7 +34,7 @@ def get_holdings(session: Session, portfolio_id: int) -> dict:
     return {ticker: qty for ticker, qty in holdings.items() if qty > 0}
 
 
-def calculate_asset_return(session: Session, portfolio_id: int, asset_id: int) -> dict:
+def calculate_asset_return(session: Session, portfolio_id: int, asset_id: int, price_map: dict = None) -> dict:
     """
     Calculates the rate of return for a single asset in a portfolio.
     """
@@ -60,7 +60,12 @@ def calculate_asset_return(session: Session, portfolio_id: int, asset_id: int) -
     market_value = 0
 
     if quantity_held > 0 and asset_ticker:
-        current_price = get_current_price(asset_ticker)
+        current_price = None
+        if price_map and asset_ticker in price_map:
+             current_price = price_map[asset_ticker]
+        else:
+             current_price = get_current_price(asset_ticker)
+             
         if current_price:
             market_value = quantity_held * current_price
             # Simplified unrealized PnL. A more accurate calculation would use average cost basis.
@@ -85,15 +90,30 @@ def calculate_portfolio_return(session: Session, portfolio_id: int) -> dict:
     """
     Calculates the overall rate of return for a portfolio.
     """
-    assets = session.query(Transaction.asset_id).filter_by(portfolio_id=portfolio_id).distinct().all()
+    # 1. Fetch assets
+    asset_ids_result = session.query(Transaction.asset_id).filter_by(portfolio_id=portfolio_id).distinct().all()
     
+    # 2. Pre-fetch prices
+    tickers = []
+    asset_id_list = []
+    for row in asset_ids_result:
+        asset_id = row.asset_id
+        asset_id_list.append(asset_id)
+        # We need ticker to fetch price
+        # Optimization: fetch ticker along with asset_id or query Assets
+        ticker = session.query(Asset.ticker).filter_by(id=asset_id).scalar()
+        if ticker:
+            tickers.append(ticker)
+            
+    price_map = get_current_prices(tickers) if tickers else {}
+
     total_cost_portfolio = 0
     total_realized_pnl_portfolio = 0
     total_unrealized_pnl_portfolio = 0
     total_market_value_portfolio = 0
 
-    for asset in assets:
-        asset_return = calculate_asset_return(session, portfolio_id, asset.asset_id)
+    for asset_id in asset_id_list:
+        asset_return = calculate_asset_return(session, portfolio_id, asset_id, price_map=price_map)
         total_cost_portfolio += asset_return['total_cost']
         total_realized_pnl_portfolio += asset_return['realized_pnl']
         total_unrealized_pnl_portfolio += asset_return['unrealized_pnl']
@@ -310,29 +330,21 @@ def calculate_roi_over_time(session: Session, portfolio_id: int):
         day_transactions = [tr for tr in transactions if tr.transaction_date == date_obj]
         
         for t in day_transactions:
-             # Heuristic Split Detection
-             # If transaction price (PLN) differs massively from market price (PLN), adjust quantity
+             # Update last known price from transaction
+             # (Heuristic Split Detection removed to maintain consistency with main view)
              market_p = get_price_on_or_before(t.asset.ticker, date)
              trans_p = convert_to_pln(t.price, t.asset.ticker, date)
              
              if market_p and market_p > 0:
-                 ratio = trans_p / market_p
-                 # If ratio > 1.5 or < 0.6, assumesplit. But be careful of volatile assets.
-                 # Splits are usually integers like 2, 3, 4, 10, 20.
-                 # Reverse split: 0.1, 0.5.
-                 if ratio > 1.8 or ratio < 0.6:
-                     split_ratios[t.asset.ticker] = ratio
-                     # Also adjust last_known to market price to avoid skew
-                     last_known_prices[t.asset.ticker] = market_p
-                 else:
-                     last_known_prices[t.asset.ticker] = trans_p
+                 last_known_prices[t.asset.ticker] = market_p
              else:
                  last_known_prices[t.asset.ticker] = trans_p
 
         # Apply quantity updates
         for t in day_transactions:
-            ratio = split_ratios.get(t.asset.ticker, 1.0)
-            qty = t.quantity * ratio
+            # ratio = split_ratios.get(t.asset.ticker, 1.0) 
+            # Assuming DB transactions are source of truth for Quantity
+            qty = t.quantity 
             
             if t.transaction_type == TransactionType.BUY:
                 holdings[t.asset.ticker] += qty
@@ -560,6 +572,9 @@ def calculate_portfolio_overview(session: Session, portfolio_id: int) -> dict:
         # Look back enough to find previous available trading day
         hist_start = end_date - timedelta(days=30)
         hist = get_historical_prices_for_tickers(tickers, hist_start, end_date)
+        
+        # Pre-fetch live prices for all tickers to avoid loop calls
+        live_prices_map = get_current_prices(tickers)
 
         # Helper to get last and previous price for a ticker
         def last_and_prev_price(tkr):
@@ -581,26 +596,56 @@ def calculate_portfolio_overview(session: Session, portfolio_id: int) -> dict:
             qty = metrics['qty']
             last_p, prev_p, last_d = last_and_prev_price(tkr)
 
-            # Prefer live current price (already in PLN). Fallback to last historical price (also PLN).
-            price_pln = None
-            # Prefer last historical PLN price (spójne z wykresem i unikamy błędnych live cen dla NewConnect)
-            if last_p is not None and math.isfinite(float(last_p)) and float(last_p) > 0:
+            # Determine Current Price
+            # Strategy:
+            # 1. If we have live price and historical data is old (not today), use live price (Calculates Today's Change vs Yesterday Close)
+            # 2. If we have historical data from today, use it (Calculates Today's Change vs Yesterday Close)
+            # 3. If no live price, fallback to history (Calculates Yesterday's Change vs Day Before)
+            
+            price_pln = 0.0
+            used_live_price = False
+            today = pd.Timestamp.today().date()
+            
+            # Check if history is from today
+            is_history_today = False
+            if last_d:
+                # last_d might be Timestamp or date
+                d_date = last_d.date() if hasattr(last_d, 'date') else last_d
+                if d_date == today:
+                    is_history_today = True
+
+            live_price = live_prices_map.get(tkr)
+            has_live = (live_price is not None and math.isfinite(float(live_price)) and float(live_price) > 0)
+            
+            if has_live and not is_history_today:
+                price_pln = float(live_price)
+                used_live_price = True
+            elif last_p is not None and math.isfinite(float(last_p)) and float(last_p) > 0:
                 price_pln = float(last_p)
+            elif has_live:
+                price_pln = float(live_price)
+                used_live_price = True
             else:
-                # Fallback do live price jeśli nie mamy historii
-                live_price = get_current_price(tkr)
-                if live_price is not None and math.isfinite(float(live_price)) and float(live_price) > 0:
-                    price_pln = float(live_price)
-                else:
-                    price_pln = 0.0
+                price_pln = 0.0
 
             asset_val_pln = qty * price_pln
             current_value += asset_val_pln
 
-            # Daily change based on historical previous price if available
+            # Daily change calculation
             daily_chg_pct = 0.0
-            if prev_p is not None and math.isfinite(float(prev_p)) and float(prev_p) > 0 and price_pln > 0:
-                prev_price_pln = float(prev_p)
+            prev_price_pln = 0.0
+            
+            if used_live_price:
+                # Compare Live (Today) vs Last History (Yesterday)
+                if last_p is not None and math.isfinite(float(last_p)) and float(last_p) > 0:
+                    prev_price_pln = float(last_p)
+            else:
+                # Compare History vs Prev History
+                # (Today vs Yesterday) OR (Yesterday vs DayBefore)
+                if prev_p is not None and math.isfinite(float(prev_p)) and float(prev_p) > 0:
+                    prev_price_pln = float(prev_p)
+            
+            if prev_price_pln > 0 and price_pln > 0:
                 prev_val_pln = qty * prev_price_pln
                 prev_value += prev_val_pln
                 daily_chg_pct = (price_pln - prev_price_pln) / prev_price_pln * 100.0
@@ -682,10 +727,13 @@ def calculate_portfolio_overview(session: Session, portfolio_id: int) -> dict:
     # Profits
     # Bieżący zysk (unrealized): suma zysków pozycji w assets_list (spójne z tabelą)
     current_profit = sum(a['profit_pln'] for a in assets_list) if assets_list else 0.0
-    # Na życzenie: Zysk łącznie = bieżący zysk + dywidendy (bez realized)
-    total_profit = current_profit + float(dividends_total_pln or 0.0)
+    
+    # Zysk łącznie (Total PnL) = Bieżąca Wartość + Sprzedaż - Kupno + Dywidendy
+    # Zawiera Zysk Zrealizowany i Niezrealizowany.
+    total_profit = (current_value + total_sells - total_buys) + float(dividends_total_pln or 0.0)
+    
     # realized pozostawiamy tylko jako wartość pochodną (nieeksponowaną)
-    realized_profit = (current_value + total_sells - total_buys) + float(dividends_total_pln or 0.0) - total_profit
+    realized_profit = total_profit - current_profit - float(dividends_total_pln or 0.0)
 
     return {
         'value': float(current_value),
@@ -794,3 +842,124 @@ def calculate_portfolio_value_over_time(session: Session, portfolio_id: int):
     df['value'] = df['value'].replace(0, pd.NA).ffill().fillna(0)
 
     return df.to_dict('records')
+
+
+def calculate_monthly_profit(session: Session, portfolio_id: int):
+    """
+    Calculates monthly total profit (PnL) for the portfolio.
+    
+    Returns:
+        List of dicts: [{'month': 'YYYY-MM', 'profit': float}, ...]
+    """
+    # 1. Get daily series of Value and Invested
+    roi_data = calculate_roi_over_time(session, portfolio_id)
+    if not roi_data:
+        return []
+    
+    # Force alignment with Current Overview (Live Prices)
+    # This ensures Sum(Monthly) == Total Profit in Header
+    overview = calculate_portfolio_overview(session, portfolio_id)
+    current_val = overview['value']
+    # Net Invested in Overview = total_buys - total_sells
+    # In roi_data, invested = cumulative inflows.
+    # Logic should be identical.
+    
+    # We replace/update the last entry of roi_data to match overview state
+    if roi_data:
+        last_entry = roi_data[-1]
+        # Only update if dates are close (e.g. today or yesterday)
+        # overview is "NOW". roi_data last entry is "Today" or "Yesterday".
+        # We assume roi_data covers up to today.
+        last_entry['market_value'] = current_val
+        # invested should be consistent, but we can sync it too if needed
+        # net_invested_ovr = overview['value'] - overview['total_profit'] + overview['dividends_total'] 
+        # (derived from Total Profit = Val - Inv + Divs => Inv = Val + Divs - Profit)
+        # Let's trust roi_data invested as it's built transactionally day-by-day.
+        # But market_value is the one affected by Live vs Hist price.
+        
+    df = pd.DataFrame(roi_data)
+    df['date'] = pd.to_datetime(df['date'])
+    df['month'] = df['date'].dt.to_period('M')
+    
+    # 2. Get Dividends
+    # Need transactions to know holdings
+    transactions = session.query(Transaction).filter_by(portfolio_id=portfolio_id).all()
+    
+    # Group dividends by month
+    dividends_by_month = defaultdict(float)
+    if transactions:
+        start_date = transactions[0].transaction_date
+        end_date = pd.Timestamp.today().date()
+        try:
+            all_tickers = sorted({t.asset.ticker for t in transactions})
+            div_map = get_dividends_for_tickers(all_tickers, start_date, end_date)
+            
+            tx_by_ticker = {}
+            for t in transactions:
+                tx_by_ticker.setdefault(t.asset.ticker, []).append(t)
+            for tkr in tx_by_ticker:
+                tx_by_ticker[tkr].sort(key=lambda tr: tr.transaction_date)
+
+            for tkr, series in (div_map or {}).items():
+                tx_list = tx_by_ticker.get(tkr, [])
+                if not tx_list or series is None or series.empty:
+                    continue
+                for dt, div_ps in series.items():
+                    qty = 0.0
+                    for tr in tx_list:
+                        if tr.transaction_date <= pd.Timestamp(dt).date():
+                            if tr.transaction_type == TransactionType.BUY:
+                                qty += float(tr.quantity)
+                            elif tr.transaction_type == TransactionType.SELL:
+                                qty -= float(tr.quantity)
+                    if qty > 0 and div_ps and float(div_ps) != 0.0:
+                        amount = qty * float(div_ps)
+                        m_str = pd.Timestamp(dt).strftime('%Y-%m')
+                        dividends_by_month[m_str] += amount
+        except Exception:
+            pass
+
+    # 3. Calculate Monthly PnL Change
+    # Profit_M = (Value_End - Value_Start) - (Invested_End - Invested_Start) + Dividends
+    
+    monthly_stats = []
+    
+    # Find last entry for each month
+    # Resample to Month End or just take last entry per month group
+    monthly_last = df.groupby('month').last().reset_index()
+    
+    # Add initial state (0, 0) if needed, or handle diff
+    # We need "previous month last value" to calculate change.
+    
+    # Ensure chronological
+    monthly_last = monthly_last.sort_values('month')
+    
+    prev_val = 0.0
+    prev_inv = 0.0
+    
+    for _, row in monthly_last.iterrows():
+        m_str = str(row['month'])
+        val = float(row['market_value'])
+        inv = float(row['invested'])
+        
+        # Change in Total PnL (excluding dividends if not in val/inv)
+        # Total PnL at time T = Val - Inv.
+        pnl_t = val - inv
+        pnl_prev = prev_val - prev_inv
+        
+        diff_pnl = pnl_t - pnl_prev
+        
+        # Add dividends
+        divs = dividends_by_month.get(m_str, 0.0)
+        
+        total_monthly_profit = diff_pnl + divs
+        
+        monthly_stats.append({
+            'month': m_str,
+            'profit': total_monthly_profit
+        })
+        
+        prev_val = val
+        prev_inv = inv
+        
+    return monthly_stats

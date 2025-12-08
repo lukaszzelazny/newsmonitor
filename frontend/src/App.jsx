@@ -1238,6 +1238,7 @@ function PortfolioView({ days }) {
     const [overview, setOverview] = useState(null);
     const [fullRoiSeries, setFullRoiSeries] = useState([]); // Pełne dane
     const [roiSeries, setRoiSeries] = useState([]); // Przefiltrowane dane
+    const [monthlyProfits, setMonthlyProfits] = useState([]); // Dane miesięczne
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(null);
     const [timeRange, setTimeRange] = useState('ALL');
@@ -1248,18 +1249,41 @@ function PortfolioView({ days }) {
 
     const fmt = (n, digits = 2) => (n === null || n === undefined ? '-' : Number(n).toFixed(digits));
 
+    // Przetwarzanie danych miesięcznych do tabeli Year x Month
+    const monthlyTableData = React.useMemo(() => {
+        if (!monthlyProfits.length) return [];
+        const years = {};
+        
+        monthlyProfits.forEach(item => {
+            const [year, month] = item.month.split('-'); // YYYY-MM
+            if (!years[year]) years[year] = Array(12).fill(0);
+            years[year][parseInt(month) - 1] = item.profit;
+        });
+        
+        // Sort years desc
+        return Object.keys(years).sort().reverse().map(year => ({
+            year,
+            months: years[year],
+            total: years[year].reduce((a, b) => a + b, 0)
+        }));
+    }, [monthlyProfits]);
+
     useEffect(() => {
         const fetchData = async () => {
             setLoading(true);
             setError(null);
             try {
-                const [ovrRes, roiRes] = await Promise.all([
+                const [ovrRes, roiRes, monthlyRes] = await Promise.all([
                     fetch('/api/portfolio/overview'),
-                    fetch('/api/portfolio/roi')
+                    fetch('/api/portfolio/roi'),
+                    fetch('/api/portfolio/monthly_profit')
                 ]);
                 const ovr = await ovrRes.json();
                 const roi = await roiRes.json();
+                const monthly = await monthlyRes.json();
+                
                 setOverview(ovr);
+                setMonthlyProfits(Array.isArray(monthly) ? monthly : []);
                 const series = Array.isArray(roi) ? roi : [];
                 setFullRoiSeries(series);
                 filterData(series, 'ALL');
@@ -1548,6 +1572,12 @@ function PortfolioView({ days }) {
         return sortConfig.direction === 'asc' ? <span className="ml-1">▲</span> : <span className="ml-1">▼</span>;
     };
 
+    const getProfitColor = (val) => {
+        if (val > 0) return 'text-green-600 bg-green-50';
+        if (val < 0) return 'text-red-600 bg-red-50';
+        return 'text-gray-400';
+    };
+
     return (
         <div className="space-y-4">
             <div className="grid grid-cols-6 gap-3">
@@ -1687,6 +1717,42 @@ function PortfolioView({ days }) {
                                         </td>
                                         <td className={`px-6 py-4 whitespace-nowrap text-sm text-right font-bold ${asset.profit_pln >= 0 ? 'text-green-600' : 'text-red-600'}`}>
                                             {asset.profit_pln >= 0 ? '+' : ''}{fmt(asset.profit_pln, 2)}
+                                        </td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            )}
+
+            {monthlyTableData.length > 0 && (
+                <div className="bg-white rounded-lg shadow-lg overflow-hidden mt-6">
+                    <div className="px-6 py-4 border-b border-gray-200">
+                        <h3 className="text-lg font-bold text-gray-900">Zysk Miesięczny [PLN]</h3>
+                    </div>
+                    <div className="overflow-x-auto">
+                        <table className="min-w-full divide-y divide-gray-200">
+                            <thead className="bg-gray-50">
+                                <tr>
+                                    <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Rok</th>
+                                    {['Sty', 'Lut', 'Mar', 'Kwi', 'Maj', 'Cze', 'Lip', 'Sie', 'Wrz', 'Paź', 'Lis', 'Gru'].map(m => (
+                                        <th key={m} className="px-2 py-2 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">{m}</th>
+                                    ))}
+                                    <th className="px-3 py-2 text-right text-xs font-bold text-gray-700 uppercase tracking-wider">Razem</th>
+                                </tr>
+                            </thead>
+                            <tbody className="bg-white divide-y divide-gray-200">
+                                {monthlyTableData.map((row) => (
+                                    <tr key={row.year} className="hover:bg-gray-50">
+                                        <td className="px-3 py-2 whitespace-nowrap text-sm font-bold text-gray-900">{row.year}</td>
+                                        {row.months.map((val, idx) => (
+                                            <td key={idx} className={`px-2 py-2 whitespace-nowrap text-xs text-right font-medium ${getProfitColor(val)}`}>
+                                                {val !== 0 ? fmt(val, 0) : '-'}
+                                            </td>
+                                        ))}
+                                        <td className={`px-3 py-2 whitespace-nowrap text-sm text-right font-bold ${row.total >= 0 ? 'text-green-700' : 'text-red-700'}`}>
+                                            {fmt(row.total, 0)}
                                         </td>
                                     </tr>
                                 ))}

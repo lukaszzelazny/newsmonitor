@@ -14,11 +14,13 @@ RATING_LABELS = {
 def download_with_retry(tickers, period="1y", max_retries=3, delay=2):
     for attempt in range(max_retries):
         try:
-            hist = yf.download(tickers, period=period, group_by="ticker", threads=True)
+            # Avoid parallel requests to reduce Yahoo bans; hide progress
+            hist = yf.download(tickers, period=period, group_by="ticker", threads=False, progress=False)
             return hist
         except Exception as e:
             print(f"Próba {attempt + 1} nie powiodła się: {e}")
             time.sleep(delay)
+            delay = min(delay * 2, 30)
     raise Exception(f"Nie udało się pobrać danych po {max_retries} próbach")
 
 
@@ -523,5 +525,3 @@ def getScoreWithDetails(df):
     else:
         rate = -2 #"Mocne sprzedaj"
     return rate, details
-
-
