@@ -170,6 +170,8 @@ class PriceSyncService:
         'LTC': 'LTC-USD',
         'RIPPLE': 'XRP-USD',
         'XRP': 'XRP-USD',
+        'CSPX.UK': 'CSPX.AS',
+        'TSLA.DE': 'TL0.DE',
     }
 
     def __init__(self, session):
