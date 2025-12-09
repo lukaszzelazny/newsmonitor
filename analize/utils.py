@@ -9,6 +9,7 @@ from tools.price_fetcher import (
     get_current_price as pf_get_current_price,
     get_price_history as pf_get_price_history,
     get_yf_symbol as map_yf_symbol,
+    get_ohlc_history_df,
 )
 
 # Konfiguracja bazy danych
@@ -121,32 +122,23 @@ def get_technical_analysis(ticker_symbol, period="1y"):
         - details: szczegółowe informacje o wskaźnikach
     """
     try:
-        # Konwersja symbolu na format Yahoo Finance (rozszerzona mapa)
-        try:
-            yf_symbol = map_yf_symbol(ticker_symbol)
-        except Exception:
-            yf_symbol = f"{ticker_symbol}.WA" if (len(ticker_symbol) <= 4 and ticker_symbol.isupper()) else ticker_symbol
-
-        # Pobierz dane z Yahoo Finance z fallbackami
-        ticker = yf.Ticker(yf_symbol)
-        df = ticker.history(period=period)
-
-        if df is None or df.empty:
+        # Map period to days
+        days = 365
+        if period == "1mo": days = 30
+        elif period == "3mo": days = 90
+        elif period == "6mo": days = 180
+        elif period == "1y": days = 365
+        elif period == "2y": days = 730
+        elif period == "5y": days = 1825
+        elif period == "max": days = 3650
+        elif period.endswith('d'):
             try:
-                alt = yf.download(yf_symbol, period=period, progress=False)
-                if alt is not None and not alt.empty:
-                    df = alt
-            except Exception:
+                days = int(period[:-1])
+            except ValueError:
                 pass
 
-        if df is None or df.empty:
-            try:
-                alt = ticker.history(period="max")
-                if alt is not None and not alt.empty:
-                    # ogranicz do ~1 roku, aby wskaźniki były sensowne
-                    df = alt.tail(365)
-            except Exception:
-                pass
+        # Pobierz dane (z bazy lub YF przez price_fetcher)
+        df = get_ohlc_history_df(ticker_symbol, days=days)
 
         if df is None or df.empty:
             return {
@@ -254,3 +246,29 @@ def format_summary(summary_json):
 
     except (json.JSONDecodeError, TypeError):
         return summary_json if summary_json else 'Brak opisu'
+
+
+def resolve_db_ticker(engine, schema, ticker_symbol):
+    """
+    Resolves ticker symbol to the one present in DB (e.g. PZU -> PZU.PL).
+    """
+    from sqlalchemy import text
+    with engine.connect() as conn:
+        # 1. Exact
+        res = conn.execute(text(f"SELECT ticker FROM {schema}.tickers WHERE ticker = :t"), {'t': ticker_symbol}).fetchone()
+        if res: return res[0]
+        
+        # 2. Suffixes
+        if '.' not in ticker_symbol:
+            for suffix in ['.PL', '.WA', '.US']:
+                candidate = f"{ticker_symbol}{suffix}"
+                res = conn.execute(text(f"SELECT ticker FROM {schema}.tickers WHERE ticker = :t"), {'t': candidate}).fetchone()
+                if res: return res[0]
+                
+        # 3. .WA -> .PL
+        if ticker_symbol.endswith('.WA'):
+             candidate = ticker_symbol.replace('.WA', '.PL')
+             res = conn.execute(text(f"SELECT ticker FROM {schema}.tickers WHERE ticker = :t"), {'t': candidate}).fetchone()
+             if res: return res[0]
+             
+    return ticker_symbol # Fallback to original

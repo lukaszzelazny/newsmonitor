@@ -1,7 +1,7 @@
 import json
 from flask import Blueprint, jsonify, request
 from sqlalchemy import text
-from analize.utils import get_db_engine, get_current_price, parse_price, format_summary
+from analize.utils import get_db_engine, get_current_price, parse_price, format_summary, resolve_db_ticker
 
 tickers_bp = Blueprint('tickers', __name__)
 engine, schema = get_db_engine()
@@ -57,6 +57,9 @@ def get_analyses(ticker):
     """Endpoint zwracający szczegółowe analizy dla tickera"""
     days = request.args.get('days', 30, type=int)
 
+    # Resolve ticker to match DB format (e.g. COG -> COG.PL)
+    resolved_ticker = resolve_db_ticker(engine, schema, ticker)
+
     query = text(f"""
     SELECT 
         na.id as news_id,
@@ -79,7 +82,7 @@ def get_analyses(ticker):
     """)
 
     with engine.connect() as conn:
-        result = conn.execute(query, {'ticker': ticker})
+        result = conn.execute(query, {'ticker': resolved_ticker})
         analyses = []
         for row in result:
             analyses.append({
@@ -102,6 +105,9 @@ def get_brokerage_analyses(ticker):
     """Endpoint zwracający rekomendacje brokerskie dla tickera"""
     days = request.args.get('days', 90, type=int)
 
+    # Resolve ticker to match DB format (e.g. COG -> COG.PL)
+    resolved_ticker = resolve_db_ticker(engine, schema, ticker)
+
     current_price = get_current_price(ticker)
 
     query = text(f"""
@@ -123,7 +129,7 @@ def get_brokerage_analyses(ticker):
     """)
 
     with engine.connect() as conn:
-        result = conn.execute(query, {'ticker': ticker})
+        result = conn.execute(query, {'ticker': resolved_ticker})
         brokerage_analyses = []
         seen_combinations = set()
 

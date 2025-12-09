@@ -798,6 +798,82 @@ def get_historical_prices_for_tickers(tickers, start_date, end_date):
     return _get_historical_prices_cached(tuple(tickers), start_date, end_date)
 
 
+def get_ohlc_history_df(ticker_symbol: str, days: int = 365) -> pd.DataFrame:
+    """
+    Fetches OHLC history as DataFrame.
+    Used for technical analysis.
+    """
+    # Database Mode
+    if _DB_SESSION_FACTORY:
+        session = _get_db_session()
+        try:
+            from portfolio.models import AssetPriceHistory
+            asset = _find_asset_in_db(session, ticker_symbol)
+            if asset:
+                 start_date = pd.Timestamp.now().date() - pd.Timedelta(days=days)
+                 history = session.query(AssetPriceHistory)\
+                    .filter(AssetPriceHistory.asset_id == asset.id)\
+                    .filter(AssetPriceHistory.date >= start_date)\
+                    .order_by(AssetPriceHistory.date.asc())\
+                    .all()
+                 
+                 if not history:
+                     return pd.DataFrame()
+
+                 data = []
+                 for h in history:
+                     data.append({
+                         "Date": pd.to_datetime(h.date),
+                         "Open": float(h.open) if h.open is not None else float(h.close),
+                         "High": float(h.high) if h.high is not None else float(h.close),
+                         "Low": float(h.low) if h.low is not None else float(h.close),
+                         "Close": float(h.close),
+                         "Volume": int(h.volume) if h.volume is not None else 0
+                     })
+                 df = pd.DataFrame(data)
+                 df.set_index("Date", inplace=True)
+                 return df
+        except Exception as e:
+            print(f"DB OHLC Error: {e}")
+        finally:
+            if session:
+                session.close()
+        return pd.DataFrame()
+
+    # Online Mode
+    yf_symbol = get_yf_symbol(ticker_symbol)
+    try:
+        _throttle_yf()
+        ticker = yf.Ticker(yf_symbol)
+        df = ticker.history(period=f"{days}d")
+        
+        if df is None or df.empty:
+             try:
+                longer = max(180, days * 2)
+                _throttle_yf()
+                alt = yf.download(yf_symbol, period=f"{longer}d", progress=False, threads=False)
+                if alt is not None and not alt.empty:
+                    # Filter to requested days
+                    start_ts = pd.Timestamp.now() - pd.Timedelta(days=days)
+                    df = alt[alt.index >= start_ts]
+             except Exception:
+                pass
+
+        if df is None or df.empty:
+            try:
+                _throttle_yf()
+                alt = ticker.history(period="max")
+                if alt is not None and not alt.empty:
+                     start_ts = pd.Timestamp.now() - pd.Timedelta(days=days)
+                     df = alt[alt.index >= start_ts]
+            except Exception:
+                pass
+                
+        return df if df is not None else pd.DataFrame()
+    except Exception:
+        return pd.DataFrame()
+
+
 def get_dividends_for_tickers(tickers, start_date, end_date):
     """
     Fetches dividend-per-share series for given tickers between dates, converted to PLN.
