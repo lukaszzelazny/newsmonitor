@@ -3,21 +3,33 @@ Script to sync historical price data from Yahoo Finance to local database.
 Can be run manually or scheduled as a daily job.
 
 Usage:
-    python sync_prices.py [--full] [--ticker TICKER]
+    python sync_prices.py [--full] [--ticker TICKER] [--csv-mode] [--tickers-file TICKERS_FILE] [--output OUTPUT] [--gpw]
 
 Options:
     --full: Download full history instead of incremental update
     --ticker: Sync only specific ticker (otherwise syncs all assets)
+    --csv-mode: Export to CSV instead of database (doesn't require DB connection)
+    --tickers-file: Path to file with tickers (one per line) for CSV mode
+    --output: Output CSV filename (default: price_history_YYYYMMDD.csv)
+    --gpw: Add .WA suffix to tickers for Warsaw Stock Exchange (GPW)
 """
 
 import argparse
 import logging
+import csv
+import time
+import random
 from datetime import datetime, timedelta
-from typing import List, Optional
+from typing import List, Optional, TYPE_CHECKING
 import yfinance as yf
 from sqlalchemy.orm import sessionmaker
-from portfolio.models import Asset, AssetPriceHistory
-from database import Database
+import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
+
+# Conditional imports for type hints
+if TYPE_CHECKING:
+    from portfolio.models import Asset, AssetPriceHistory
 
 # Configure logging
 logging.basicConfig(
@@ -27,14 +39,171 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
+def create_yf_session():
+    """Create a requests session with retry logic and custom headers to avoid blocking."""
+    session = requests.Session()
+
+    # Add retry logic
+    retries = Retry(
+        total=3,
+        backoff_factor=1,
+        status_forcelist=[429, 500, 502, 503, 504]
+    )
+    session.mount('http://', HTTPAdapter(max_retries=retries))
+    session.mount('https://', HTTPAdapter(max_retries=retries))
+
+    # Add headers to mimic browser
+    session.headers.update({
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+        'Accept-Language': 'en-US,en;q=0.5',
+        'Accept-Encoding': 'gzip, deflate',
+        'Connection': 'keep-alive',
+        'Upgrade-Insecure-Requests': '1'
+    })
+
+    return session
+
+
+class CSVExporter:
+    """Export price data to CSV without database connection."""
+
+    def __init__(self, output_file: str, add_gpw_suffix: bool = False):
+        self.output_file = output_file
+        self.add_gpw_suffix = add_gpw_suffix
+        self.records_written = 0
+
+    def normalize_ticker(self, ticker: str) -> tuple[str, str]:
+        """
+        Normalize ticker for Yahoo Finance.
+        Returns: (original_ticker, yf_ticker)
+        """
+        original = ticker.strip().upper()
+        yf_ticker = original
+
+        if self.add_gpw_suffix and not original.endswith('.WA'):
+            yf_ticker = f"{original}.WA"
+
+        return original, yf_ticker
+
+    def read_tickers_from_file(self, file_path: str) -> List[tuple[str, str]]:
+        """
+        Read ticker symbols from a text file (one per line).
+        Returns list of (original_ticker, yf_ticker) tuples.
+        """
+        try:
+            with open(file_path, 'r') as f:
+                tickers = [self.normalize_ticker(line) for line in f if line.strip()]
+            logger.info(f"Loaded {len(tickers)} tickers from {file_path}")
+            if self.add_gpw_suffix:
+                logger.info("GPW mode: Adding .WA suffix to tickers")
+            return tickers
+        except FileNotFoundError:
+            logger.error(f"File not found: {file_path}")
+            return []
+
+    def fetch_and_export(self, tickers: List[tuple[str, str]], years_back: int = 5):
+        """Fetch data for all tickers and export to CSV."""
+        end_date = datetime.now()
+        start_date = end_date - timedelta(days=years_back*365)
+
+        logger.info(f"Exporting data to: {self.output_file}")
+        logger.info(f"Date range: {start_date.date()} to {end_date.date()}")
+
+        with open(self.output_file, 'w', newline='') as csvfile:
+            fieldnames = ['ticker', 'date', 'open', 'high', 'low', 'close', 'volume', 'adjusted_close']
+            writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+            writer.writeheader()
+
+            success_count = 0
+            fail_count = 0
+
+            for original_ticker, yf_ticker in tickers:
+                try:
+                    logger.info(f"Fetching {original_ticker} (YF: {yf_ticker})...")
+                    ticker_obj = yf.Ticker(yf_ticker)
+                    df = ticker_obj.history(start=start_date, end=end_date)
+
+                    if df.empty:
+                        logger.warning(f"No data for {yf_ticker}")
+                        fail_count += 1
+                        continue
+
+                    # Write rows for this ticker (use original ticker in CSV)
+                    for date, row in df.iterrows():
+                        writer.writerow({
+                            'ticker': original_ticker,
+                            'date': date.date().isoformat(),
+                            'open': row['Open'] if 'Open' in row else None,
+                            'high': row['High'] if 'High' in row else None,
+                            'low': row['Low'] if 'Low' in row else None,
+                            'close': row['Close'],
+                            'volume': row['Volume'] if 'Volume' in row else None,
+                            'adjusted_close': row['Close']
+                        })
+                        self.records_written += 1
+
+                    logger.info(f"✓ {original_ticker}: {len(df)} records")
+                    success_count += 1
+
+                except Exception as e:
+                    logger.error(f"✗ {yf_ticker}: {str(e)}")
+                    fail_count += 1
+
+            logger.info(f"\n=== Export Summary ===")
+            logger.info(f"Output file: {self.output_file}")
+            logger.info(f"Total records: {self.records_written}")
+            logger.info(f"Successful tickers: {success_count}")
+            logger.info(f"Failed tickers: {fail_count}")
+
+
 class PriceSyncService:
     """Service for syncing price data from Yahoo Finance to database."""
+
+    # Mapping for special tickers (e.g., cryptocurrencies)
+    TICKER_MAPPING = {
+        'BITCOIN': 'BTC-USD',
+        'BTC': 'BTC-USD',
+        'ETHEREUM': 'ETH-USD',
+        'ETH': 'ETH-USD',
+        'LITECOIN': 'LTC-USD',
+        'LTC': 'LTC-USD',
+        'RIPPLE': 'XRP-USD',
+        'XRP': 'XRP-USD',
+    }
 
     def __init__(self, session):
         self.session = session
 
-    def get_assets_to_sync(self, ticker: Optional[str] = None) -> List[Asset]:
+    def normalize_ticker_for_yf(self, ticker: str) -> str:
+        """
+        Normalize ticker for Yahoo Finance API.
+
+        Rules:
+        - Special mappings (BITCOIN → BTC-USD, etc.)
+        - .PL suffix → .WA (Polish stocks: XTB.PL → XTB.WA)
+        - .US suffix → remove (US stocks: GOOGL.US → GOOGL)
+        - No suffix → keep as is (AAPL → AAPL)
+        """
+        ticker = ticker.strip().upper()
+
+        # Check special mappings first
+        if ticker in self.TICKER_MAPPING:
+            return self.TICKER_MAPPING[ticker]
+
+        if ticker.endswith('.PL'):
+            # Polish stocks: replace .PL with .WA
+            return ticker.replace('.PL', '.WA')
+        elif ticker.endswith('.US'):
+            # US stocks: remove .US suffix
+            return ticker.replace('.US', '')
+        else:
+            # Keep as is
+            return ticker
+
+    def get_assets_to_sync(self, ticker: Optional[str] = None) -> List:
         """Get list of assets that need price sync."""
+        from portfolio.models import Asset
         query = self.session.query(Asset)
         if ticker:
             query = query.filter(Asset.ticker == ticker.upper())
@@ -42,6 +211,7 @@ class PriceSyncService:
 
     def get_last_sync_date(self, asset_id: int) -> Optional[datetime]:
         """Get the last date for which we have price data."""
+        from portfolio.models import AssetPriceHistory
         last_record = (
             self.session.query(AssetPriceHistory)
             .filter(AssetPriceHistory.asset_id == asset_id)
@@ -53,28 +223,43 @@ class PriceSyncService:
     def fetch_yahoo_data(self, ticker: str, start_date: Optional[datetime], end_date: datetime):
         """Fetch price data from Yahoo Finance."""
         try:
+            # Normalize ticker for Yahoo Finance
+            yf_ticker = self.normalize_ticker_for_yf(ticker)
+
             # If no start_date, get 5 years of history
             if start_date is None:
                 start_date = end_date - timedelta(days=5*365)
 
-            logger.info(f"Fetching data for {ticker} from {start_date} to {end_date}")
+            logger.info(f"Fetching data for {ticker} (YF: {yf_ticker}) from {start_date.date()} to {end_date.date()}")
 
-            # Download data from Yahoo Finance
-            ticker_obj = yf.Ticker(ticker)
+            # Add random delay to avoid rate limiting (1-3 seconds)
+            delay = random.uniform(1.0, 3.0)
+            time.sleep(delay)
+
+            # Create custom session
+            session = create_yf_session()
+
+            # Download data from Yahoo Finance with custom session
+            ticker_obj = yf.Ticker(yf_ticker, session=session)
             df = ticker_obj.history(start=start_date, end=end_date)
 
             if df.empty:
-                logger.warning(f"No data returned for {ticker}")
+                logger.warning(f"No data returned for {yf_ticker} - ticker may be delisted or invalid")
                 return None
 
+            logger.info(f"✓ Retrieved {len(df)} records for {yf_ticker}")
             return df
 
         except Exception as e:
-            logger.error(f"Error fetching data for {ticker}: {str(e)}")
+            logger.error(f"Error fetching data for {ticker} (YF: {yf_ticker}): {str(e)}")
+            # Add longer delay after error
+            time.sleep(5)
             return None
 
-    def save_price_data(self, asset: Asset, df):
+    def save_price_data(self, asset, df):
         """Save price data to database."""
+        from portfolio.models import AssetPriceHistory
+
         if df is None or df.empty:
             return 0
 
@@ -116,7 +301,7 @@ class PriceSyncService:
 
         return records_added
 
-    def sync_asset(self, asset: Asset, full_sync: bool = False):
+    def sync_asset(self, asset, full_sync: bool = False):
         """Sync price data for a single asset."""
         logger.info(f"Syncing {asset.ticker} ({asset.name})")
 
@@ -157,12 +342,19 @@ class PriceSyncService:
             return
 
         logger.info(f"Starting sync for {len(assets)} asset(s)")
+        logger.info(f"Adding delays between requests to avoid rate limiting...")
 
         success_count = 0
         fail_count = 0
+        skip_count = 0
 
-        for asset in assets:
+        for idx, asset in enumerate(assets, 1):
             try:
+                logger.info(f"\n[{idx}/{len(assets)}] Processing {asset.ticker}...")
+
+                # Check if ticker can be normalized
+                yf_ticker = self.normalize_ticker_for_yf(asset.ticker)
+
                 if self.sync_asset(asset, full_sync):
                     success_count += 1
                 else:
@@ -177,14 +369,65 @@ class PriceSyncService:
         logger.info(f"Failed: {fail_count}")
         logger.info(f"Total: {len(assets)}")
 
+        if fail_count > 0:
+            logger.info(f"\nNote: {fail_count} ticker(s) failed - they may be:")
+            logger.info("  - Delisted from the exchange")
+            logger.info("  - Invalid ticker symbols")
+            logger.info("  - Not available in Yahoo Finance")
+            logger.info("  - Need manual mapping (check TICKER_MAPPING in script)")
+            logger.info("  - Rate limited (try running again with smaller batches)")
+
 
 def main():
     """Main entry point for the script."""
     parser = argparse.ArgumentParser(description='Sync historical price data from Yahoo Finance')
     parser.add_argument('--full', action='store_true', help='Perform full sync (all historical data)')
     parser.add_argument('--ticker', type=str, help='Sync only specific ticker')
+    parser.add_argument('--csv-mode', action='store_true', help='Export to CSV instead of database')
+    parser.add_argument('--tickers-file', type=str, help='Path to file with tickers (one per line) for CSV mode')
+    parser.add_argument('--output', type=str, help='Output CSV filename')
+    parser.add_argument('--gpw', action='store_true', help='Add .WA suffix for Warsaw Stock Exchange tickers')
 
     args = parser.parse_args()
+
+    # CSV export mode - no database connection needed
+    if args.csv_mode:
+        # Determine output filename
+        if args.output:
+            output_file = args.output
+        else:
+            output_file = f"price_history_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
+
+        exporter = CSVExporter(output_file, add_gpw_suffix=args.gpw)
+
+        # Get tickers list
+        if args.tickers_file:
+            tickers = exporter.read_tickers_from_file(args.tickers_file)
+        elif args.ticker:
+            original, yf_ticker = exporter.normalize_ticker(args.ticker)
+            tickers = [(original, yf_ticker)]
+        else:
+            logger.error("CSV mode requires either --tickers-file or --ticker")
+            return
+
+        if not tickers:
+            logger.error("No tickers to process")
+            return
+
+        # Fetch and export
+        exporter.fetch_and_export(tickers)
+        logger.info(f"\n✓ CSV export complete: {output_file}")
+        logger.info("You can now import this file to your database using DBeaver or similar tool")
+        return
+
+    # Database mode - requires database connection
+    try:
+        from portfolio.models import Asset, AssetPriceHistory
+        from database import Database
+    except ImportError as e:
+        logger.error(f"Cannot import database modules: {e}")
+        logger.error("Use --csv-mode if you don't have database access")
+        return
 
     # Create database session using pg_service connection
     db = Database()
