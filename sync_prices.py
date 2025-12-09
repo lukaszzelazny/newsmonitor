@@ -23,9 +23,9 @@ from datetime import datetime, timedelta
 from typing import List, Optional, TYPE_CHECKING
 import yfinance as yf
 from sqlalchemy.orm import sessionmaker
-import requests
-from requests.adapters import HTTPAdapter
-from urllib3.util.retry import Retry
+# import requests
+# from requests.adapters import HTTPAdapter
+# from urllib3.util.retry import Retry
 
 # Conditional imports for type hints
 if TYPE_CHECKING:
@@ -39,30 +39,30 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-def create_yf_session():
-    """Create a requests session with retry logic and custom headers to avoid blocking."""
-    session = requests.Session()
-
-    # Add retry logic
-    retries = Retry(
-        total=3,
-        backoff_factor=1,
-        status_forcelist=[429, 500, 502, 503, 504]
-    )
-    session.mount('http://', HTTPAdapter(max_retries=retries))
-    session.mount('https://', HTTPAdapter(max_retries=retries))
-
-    # Add headers to mimic browser
-    session.headers.update({
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-        'Accept-Language': 'en-US,en;q=0.5',
-        'Accept-Encoding': 'gzip, deflate',
-        'Connection': 'keep-alive',
-        'Upgrade-Insecure-Requests': '1'
-    })
-
-    return session
+# def create_yf_session():
+#     """Create a requests session with retry logic and custom headers to avoid blocking."""
+#     session = requests.Session()
+#
+#     # Add retry logic
+#     retries = Retry(
+#         total=3,
+#         backoff_factor=1,
+#         status_forcelist=[429, 500, 502, 503, 504]
+#     )
+#     session.mount('http://', HTTPAdapter(max_retries=retries))
+#     session.mount('https://', HTTPAdapter(max_retries=retries))
+#
+#     # Add headers to mimic browser
+#     session.headers.update({
+#         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+#         'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+#         'Accept-Language': 'en-US,en;q=0.5',
+#         'Accept-Encoding': 'gzip, deflate',
+#         'Connection': 'keep-alive',
+#         'Upgrade-Insecure-Requests': '1'
+#     })
+#
+#     return session
 
 
 class CSVExporter:
@@ -237,10 +237,10 @@ class PriceSyncService:
             time.sleep(delay)
 
             # Create custom session
-            session = create_yf_session()
+            # session = create_yf_session()
 
             # Download data from Yahoo Finance with custom session
-            ticker_obj = yf.Ticker(yf_ticker, session=session)
+            ticker_obj = yf.Ticker(yf_ticker) # , session=session)
             df = ticker_obj.history(start=start_date, end=end_date)
 
             if df.empty:
