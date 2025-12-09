@@ -68,6 +68,26 @@ def scrape_ticker_endpoint():
         return jsonify({'error': str(e)}), 500
 
 if __name__ == '__main__':
+    import argparse
+    from dotenv import load_dotenv
+    from database import Database
+    from tools.price_fetcher import enable_database_mode
+
+    load_dotenv()
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--database', action='store_true', help='Use database for price fetching')
+    args, unknown = parser.parse_known_args()
+
+    if args.database:
+        print("Enabling Database Mode for prices...", flush=True)
+        try:
+            db = Database()
+            enable_database_mode(db.Session)
+            print("Database Mode ENABLED.", flush=True)
+        except Exception as e:
+            print(f"Failed to enable Database Mode: {e}", flush=True)
+
     print("Uruchamiam backend API...", flush=True)
     port = int(os.environ.get('PORT', 5000))
     debug = os.environ.get('FLASK_DEBUG', 'True').lower() == 'true'
