@@ -108,6 +108,7 @@ class CSVExporter:
         start_date = end_date - timedelta(days=years_back*365)
 
         logger.info(f"Exporting data to: {self.output_file}")
+        logger.info(f"Mode: CSV (Standalone) - Skipping database checks, fetching fresh data from YF")
         logger.info(f"Date range: {start_date.date()} to {end_date.date()}")
 
         with open(self.output_file, 'w', newline='') as csvfile:
@@ -222,6 +223,17 @@ class PriceSyncService:
         )
         return last_record.date if last_record else None
 
+    def get_first_sync_date(self, asset_id: int) -> Optional[datetime]:
+        """Get the first date for which we have price data."""
+        from portfolio.models import AssetPriceHistory
+        first_record = (
+            self.session.query(AssetPriceHistory)
+            .filter(AssetPriceHistory.asset_id == asset_id)
+            .order_by(AssetPriceHistory.date.asc())
+            .first()
+        )
+        return first_record.date if first_record else None
+
     def fetch_yahoo_data(self, ticker: str, start_date: Optional[datetime], end_date: datetime):
         """Fetch price data from Yahoo Finance."""
         try:
@@ -232,7 +244,11 @@ class PriceSyncService:
             if start_date is None:
                 start_date = end_date - timedelta(days=5*365)
 
-            logger.info(f"Fetching data for {ticker} (YF: {yf_ticker}) from {start_date.date()} to {end_date.date()}")
+            # Handle date/datetime objects for logging
+            start_date_log = start_date.date() if isinstance(start_date, datetime) else start_date
+            end_date_log = end_date.date() if isinstance(end_date, datetime) else end_date
+
+            logger.info(f"Fetching data for {ticker} (YF: {yf_ticker}) from {start_date_log} to {end_date_log}")
 
             # Add random delay to avoid rate limiting (1-3 seconds)
             delay = random.uniform(1.0, 3.0)
@@ -308,31 +324,74 @@ class PriceSyncService:
         logger.info(f"Syncing {asset.ticker} ({asset.name})")
 
         end_date = datetime.now()
+        target_history_start = end_date - timedelta(days=5*365) # 5 years ago
+        
+        ranges_to_sync = []
+        
+        # Check what we have in DB
+        first_date = self.get_first_sync_date(asset.id)
+        last_date = self.get_last_sync_date(asset.id)
 
-        if full_sync:
-            start_date = None
-            logger.info(f"Performing full sync for {asset.ticker}")
+        if not first_date or not last_date:
+            # No existing data, performing initial sync
+            logger.info(f"No existing data, performing initial sync")
+            ranges_to_sync.append((None, end_date))
+            
+        elif full_sync:
+            # Smart Full Sync: Fill gaps but avoid re-downloading existing data
+            logger.info(f"Smart Full Sync for {asset.ticker} (filling gaps)")
+
+            # 1. Check history gap (older than first_date)
+            # Ensure types match for comparison
+            first_date_dt = datetime.combine(first_date, datetime.min.time()) if not isinstance(first_date, datetime) else first_date
+            
+            if first_date_dt > target_history_start + timedelta(days=7):
+                logger.info(f"Found history gap: {target_history_start.date()} to {first_date}")
+                # Fetch up to first_date
+                ranges_to_sync.append((target_history_start, first_date))
+            
+            # 2. Check recent gap (newer than last_date)
+            last_date_dt = datetime.combine(last_date, datetime.min.time()) if not isinstance(last_date, datetime) else last_date
+            
+            if last_date_dt.date() < end_date.date() - timedelta(days=1):
+                logger.info(f"Found recent gap: {last_date} to {end_date.date()}")
+                start_date = last_date - timedelta(days=1) # 1 day overlap for safety
+                ranges_to_sync.append((start_date, end_date))
+                
+            if not ranges_to_sync:
+                logger.info("Data is up to date (5 years history + recent), skipping download.")
+                
         else:
-            last_date = self.get_last_sync_date(asset.id)
-            if last_date:
-                # Start from day after last sync, with 1 day overlap for safety
-                start_date = last_date - timedelta(days=1)
-                logger.info(f"Incremental sync from {start_date}")
+            # Standard Incremental Sync (Default)
+            # Only looks forward from last_date
+            start_date = last_date - timedelta(days=1)
+            logger.info(f"Incremental sync from {start_date}")
+            ranges_to_sync.append((start_date, end_date))
+
+        # Execute syncs
+        total_records = 0
+        success = True
+        
+        if not ranges_to_sync:
+            return True
+
+        for start, end in ranges_to_sync:
+            df = self.fetch_yahoo_data(asset.ticker, start, end)
+            if df is not None:
+                records = self.save_price_data(asset, df)
+                total_records += records
             else:
-                start_date = None
-                logger.info(f"No existing data, performing initial sync")
+                success = False
 
-        # Fetch data from Yahoo Finance
-        df = self.fetch_yahoo_data(asset.ticker, start_date, end_date)
-
-        if df is not None:
-            # Save to database
-            records_added = self.save_price_data(asset, df)
+        if success:
             self.session.commit()
-            logger.info(f"✓ {asset.ticker}: {records_added} new records added")
+            if total_records > 0:
+                logger.info(f"✓ {asset.ticker}: {total_records} new records added")
+            else:
+                logger.info(f"✓ {asset.ticker}: Up to date")
             return True
         else:
-            logger.error(f"✗ {asset.ticker}: Failed to fetch data")
+            logger.error(f"✗ {asset.ticker}: Failed to fetch data for some ranges")
             return False
 
     def sync_all_assets(self, full_sync: bool = False, ticker: Optional[str] = None):
