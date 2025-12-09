@@ -2,10 +2,11 @@
 import yfinance as yf
 from functools import lru_cache
 import pandas as pd
-from typing import Dict, List, Optional, Callable
+from typing import Dict, List, Optional, Callable, Tuple
 import requests
 import time
 from sqlalchemy.orm import Session
+from datetime import datetime
 
 # Database session factory for --database mode
 _DB_SESSION_FACTORY: Optional[Callable[[], Session]] = None
@@ -18,6 +19,22 @@ def enable_database_mode(session_factory: Callable[[], Session]):
 def _get_db_session() -> Optional[Session]:
     if _DB_SESSION_FACTORY:
         return _DB_SESSION_FACTORY()
+    return None
+
+def _get_caching_session() -> Optional[Session]:
+    """
+    Attempts to create a database session for caching purposes
+    even if database mode is not explicitly enabled.
+    """
+    if _DB_SESSION_FACTORY:
+        return None  # Let the main logic handle explicit DB mode
+
+    try:
+        from database import Database
+        db = Database()
+        return db.Session()
+    except (ImportError, Exception):
+        pass
     return None
 
 def _find_asset_in_db(session: Session, ticker_symbol: str):
@@ -60,6 +77,85 @@ def _find_asset_in_db(session: Session, ticker_symbol: str):
         pass
         
     return None
+
+def _get_or_create_asset(session: Session, ticker_symbol: str):
+    """
+    Finds an asset or creates it if it doesn't exist.
+    """
+    from portfolio.models import Asset
+    
+    asset = _find_asset_in_db(session, ticker_symbol)
+    if asset:
+        return asset
+        
+    # Create new
+    clean_ticker = ticker_symbol.upper()
+    
+    new_asset = Asset(
+        ticker=clean_ticker,
+        asset_type='stock' # Default
+    )
+    session.add(new_asset)
+    session.flush() # To get ID
+    return new_asset
+
+def _save_history_to_db(session: Session, asset_id: int, df: pd.DataFrame):
+    """
+    Saves DataFrame history to DB.
+    df index should be DatetimeIndex or contain Date column.
+    """
+    from portfolio.models import AssetPriceHistory
+    
+    if df is None or df.empty:
+        return
+
+    # Normalize DF
+    # If it comes from yf.Ticker.history, index is Date.
+    
+    for date_idx, row in df.iterrows():
+        try:
+            date_val = date_idx.date() if hasattr(date_idx, 'date') else pd.to_datetime(date_idx).date()
+            
+            # Check existing
+            existing = session.query(AssetPriceHistory).filter(
+                AssetPriceHistory.asset_id == asset_id,
+                AssetPriceHistory.date == date_val
+            ).first()
+            
+            close_val = float(row['Close'])
+            # Basic validation
+            if pd.isna(close_val):
+                continue
+
+            if existing:
+                # Update
+                existing.close = close_val
+                if 'Open' in row: existing.open = float(row['Open'])
+                if 'High' in row: existing.high = float(row['High'])
+                if 'Low' in row: existing.low = float(row['Low'])
+                if 'Volume' in row: existing.volume = float(row['Volume'])
+                existing.adjusted_close = close_val # Assuming YF history is adj close by default or close
+            else:
+                # Insert
+                new_rec = AssetPriceHistory(
+                    asset_id=asset_id,
+                    date=date_val,
+                    close=close_val,
+                    open=float(row['Open']) if 'Open' in row else None,
+                    high=float(row['High']) if 'High' in row else None,
+                    low=float(row['Low']) if 'Low' in row else None,
+                    volume=float(row['Volume']) if 'Volume' in row else None,
+                    adjusted_close=close_val
+                )
+                session.add(new_rec)
+        except Exception as e:
+            continue
+    
+    try:
+        session.commit()
+    except Exception as e:
+        session.rollback()
+        print(f"Commit failed: {e}")
 
 # Simple in-memory cache for quote API to reduce request rate and avoid bans
 # Maps symbol -> (price: float, fetched_ts: float)
@@ -591,18 +687,69 @@ def get_price_history(ticker_symbol: str, days: int = 90):
     - If still empty, try the full history (period='max')
     """
     
-    # Database Mode
-    if _DB_SESSION_FACTORY:
-        session = _get_db_session()
+    # Database Mode or Caching Mode
+    forced_session = _get_db_session()
+    session = forced_session if forced_session else _get_caching_session()
+    is_caching_mode = (session is not None and forced_session is None)
+    
+    if session:
         price_data = []
         try:
             from portfolio.models import AssetPriceHistory
             
-            asset = _find_asset_in_db(session, ticker_symbol)
+            # In caching mode, we ensure asset exists. In forced mode, we just look for it.
+            asset = None
+            if is_caching_mode:
+                asset = _get_or_create_asset(session, ticker_symbol)
+            else:
+                asset = _find_asset_in_db(session, ticker_symbol)
             
             if asset:
                 start_date = pd.Timestamp.now().date() - pd.Timedelta(days=days)
                 
+                # Check for sync need (only in Caching Mode)
+                if is_caching_mode:
+                    last_entry = session.query(AssetPriceHistory)\
+                        .filter(AssetPriceHistory.asset_id == asset.id)\
+                        .order_by(AssetPriceHistory.date.desc()).first()
+                    
+                    need_fetch = False
+                    if not last_entry:
+                        need_fetch = True
+                    else:
+                        # If data is older than yesterday, fetch
+                        if last_entry.date < (datetime.now().date() - pd.Timedelta(days=1)):
+                            need_fetch = True
+                        # Also check if we have enough history (start_date)
+                        first_entry = session.query(AssetPriceHistory)\
+                            .filter(AssetPriceHistory.asset_id == asset.id)\
+                            .order_by(AssetPriceHistory.date.asc()).first()
+                        if first_entry and first_entry.date > start_date + pd.Timedelta(days=5):
+                            # We might have gaps at the beginning, but simpler to just fetch if we need older data
+                            need_fetch = True
+                            
+                    if need_fetch:
+                        yf_symbol = get_yf_symbol(ticker_symbol)
+                        # Fetch df using internal logic (duplicated slightly to get DF)
+                        try:
+                            _throttle_yf()
+                            ticker = yf.Ticker(yf_symbol)
+                            df = ticker.history(period=f"{days}d")
+                            if df is None or df.empty:
+                                try:
+                                    longer = max(180, days * 2)
+                                    _throttle_yf()
+                                    alt = yf.download(yf_symbol, period=f"{longer}d", progress=False, threads=False)
+                                    if alt is not None and not alt.empty:
+                                        df = alt
+                                except Exception:
+                                    pass
+                            
+                            if df is not None and not df.empty:
+                                _save_history_to_db(session, asset.id, df)
+                        except Exception as e:
+                            print(f"Caching fetch failed: {e}")
+
                 history = session.query(AssetPriceHistory)\
                     .filter(AssetPriceHistory.asset_id == asset.id)\
                     .filter(AssetPriceHistory.date >= start_date)\
@@ -622,12 +769,19 @@ def get_price_history(ticker_symbol: str, days: int = 90):
                         "price": float(h.close),
                         "volume": int(h.volume) if h.volume else 0
                     })
+                
+                if price_data:
+                    return price_data
+                    
         except Exception as e:
             print(f"DB History Error: {e}")
         finally:
             if session:
                 session.close()
-        return price_data
+        
+        # If forced DB and failed, return empty
+        if forced_session:
+            return price_data
 
     yf_symbol = get_yf_symbol(ticker_symbol)
     currency = 'PLN' #get_currency_for_ticker(yf_symbol)
@@ -846,14 +1000,58 @@ def get_ohlc_history_df(ticker_symbol: str, days: int = 365) -> pd.DataFrame:
     Fetches OHLC history as DataFrame.
     Used for technical analysis.
     """
-    # Database Mode
-    if _DB_SESSION_FACTORY:
-        session = _get_db_session()
+    # Database Mode or Caching Mode
+    forced_session = _get_db_session()
+    session = forced_session if forced_session else _get_caching_session()
+    is_caching_mode = (session is not None and forced_session is None)
+
+    if session:
         try:
             from portfolio.models import AssetPriceHistory
-            asset = _find_asset_in_db(session, ticker_symbol)
+            
+            asset = None
+            if is_caching_mode:
+                asset = _get_or_create_asset(session, ticker_symbol)
+            else:
+                asset = _find_asset_in_db(session, ticker_symbol)
+                
             if asset:
                  start_date = pd.Timestamp.now().date() - pd.Timedelta(days=days)
+                 
+                 # Check sync need (Caching Mode)
+                 if is_caching_mode:
+                    last_entry = session.query(AssetPriceHistory)\
+                        .filter(AssetPriceHistory.asset_id == asset.id)\
+                        .order_by(AssetPriceHistory.date.desc()).first()
+                    
+                    need_fetch = False
+                    if not last_entry:
+                        need_fetch = True
+                    elif last_entry.date < (datetime.now().date() - pd.Timedelta(days=1)):
+                        need_fetch = True
+                    
+                    if need_fetch:
+                        yf_symbol = get_yf_symbol(ticker_symbol)
+                        try:
+                            _throttle_yf()
+                            ticker = yf.Ticker(yf_symbol)
+                            df = ticker.history(period=f"{days}d")
+                            # Fallbacks
+                            if df is None or df.empty:
+                                try:
+                                    longer = max(180, days * 2)
+                                    _throttle_yf()
+                                    alt = yf.download(yf_symbol, period=f"{longer}d", progress=False, threads=False)
+                                    if alt is not None and not alt.empty:
+                                        df = alt
+                                except Exception:
+                                    pass
+                            
+                            if df is not None and not df.empty:
+                                _save_history_to_db(session, asset.id, df)
+                        except Exception as e:
+                            print(f"Caching fetch failed: {e}")
+
                  history = session.query(AssetPriceHistory)\
                     .filter(AssetPriceHistory.asset_id == asset.id)\
                     .filter(AssetPriceHistory.date >= start_date)\
@@ -861,27 +1059,31 @@ def get_ohlc_history_df(ticker_symbol: str, days: int = 365) -> pd.DataFrame:
                     .all()
                  
                  if not history:
-                     return pd.DataFrame()
-
-                 data = []
-                 for h in history:
-                     data.append({
-                         "Date": pd.to_datetime(h.date),
-                         "Open": float(h.open) if h.open is not None else float(h.close),
-                         "High": float(h.high) if h.high is not None else float(h.close),
-                         "Low": float(h.low) if h.low is not None else float(h.close),
-                         "Close": float(h.close),
-                         "Volume": int(h.volume) if h.volume is not None else 0
-                     })
-                 df = pd.DataFrame(data)
-                 df.set_index("Date", inplace=True)
-                 return df
+                     if forced_session:
+                         return pd.DataFrame()
+                     # If caching mode and still no history, fall through to online
+                 else:
+                     data = []
+                     for h in history:
+                         data.append({
+                             "Date": pd.to_datetime(h.date),
+                             "Open": float(h.open) if h.open is not None else float(h.close),
+                             "High": float(h.high) if h.high is not None else float(h.close),
+                             "Low": float(h.low) if h.low is not None else float(h.close),
+                             "Close": float(h.close),
+                             "Volume": int(h.volume) if h.volume is not None else 0
+                         })
+                     df = pd.DataFrame(data)
+                     df.set_index("Date", inplace=True)
+                     return df
         except Exception as e:
             print(f"DB OHLC Error: {e}")
         finally:
             if session:
                 session.close()
-        return pd.DataFrame()
+        
+        if forced_session:
+            return pd.DataFrame()
 
     # Online Mode
     yf_symbol = get_yf_symbol(ticker_symbol)
