@@ -173,6 +173,7 @@ class PriceSyncService:
         'XRP': 'XRP-USD',
         'CSPX.UK': 'CSPX.AS',
         'TSLA.DE': 'TL0.DE',
+        'HOOD.US': 'HOOD'
     }
 
     def __init__(self, session):
@@ -234,8 +235,14 @@ class PriceSyncService:
         )
         return first_record.date if first_record else None
 
-    def fetch_yahoo_data(self, ticker: str, start_date: Optional[datetime], end_date: datetime):
+    def fetch_yahoo_data(self, ticker: str, start_date: Optional[datetime], end_date: datetime, suppress_errors: bool = False):
         """Fetch price data from Yahoo Finance."""
+        yf_logger = logging.getLogger('yfinance')
+        original_level = yf_logger.level
+        
+        if suppress_errors:
+            yf_logger.setLevel(logging.CRITICAL)
+
         try:
             # Normalize ticker for Yahoo Finance
             yf_ticker = self.normalize_ticker_for_yf(ticker)
@@ -262,17 +269,27 @@ class PriceSyncService:
             df = ticker_obj.history(start=start_date, end=end_date)
 
             if df.empty:
-                logger.warning(f"No data returned for {yf_ticker} - ticker may be delisted or invalid")
+                msg = f"No data returned for {yf_ticker} - ticker may be delisted or invalid"
+                if suppress_errors:
+                    logger.info(f"Note: {msg} (Expected for history gap fill)")
+                else:
+                    logger.warning(msg)
                 return None
 
             logger.info(f"✓ Retrieved {len(df)} records for {yf_ticker}")
             return df
 
         except Exception as e:
-            logger.error(f"Error fetching data for {ticker} (YF: {yf_ticker}): {str(e)}")
-            # Add longer delay after error
-            time.sleep(5)
+            if suppress_errors:
+                logger.info(f"Could not fetch data for {ticker} (YF: {yf_ticker}): {str(e)}. This is likely because the asset did not exist yet.")
+            else:
+                logger.error(f"Error fetching data for {ticker} (YF: {yf_ticker}): {str(e)}")
+                # Add longer delay after error
+                time.sleep(5)
             return None
+        finally:
+            if suppress_errors:
+                yf_logger.setLevel(original_level)
 
     def save_price_data(self, asset, df):
         """Save price data to database."""
@@ -335,7 +352,8 @@ class PriceSyncService:
         if not first_date or not last_date:
             # No existing data, performing initial sync
             logger.info(f"No existing data, performing initial sync")
-            ranges_to_sync.append((None, end_date))
+            # (start, end, suppress_errors)
+            ranges_to_sync.append((None, end_date, False))
             
         elif full_sync:
             # Smart Full Sync: Fill gaps but avoid re-downloading existing data
@@ -347,8 +365,8 @@ class PriceSyncService:
             
             if first_date_dt > target_history_start + timedelta(days=7):
                 logger.info(f"Found history gap: {target_history_start.date()} to {first_date}")
-                # Fetch up to first_date
-                ranges_to_sync.append((target_history_start, first_date))
+                # Fetch up to first_date, suppress errors as it might not exist
+                ranges_to_sync.append((target_history_start, first_date, True))
             
             # 2. Check recent gap (newer than last_date)
             last_date_dt = datetime.combine(last_date, datetime.min.time()) if not isinstance(last_date, datetime) else last_date
@@ -356,7 +374,7 @@ class PriceSyncService:
             if last_date_dt.date() < end_date.date() - timedelta(days=1):
                 logger.info(f"Found recent gap: {last_date} to {end_date.date()}")
                 start_date = last_date - timedelta(days=1) # 1 day overlap for safety
-                ranges_to_sync.append((start_date, end_date))
+                ranges_to_sync.append((start_date, end_date, False))
                 
             if not ranges_to_sync:
                 logger.info("Data is up to date (5 years history + recent), skipping download.")
@@ -366,7 +384,7 @@ class PriceSyncService:
             # Only looks forward from last_date
             start_date = last_date - timedelta(days=1)
             logger.info(f"Incremental sync from {start_date}")
-            ranges_to_sync.append((start_date, end_date))
+            ranges_to_sync.append((start_date, end_date, False))
 
         # Execute syncs
         total_records = 0
@@ -375,12 +393,13 @@ class PriceSyncService:
         if not ranges_to_sync:
             return True
 
-        for start, end in ranges_to_sync:
-            df = self.fetch_yahoo_data(asset.ticker, start, end)
+        for start, end, suppress_errors in ranges_to_sync:
+            df = self.fetch_yahoo_data(asset.ticker, start, end, suppress_errors=suppress_errors)
             if df is not None:
                 records = self.save_price_data(asset, df)
                 total_records += records
-            else:
+            elif not suppress_errors:
+                # Only mark as failure if we didn't suppress errors
                 success = False
 
         if success:
