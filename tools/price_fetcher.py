@@ -188,7 +188,50 @@ def _fetch_fx_series(currencies: List[str], start_date, end_date) -> Dict[str, p
     if cached and (now_ts - cached[1]) < _FX_SERIES_TTL_SECONDS:
         return cached[0]
 
-    # Single batched download to limit requests
+    # Database Mode: Try DB first
+    if _DB_SESSION_FACTORY:
+        session = _get_db_session()
+        try:
+            from portfolio.models import AssetPriceHistory
+            
+            missing_in_db = []
+            for fx in fx_needed:
+                asset = _find_asset_in_db(session, fx)
+                found = False
+                if asset:
+                    history = session.query(AssetPriceHistory)\
+                        .filter(AssetPriceHistory.asset_id == asset.id)\
+                        .filter(AssetPriceHistory.date >= start_date)\
+                        .filter(AssetPriceHistory.date <= end_date)\
+                        .order_by(AssetPriceHistory.date.asc())\
+                        .all()
+                    
+                    if history:
+                        series = pd.Series(
+                            [float(h.close) for h in history],
+                            index=pd.to_datetime([h.date for h in history])
+                        )
+                        result[fx] = series.ffill().bfill()
+                        found = True
+                
+                if not found:
+                    missing_in_db.append(fx)
+            
+            # Update needed list to only fetch missing
+            fx_needed = missing_in_db
+            
+        except Exception as e:
+            print(f"DB FX Error: {e}")
+        finally:
+            if session:
+                session.close()
+
+    if not fx_needed:
+        # All found in DB or empty request
+        _FX_SERIES_CACHE[key] = (result, now_ts)
+        return result
+
+    # Single batched download to limit requests (for missing ones)
     try:
         _throttle_yf()
         data = yf.download(fx_needed, start=start_date, end=end_date, progress=False, threads=False)
