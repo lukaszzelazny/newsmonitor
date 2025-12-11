@@ -151,7 +151,7 @@ function PriceChart({ ticker, priceHistory, brokerageAnalyses, analyses, onNewsC
             mainSeries.createPriceLine(priceLine);
         }
 
-        chart.timeScale().fitContent();
+chart.timeScale().fitContent();
 
         // Overlay for transaction markers (custom scaled circles)
         const overlay = document.createElement('div');
@@ -161,6 +161,7 @@ function PriceChart({ ticker, priceHistory, brokerageAnalyses, analyses, onNewsC
         overlay.style.right = '0';
         overlay.style.bottom = '0';
         overlay.style.pointerEvents = 'none';
+        overlay.style.zIndex = '10';
         chartContainerRef.current.style.position = 'relative';
         chartContainerRef.current.appendChild(overlay);
 
@@ -169,139 +170,109 @@ function PriceChart({ ticker, priceHistory, brokerageAnalyses, analyses, onNewsC
             overlay.innerHTML = '';
             if (!transactions || transactions.length === 0) return;
 
-            // map quantities to sizes
-            const quantities = transactions.map(t => Number(t.quantity) || 0).filter(q => !isNaN(q));
-            const qmin = quantities.length ? Math.min(...quantities) : 0;
-            const qmax = quantities.length ? Math.max(...quantities) : 0;
-
-            // Build quick index of priceHistory dates for fallback
-            const timeIndex = (priceHistory || []).map(p => p.time || p.date || p.date_string || p["date"]).filter(Boolean);
-
-            // Also collect markers fallback for lightweight-charts
-            const fallbackMarkers = [];
+            // Stały rozmiar dla wszystkich kropek
+            const markerSize = 12;
 
             transactions.forEach(t => {
-                // transaction_date expected as YYYY-MM-DD
                 const time = t.transaction_date;
                 const price = Number(t.price);
                 if (!time || !price) return;
 
                 let x = null, y = null;
+
                 try {
-                    // try direct mapping first
                     const timeCoord = chart.timeScale().timeToCoordinate(time);
                     const priceCoord = mainSeries.priceToCoordinate(price);
-                    x = timeCoord;
-                    y = priceCoord;
+
+                    if (timeCoord !== null && priceCoord !== null) {
+                        x = timeCoord;
+                        y = priceCoord;
+                    }
                 } catch (e) {
-                    // ignore here, try fallback below
+                    console.debug('Failed to map transaction coordinates:', e);
                 }
 
-                // Fallback: if mapping failed, find closest date in priceHistory and map that bar's coordinate
-                if ((x === null || y === null || isNaN(x) || isNaN(y)) && timeIndex.length > 0) {
-                    // Find nearest date string in timeIndex
-                    let nearest = null;
-                    let nearestDiff = Infinity;
-                    const tx = new Date(time).getTime();
-                    for (let d of timeIndex) {
-                        const dt = new Date(d).getTime();
-                        const diff = Math.abs(dt - tx);
-                        if (diff < nearestDiff) { nearestDiff = diff; nearest = d; }
-                    }
-                    if (nearest) {
-                        try {
-                            const timeCoord = chart.timeScale().timeToCoordinate(nearest);
-                            // use price mapping as before
-                            const priceCoord = mainSeries.priceToCoordinate(price);
-                            x = timeCoord;
-                            y = priceCoord;
-                        } catch (e) {
-                            // give up mapping this tx
-                            console.debug('Fallback mapping failed for tx', t, e);
-                        }
-                    }
-                }
-
+                // Skip if we couldn't map the coordinates
                 if (x === null || y === null || isNaN(x) || isNaN(y)) {
-                    // As a backup: create a lightweight-charts marker so at least it's visible on the chart
-                    fallbackMarkers.push({
-                        time: time,
-                        position: 'belowBar',
-                        color: (String(t.transaction_type).toLowerCase() === 'buy') ? '#10b981' : '#ef5350',
-                        shape: (String(t.transaction_type).toLowerCase() === 'buy') ? 'circle' : 'circle',
-                        text: (String(t.transaction_type).toUpperCase()),
-                        id: `tx-${t.id}`
-                    });
+                    console.debug('Skipping transaction - invalid coordinates:', { time, price, x, y });
                     return;
                 }
 
-                const qty = Number(t.quantity) || 0;
-                const size = qmax > qmin ? 6 + ((qty - qmin) / (qmax - qmin)) * 26 : 10;
+                // Wyświetl log dla debugowania
+                console.debug('Rendering transaction marker:', { ticker, time, price, x, y });
 
+                // Create marker element
                 const el = document.createElement('div');
-                el.title = `${(t.transaction_type || '').toUpperCase()}: ${qty} @ ${price}`;
+                const isBuy = String(t.transaction_type).toLowerCase() === 'buy';
+                const qty = Number(t.quantity) || 0;
+
+                el.title = `${isBuy ? 'KUPNO' : 'SPRZEDAŻ'}: ${qty.toFixed(0)} szt. @ ${price.toFixed(2)} PLN`;
                 el.style.position = 'absolute';
                 el.style.left = `${x}px`;
                 el.style.top = `${y}px`;
                 el.style.transform = 'translate(-50%, -50%)';
-                el.style.width = `${size}px`;
-                el.style.height = `${size}px`;
+                el.style.width = `${markerSize}px`;
+                el.style.height = `${markerSize}px`;
                 el.style.borderRadius = '50%';
-                el.style.background = (String(t.transaction_type).toLowerCase() === 'buy') ? 'rgba(16,185,129,0.95)' : 'rgba(239,83,80,0.95)';
-                el.style.boxShadow = '0 0 0 2px rgba(255,255,255,0.85)';
+                el.style.background = isBuy ? '#10b981' : '#ef4444';
+                el.style.boxShadow = `0 0 0 2px rgba(255,255,255,0.9), 0 2px 6px rgba(0,0,0,0.3)`;
                 el.style.pointerEvents = 'auto';
-                el.style.border = '1px solid rgba(0,0,0,0.08)';
-                // small label inside for quantities (optional)
-                const lbl = document.createElement('span');
-                lbl.style.fontSize = '10px';
-                lbl.style.color = 'white';
-                lbl.style.fontWeight = '600';
-                lbl.style.position = 'absolute';
-                lbl.style.left = '50%';
-                lbl.style.top = '50%';
-                lbl.style.transform = 'translate(-50%, -50%)';
-                lbl.innerText = '';// qty.toString(); // keep empty to avoid clutter
-                el.appendChild(lbl);
+                el.style.cursor = 'pointer';
+                el.style.transition = 'transform 0.2s ease';
+                el.style.zIndex = '100';
+
+                // Add hover effect
+                el.addEventListener('mouseenter', () => {
+                    el.style.transform = 'translate(-50%, -50%) scale(1.5)';
+                    el.style.zIndex = '101';
+                });
+
+                el.addEventListener('mouseleave', () => {
+                    el.style.transform = 'translate(-50%, -50%) scale(1)';
+                    el.style.zIndex = '100';
+                });
 
                 overlay.appendChild(el);
             });
-
-            // apply fallback markers to series if any
-            if (fallbackMarkers.length > 0) {
-                try {
-                    mainSeries.setMarkers(fallbackMarkers.concat(analyses?.map(n => ({ time: n.date, position: n.impact>0?'belowBar':'aboveBar', color: '#9ca3af', shape: 'circle', text: 'News' }))) || []);
-                } catch (e) {
-                    console.debug('Failed to set fallback markers:', e);
-                }
-            }
         };
-
         // Initial render
         renderTransactions();
 
         // Re-render on resize and visible range change
         const handleResize = () => {
-            if (chartContainerRef.current) {
-                chart.applyOptions({ width: chartContainerRef.current.clientWidth });
+            if (chartContainerRef.current && chartRef.current) {
+                chartRef.current.applyOptions({ width: chartContainerRef.current.clientWidth });
+                renderTransactions();
             }
-            renderTransactions();
         };
+
         window.addEventListener('resize', handleResize);
 
         let unsubVisible = null;
         try {
             unsubVisible = chart.timeScale().subscribeVisibleTimeRangeChange(() => {
-                renderTransactions();
+                requestAnimationFrame(renderTransactions);
             });
         } catch (e) {
-            // some versions may not support this subscription
+            console.debug('Could not subscribe to visible range changes:', e);
         }
 
         return () => {
             window.removeEventListener('resize', handleResize);
-            if (unsubVisible && typeof unsubVisible === 'function') unsubVisible();
-            if (overlay && overlay.parentNode) overlay.parentNode.removeChild(overlay);
-            chart.remove();
+            if (unsubVisible && typeof unsubVisible === 'function') {
+                try {
+                    unsubVisible();
+                } catch (e) {
+                    console.debug('Error unsubscribing:', e);
+                }
+            }
+            if (overlay && overlay.parentNode) {
+                overlay.parentNode.removeChild(overlay);
+            }
+            if (chartRef.current) {
+                chartRef.current.remove();
+                chartRef.current = null;
+            }
         };
     }, [priceHistory, chartType, showVolume, analyses, brokerageAnalyses, transactions]);
 
@@ -365,22 +336,39 @@ function PriceChart({ ticker, priceHistory, brokerageAnalyses, analyses, onNewsC
 
             <div ref={chartContainerRef} className="w-full h-[400px]" />
 
-            {/* Debug / transactions overview (visible to help troubleshooting) */}
-            <div className="mt-2 text-xs text-gray-700">
-                <div className="mb-1 font-semibold">Transakcje: {transactions.length}</div>
-                {transactions.length === 0 ? (
-                    <div className="text-gray-500">Brak transakcji dla tego tickera</div>
-                ) : (
-                    <div className="grid grid-cols-2 gap-2">
-                        {transactions.map((t) => (
-                            <div key={t.id} className="p-1 bg-gray-50 border rounded">
-                                <div className="font-medium">{t.transaction_type?.toUpperCase() || ''} {t.quantity}</div>
-                                <div className="text-gray-500">{t.transaction_date} • {t.price}</div>
-                            </div>
-                        ))}
+            {/* Transactions info */}
+            {transactions.length > 0 && (
+                <div className="mt-3 p-3 bg-gray-50 rounded-lg border border-gray-200">
+                    <div className="text-sm font-semibold text-gray-700 mb-2">
+                        Transakcje na wykresie: {transactions.length}
                     </div>
-                )}
-            </div>
+                    <div className="grid grid-cols-2 gap-2 max-h-32 overflow-y-auto">
+                        {transactions.map((t) => {
+                            const isBuy = String(t.transaction_type).toLowerCase() === 'buy';
+                            const qty = Number(t.quantity) || 0;
+                            const price = Number(t.price) || 0;
+                            
+                            return (
+                                <div key={t.id} className={`p-2 rounded text-xs ${
+                                    isBuy
+                                        ? 'bg-green-50 border border-green-200'
+                                        : 'bg-red-50 border border-red-200'
+                                }`}>
+                                    <div className="font-bold">
+                                        {isBuy ? 'KUPNO' : 'SPRZEDAŻ'} {qty.toFixed(0)} szt.
+                                    </div>
+                                    <div className="text-gray-600">
+                                        {t.transaction_date}
+                                    </div>
+                                    <div className="text-gray-800 font-semibold">
+                                        {price.toFixed(2)} PLN
+                                    </div>
+                                </div>
+                            );
+                        })}
+                    </div>
+                </div>
+            )}
 
             <div className="mt-4 flex items-center gap-4 text-xs text-gray-600">
                 <span className="flex items-center gap-2">
@@ -1495,9 +1483,15 @@ function PortfolioView({ days }) {
     };
 
     useEffect(() => {
-        if (!chartContainerRef.current || !roiSeries || roiSeries.length === 0) return;
+            if (!chartContainerRef.current || !priceHistory || priceHistory.length === 0) return;
 
-        const chart = createChart(chartContainerRef.current, {
+            // Clear any existing chart first
+            if (chartRef.current) {
+                chartRef.current.remove();
+                chartRef.current = null;
+            }
+
+            const chart = createChart(chartContainerRef.current, {
             layout: {
                 background: { type: ColorType.Solid, color: 'white' },
                 textColor: 'black',

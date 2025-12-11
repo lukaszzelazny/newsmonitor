@@ -131,3 +131,58 @@ def portfolio_monthly_profit():
         return jsonify({'error': str(e)}), 500
     finally:
         session.close()
+
+
+@portfolio_bp.route('/api/portfolio/transactions')
+def portfolio_transactions():
+    """
+    Zwraca listę transakcji (buy/sell) dla zadanego tickera.
+    Parametry:
+      - ticker: symbol tickera (np. 'PKN')
+    """
+    ticker = request.args.get('ticker', default=None, type=str)
+    if not ticker:
+        return jsonify([])
+
+    db = Database()
+    session = db.Session()
+    try:
+        from portfolio.models import Transaction, Asset
+
+        # --- ZMODYFIKOWANA LOGIKA FILTROWANIA ---
+
+        # Jeśli ticker kończy się na .PL, tworzymy warunek OR, aby uwzględnić tickery z i bez sufiksu.
+        if ticker.endswith('.PL'):
+            # Usuwamy '.PL'
+            base_ticker = ticker[:-3]
+            # Używamy operatora OR (|) do znalezienia transakcji dla obu wariantów
+            filter_conditions = (Asset.ticker == ticker) | (Asset.ticker == base_ticker)
+        else:
+            # Dla innych tickerów używamy standardowego dopasowania
+            filter_conditions = (Asset.ticker == ticker)
+
+        # Stosujemy zdefiniowany warunek filtrowania
+        rows = session.query(Transaction).join(Asset).filter(
+            filter_conditions).order_by(Transaction.transaction_date).all()
+
+        # --- KONIEC ZMODYFIKOWANEJ LOGIKI FILTROWANIA ---
+
+        result = []
+        for t in rows:
+            result.append({
+                'id': t.id,
+                'transaction_type': t.transaction_type.value if hasattr(
+                    t.transaction_type, 'value') else str(t.transaction_type),
+                'quantity': float(t.quantity) if t.quantity is not None else None,
+                'price': float(t.price) if t.price is not None else None,
+                'transaction_date': t.transaction_date.strftime('%Y-%m-%d') if hasattr(
+                    t.transaction_date, 'strftime') else str(t.transaction_date),
+            })
+        return jsonify(result)
+    except Exception as e:
+        print(f"Error in /api/portfolio/transactions: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+    finally:
+        session.close()
