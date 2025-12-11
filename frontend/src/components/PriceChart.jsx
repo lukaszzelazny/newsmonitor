@@ -1,0 +1,378 @@
+import React, { useState, useEffect, useRef } from 'react';
+import { createChart, ColorType } from 'lightweight-charts';
+
+export default function PriceChart({ ticker, priceHistory, brokerageAnalyses, analyses, onNewsClick }) {
+    const chartContainerRef = useRef(null);
+    const chartRef = useRef(null);
+    const [chartType, setChartType] = useState('candlestick');
+    const [showVolume, setShowVolume] = useState(true);
+    const [transactions, setTransactions] = useState([]);
+
+    useEffect(() => {
+        if (!ticker) return;
+        fetch(`/api/portfolio/transactions?ticker=${encodeURIComponent(ticker)}`)
+            .then(res => res.json())
+            .then(data => {
+                if (Array.isArray(data)) setTransactions(data);
+                else setTransactions([]);
+            })
+            .catch(err => {
+                console.error('Error fetching transactions:', err);
+                setTransactions([]);
+            });
+
+        const mock = [];
+        const t = setTimeout(() => {
+            setTransactions(prev => (prev && prev.length > 0) ? prev : mock);
+        }, 350);
+        return () => clearTimeout(t);
+    }, [ticker]);
+
+    useEffect(() => {
+        if (!chartContainerRef.current || !priceHistory || priceHistory.length === 0) return;
+
+        const chart = createChart(chartContainerRef.current, {
+            layout: {
+                background: { type: ColorType.Solid, color: 'white' },
+                textColor: 'black',
+            },
+            width: chartContainerRef.current.clientWidth,
+            height: 400,
+            grid: {
+                vertLines: { color: '#f0f0f0' },
+                horzLines: { color: '#f0f0f0' },
+            },
+            rightPriceScale: {
+                borderColor: '#d1d4dc',
+                scaleMargins: {
+                    top: 0.1,
+                    bottom: showVolume ? 0.08 : 0.02,
+                },
+            },
+            timeScale: {
+                borderColor: '#d1d4dc',
+            },
+        });
+        chartRef.current = chart;
+
+        if (showVolume) {
+            const volumeSeries = chart.addHistogramSeries({
+                color: '#26a69a',
+                priceFormat: { type: 'volume' },
+                priceScaleId: '',
+                scaleMargins: { top: 0.92, bottom: 0 },
+            });
+
+            const volumeData = priceHistory.map(d => ({
+                time: d.date,
+                value: d.volume,
+                color: (d.close >= d.open) ? '#26a69a' : '#ef5350',
+            }));
+            volumeSeries.setData(volumeData);
+        }
+
+        let mainSeries;
+        if (chartType === 'candlestick') {
+            mainSeries = chart.addCandlestickSeries({
+                upColor: '#26a69a',
+                downColor: '#ef5350',
+                borderVisible: false,
+                wickUpColor: '#26a69a',
+                wickDownColor: '#ef5350',
+            });
+            const candleData = priceHistory.map(d => ({
+                time: d.date,
+                open: d.open ?? d.price,
+                high: d.high ?? d.price,
+                low: d.low ?? d.price,
+                close: d.close ?? d.price,
+            }));
+            mainSeries.setData(candleData);
+        } else {
+            mainSeries = chart.addLineSeries({ color: '#2962FF', lineWidth: 2 });
+            const lineData = priceHistory.map(d => ({ time: d.date, value: d.close ?? d.price }));
+            mainSeries.setData(lineData);
+        }
+
+        if (analyses && analyses.length > 0) {
+            const markers = [];
+            analyses.forEach(news => {
+                let color = '#9ca3af';
+                let shape = 'circle';
+                if (news.impact > 0.2) { color = '#10b981'; shape = 'arrowUp'; }
+                else if (news.impact < -0.2) { color = '#ef5350'; shape = 'arrowDown'; }
+
+                markers.push({
+                    time: news.date,
+                    position: news.impact > 0 ? 'belowBar' : 'aboveBar',
+                    color: color,
+                    shape: shape,
+                    text: 'News',
+                    id: news.news_id
+                });
+            });
+            markers.sort((a, b) => new Date(a.time) - new Date(b.time));
+            mainSeries.setMarkers(markers);
+        }
+
+        const latestBrokerage = brokerageAnalyses?.find(b => b.price_new);
+        if (latestBrokerage && latestBrokerage.price_new) {
+            const priceLine = {
+                price: latestBrokerage.price_new,
+                color: '#10b981',
+                lineWidth: 2,
+                lineStyle: 2,
+                axisLabelVisible: true,
+                title: 'Cel',
+            };
+            mainSeries.createPriceLine(priceLine);
+        }
+
+        chart.timeScale().fitContent();
+
+        const overlay = document.createElement('div');
+        overlay.style.position = 'absolute';
+        overlay.style.left = '0';
+        overlay.style.top = '0';
+        overlay.style.right = '0';
+        overlay.style.bottom = '0';
+        overlay.style.pointerEvents = 'none';
+        overlay.style.zIndex = '10';
+        chartContainerRef.current.style.position = 'relative';
+        chartContainerRef.current.appendChild(overlay);
+
+        const renderTransactions = () => {
+            if (!overlay) return;
+            overlay.innerHTML = '';
+            if (!transactions || transactions.length === 0) return;
+
+            const markerSize = 12;
+
+            transactions.forEach(t => {
+                const time = t.transaction_date;
+                const price = Number(t.price);
+                if (!time || !price) return;
+
+                let x = null, y = null;
+
+                try {
+                    const timeCoord = chart.timeScale().timeToCoordinate(time);
+                    const priceCoord = mainSeries.priceToCoordinate(price);
+
+                    if (timeCoord !== null && priceCoord !== null) {
+                        x = timeCoord;
+                        y = priceCoord;
+                    }
+                } catch (e) {
+                    console.debug('Failed to map transaction coordinates:', e);
+                }
+
+                if (x === null || y === null || isNaN(x) || isNaN(y)) {
+                    console.debug('Skipping transaction - invalid coordinates:', { time, price, x, y });
+                    return;
+                }
+
+                const el = document.createElement('div');
+                const isBuy = String(t.transaction_type).toLowerCase() === 'buy';
+                const qty = Number(t.quantity) || 0;
+
+                el.title = `${isBuy ? 'KUPNO' : 'SPRZEDAŻ'}: ${qty.toFixed(0)} szt. @ ${price.toFixed(2)} PLN`;
+                el.style.position = 'absolute';
+                el.style.left = `${x}px`;
+                el.style.top = `${y}px`;
+                el.style.transform = 'translate(-50%, -50%)';
+                el.style.width = `${markerSize}px`;
+                el.style.height = `${markerSize}px`;
+                el.style.borderRadius = '50%';
+                el.style.background = isBuy ? '#10b981' : '#ef4444';
+                el.style.boxShadow = `0 0 0 2px rgba(255,255,255,0.9), 0 2px 6px rgba(0,0,0,0.3)`;
+                el.style.pointerEvents = 'auto';
+                el.style.cursor = 'pointer';
+                el.style.transition = 'transform 0.2s ease';
+                el.style.zIndex = '100';
+
+                el.addEventListener('mouseenter', () => {
+                    el.style.transform = 'translate(-50%, -50%) scale(1.5)';
+                    el.style.zIndex = '101';
+                });
+
+                el.addEventListener('mouseleave', () => {
+                    el.style.transform = 'translate(-50%, -50%) scale(1)';
+                    el.style.zIndex = '100';
+                });
+
+                overlay.appendChild(el);
+            });
+        };
+        renderTransactions();
+
+        const handleResize = () => {
+            if (chartContainerRef.current && chartRef.current) {
+                chartRef.current.applyOptions({ width: chartContainerRef.current.clientWidth });
+                renderTransactions();
+            }
+        };
+
+        window.addEventListener('resize', handleResize);
+
+        let unsubVisible = null;
+        try {
+            unsubVisible = chart.timeScale().subscribeVisibleTimeRangeChange(() => {
+                requestAnimationFrame(renderTransactions);
+            });
+        } catch (e) {
+            console.debug('Could not subscribe to visible range changes:', e);
+        }
+
+            return () => {
+            window.removeEventListener('resize', handleResize);
+            if (unsubVisible && typeof unsubVisible === 'function') {
+                try {
+                    unsubVisible();
+                } catch (e) {
+                    console.debug('Error unsubscribing:', e);
+                }
+            }
+            if (overlay && overlay.parentNode) {
+                overlay.parentNode.removeChild(overlay);
+            }
+            try {
+                if (chartRef.current && typeof chartRef.current.remove === 'function') {
+                    chartRef.current.remove();
+                }
+            } catch (e) {
+                console.debug('Error removing chart (already disposed?):', e);
+            }
+            chartRef.current = null;
+        };
+    }, [priceHistory, chartType, showVolume, analyses, brokerageAnalyses, transactions]);
+
+    if (!priceHistory || priceHistory.length === 0) {
+        return (
+            <div className="bg-white rounded-lg shadow-lg p-6 mb-6">
+                <div className="text-center text-gray-500 py-8">
+                    <p>Brak danych o cenach dla {ticker}</p>
+                </div>
+            </div>
+        );
+    }
+
+    const latestPrice = priceHistory[priceHistory.length - 1]?.price ?? priceHistory[priceHistory.length - 1]?.close;
+    const firstPrice = priceHistory[0]?.price ?? priceHistory[0]?.close;
+    const priceChange = latestPrice && firstPrice ? ((latestPrice - firstPrice) / firstPrice * 100) : 0;
+    const latestBrokerage = brokerageAnalyses?.find(b => b.price_new);
+
+    return (
+        <div className="bg-white rounded-lg shadow-lg p-6">
+            <div className="flex items-center justify-between mb-4">
+                <div>
+                    <h3 className="text-xl font-bold text-gray-900">Wykres kursu {ticker}</h3>
+                    <p className="text-sm text-gray-600">Ostatnie {priceHistory.length} dni</p>
+                </div>
+                <div className="text-right">
+                    <div className="text-2xl font-bold text-gray-900">
+                        {latestPrice?.toFixed(2)} PLN
+                    </div>
+                    <div className={`text-sm font-semibold ${priceChange >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                        {priceChange >= 0 ? '+' : ''}{priceChange.toFixed(2)}%
+                    </div>
+                </div>
+            </div>
+
+            <div className="flex gap-2 mb-2 justify-end text-xs">
+               <button 
+                   onClick={() => setChartType('candlestick')} 
+                   className={`px-3 py-1 rounded ${chartType==='candlestick' ? 'bg-blue-100 text-blue-700 font-bold' : 'bg-gray-100 text-gray-600'}`}
+               >
+                   Świece
+               </button>
+               <button 
+                   onClick={() => setChartType('line')} 
+                   className={`px-3 py-1 rounded ${chartType==='line' ? 'bg-blue-100 text-blue-700 font-bold' : 'bg-gray-100 text-gray-600'}`}
+               >
+                   Linia
+               </button>
+               <label className="flex items-center gap-1 cursor-pointer bg-gray-100 px-2 py-1 rounded hover:bg-gray-200 ml-2">
+                   <input 
+                       type="checkbox" 
+                       checked={showVolume} 
+                       onChange={(e) => setShowVolume(e.target.checked)} 
+                       className="cursor-pointer w-3 h-3 accent-blue-600"
+                   />
+                   <span className="text-gray-600 font-medium">Wolumen</span>
+               </label>
+            </div>
+
+            <div ref={chartContainerRef} className="w-full h-[400px]" />
+
+            {transactions.length > 0 && (
+                <div className="mt-3 p-3 bg-gray-50 rounded-lg border border-gray-200">
+                    <div className="text-sm font-semibold text-gray-700 mb-2">
+                        Transakcje na wykresie: {transactions.length}
+                    </div>
+                    <div className="grid grid-cols-2 gap-2 max-h-32 overflow-y-auto">
+                        {transactions.map((t) => {
+                            const isBuy = String(t.transaction_type).toLowerCase() === 'buy';
+                            const qty = Number(t.quantity) || 0;
+                            const price = Number(t.price) || 0;
+                            
+                            return (
+                                <div key={t.id} className={`p-2 rounded text-xs ${
+                                    isBuy
+                                        ? 'bg-green-50 border border-green-200'
+                                        : 'bg-red-50 border border-red-200'
+                                }`}>
+                                    <div className="font-bold">
+                                        {isBuy ? 'KUPNO' : 'SPRZEDAŻ'} {qty.toFixed(0)} szt.
+                                    </div>
+                                    <div className="text-gray-600">
+                                        {t.transaction_date}
+                                    </div>
+                                    <div className="text-gray-800 font-semibold">
+                                        {price.toFixed(2)} PLN
+                                    </div>
+                                </div>
+                            );
+                        })}
+                    </div>
+                </div>
+            )}
+
+            <div className="mt-4 flex items-center gap-4 text-xs text-gray-600">
+                <span className="flex items-center gap-2">
+                    <span className="w-3 h-3 rounded-full bg-green-500"></span>
+                    {'Pozytywny (impact > 0.2)'}
+                </span>
+                <span className="flex items-center gap-2">
+                    <span className="w-3 h-3 rounded-full bg-red-500"></span>
+                    {'Negatywny (impact < -0.2)'}
+                </span>
+                 <span className="flex items-center gap-2">
+                    <span className="w-3 h-3 rounded-full bg-gray-400"></span>
+                    Neutralny
+                </span>
+            </div>
+
+
+            {latestBrokerage && (
+                <div className="mt-4 p-3 bg-green-50 rounded-lg">
+                    <div className="flex items-center justify-between text-sm">
+                        <span className="text-gray-700">
+                            Cena docelowa wg <strong>{latestBrokerage.brokerage_house}</strong>:
+                        </span>
+                        <div className="flex items-center gap-4">
+                            <span className="font-bold text-green-700">
+                                {latestBrokerage.price_new?.toFixed(2)} PLN
+                            </span>
+                            {latestBrokerage.upside_percent !== null && (
+                                <span className={`font-semibold ${latestBrokerage.upside_percent >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                                    ({latestBrokerage.upside_percent >= 0 ? '+' : ''}{latestBrokerage.upside_percent.toFixed(1)}%)
+                                </span>
+                            )}
+                        </div>
+                    </div>
+                </div>
+            )}
+        </div>
+    );
+}

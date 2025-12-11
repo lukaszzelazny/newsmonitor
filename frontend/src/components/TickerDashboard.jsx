@@ -1,0 +1,745 @@
+import React, { useState, useEffect, useRef } from 'react';
+import PriceChart from './PriceChart';
+import TechnicalAnalysis from './TechnicalAnalysis';
+import TickerSelect from './TickerSelect';
+import CalendarView from './CalendarView';
+import CalendarRejectedView from './CalendarRejectedView';
+import PortfolioView from './PortfolioView';
+
+export default function TickerDashboard() {
+    const [tickers, setTickers] = useState([]);
+    const [selectedTicker, setSelectedTicker] = useState(null);
+    const [analyses, setAnalyses] = useState([]);
+    const [brokerageAnalyses, setBrokerageAnalyses] = useState([]);
+    const [priceHistory, setPriceHistory] = useState([]);
+    const [loading, setLoading] = useState(false);
+    const [loadingChart, setLoadingChart] = useState(false);
+    const [searchTerm, setSearchTerm] = useState('');
+    const [days, setDays] = useState(30);
+    const [filterImpact, setFilterImpact] = useState('all');
+    const [showStats, setShowStats] = useState(true);
+    const [viewMode, setViewMode] = useState('tickers'); // 'tickers', 'calendar', 'rejected' lub 'portfolio'
+    const [scrapingTicker, setScrapingTicker] = useState(null);
+    const [notification, setNotification] = useState(null);
+    const notificationTimeout = useRef(null);
+
+    const showNotification = (message, type = 'success') => {
+        setNotification({ message, type });
+
+        if (notificationTimeout.current) {
+            clearTimeout(notificationTimeout.current);
+        }
+
+        notificationTimeout.current = setTimeout(() => {
+            setNotification(null);
+        }, 5000);
+    };
+
+    const handleTickerSelectFromCalendar = (tickerSymbol) => {
+        const tickerData = tickers.find(t => t.ticker === tickerSymbol);
+        if (tickerData) {
+            setSelectedTicker(tickerData);
+        } else {
+            setSelectedTicker({ ticker: tickerSymbol });
+        }
+        setViewMode('tickers');
+    };
+
+    useEffect(() => {
+        fetchTickers();
+    }, [days]);
+
+    useEffect(() => {
+        if (selectedTicker) {
+            fetchAnalyses(selectedTicker.ticker);
+            fetchBrokerageAnalyses(selectedTicker.ticker);
+            fetchPriceHistory(selectedTicker.ticker);
+        }
+    }, [selectedTicker, days]);
+
+    const fetchTickers = async () => {
+        try {
+            const response = await fetch(`/api/tickers?days=${days}`);
+            const data = await response.json();
+            setTickers(data);
+        } catch (error) {
+            console.error('Error fetching tickers:', error);
+        }
+    };
+
+    const fetchAnalyses = async (ticker) => {
+        setLoading(true);
+        try {
+            const response = await fetch(`/api/analyses/${ticker}?days=${days}`);
+            const data = await response.json();
+            setAnalyses(data);
+        } catch (error) {
+            console.error('Error fetching analyses:', error);
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    const fetchBrokerageAnalyses = async (ticker) => {
+        try {
+            const response = await fetch(`/api/brokerage/${ticker}?days=${days}`);
+            const data = await response.json();
+            setBrokerageAnalyses(data);
+        } catch (error) {
+            console.error('Error fetching brokerage analyses:', error);
+        }
+    };
+
+    const fetchPriceHistory = async (ticker) => {
+        setLoadingChart(true);
+        try {
+            const response = await fetch(`/api/price_history/${ticker}?days=${days}`);
+            const data = await response.json();
+            setPriceHistory(data);
+        } catch (error) {
+            console.error('Error fetching price history:', error);
+            setPriceHistory([]);
+        } finally {
+            setLoadingChart(false);
+        }
+    };
+
+    const markAsDuplicate = async (newsId) => {
+        // Optimistic UI update
+        const originalAnalyses = [...analyses];
+        const updatedAnalyses = analyses.filter(a => a.news_id !== newsId);
+        setAnalyses(updatedAnalyses);
+
+        try {
+            const response = await fetch('/api/mark_duplicate', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ news_id: newsId })
+            });
+
+            if (response.ok) {
+                showNotification('News oznaczony jako duplikat.', 'success');
+                fetchTickers(); // Odśwież statystyki tickerów
+            } else {
+                setAnalyses(originalAnalyses); // Revert on failure
+                showNotification('Błąd przy oznaczaniu newsa jako duplikat.', 'error');
+            }
+        } catch (error) {
+            console.error('Error marking as duplicate:', error);
+            setAnalyses(originalAnalyses); // Revert on error
+            showNotification('Błąd sieci przy oznaczaniu jako duplikat.', 'error');
+        }
+    };
+
+    const filteredTickers = tickers.filter(t =>
+        t.ticker.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        (t.company_name && t.company_name.toLowerCase().includes(searchTerm.toLowerCase()))
+    );
+
+    const sortedTickers = [...filteredTickers].sort((a, b) => {
+        // Sortowanie: portfolio -> ulubione -> impact
+        if (a.in_portfolio !== b.in_portfolio) {
+            return b.in_portfolio - a.in_portfolio;
+        }
+        if (a.is_favorite !== b.is_favorite) {
+            return b.is_favorite - a.is_favorite;
+        }
+    return b.avg_sentiment - a.avg_sentiment;
+});
+    const listForView = viewMode === 'portfolio' ? sortedTickers.filter(t => t.in_portfolio) : sortedTickers;
+
+    useEffect(() => {
+        if (viewMode === 'portfolio') {
+            const first = sortedTickers.find(t => t.in_portfolio);
+            if (first && (!selectedTicker || selectedTicker.ticker !== first.ticker)) {
+                setSelectedTicker(first);
+            }
+        }
+    }, [viewMode, sortedTickers]);
+
+    const filteredAnalyses = analyses.filter(a => {
+        if (filterImpact === 'all') return true;
+        if (filterImpact === 'positive') return a.impact > 0.05;
+        if (filterImpact === 'negative') return a.impact < -0.05;
+        if (filterImpact === 'neutral') return Math.abs(a.impact) <= 0.05;
+        return true;
+    });
+
+    const getSentimentColor = (sentiment) => {
+        const val = Math.abs(sentiment);
+        if (val < 0.05) return 'text-gray-500';
+        if (sentiment > 0.3) return 'text-green-600';
+        if (sentiment > 0) return 'text-green-400';
+        if (sentiment > -0.3) return 'text-yellow-500';
+        return 'text-red-500';
+    };
+
+    const getSentimentBg = (sentiment) => {
+        const val = Math.abs(sentiment);
+        if (val < 0.05) return 'bg-gray-100';
+        if (sentiment > 0.3) return 'bg-green-100';
+        if (sentiment > 0) return 'bg-green-50';
+        if (sentiment > -0.3) return 'bg-yellow-50';
+        return 'bg-red-50';
+    };
+
+    const getRecommendationColor = (recommendation) => {
+        if (!recommendation) return 'text-gray-600';
+        const rec = recommendation.toLowerCase();
+        if (rec.includes('kupuj') || rec.includes('buy') || rec.includes('accumulate')) {
+            return 'text-green-600 font-bold';
+        }
+        if (rec.includes('trzymaj') || rec.includes('hold') || rec.includes('neutral')) {
+            return 'text-yellow-600 font-bold';
+        }
+        if (rec.includes('sprzedaj') || rec.includes('sell') || rec.includes('reduce')) {
+            return 'text-red-600 font-bold';
+        }
+        return 'text-gray-600';
+    };
+
+    const getUpsideColor = (upside) => {
+        if (upside === null || upside === undefined) return 'text-gray-600';
+        if (upside > 30) return 'text-green-700 font-bold';
+        if (upside > 15) return 'text-green-600 font-semibold';
+        if (upside > 5) return 'text-green-500';
+        if (upside > -5) return 'text-gray-600';
+        if (upside > -15) return 'text-red-500';
+        if (upside > -30) return 'text-red-600 font-semibold';
+        return 'text-red-700 font-bold';
+    };
+
+    const getUpsideBg = (upside) => {
+        if (upside === null || upside === undefined) return 'bg-gray-50';
+        if (upside > 20) return 'bg-green-100';
+        if (upside > 10) return 'bg-green-50';
+        if (upside > -10) return 'bg-gray-50';
+        if (upside > -20) return 'bg-red-50';
+        return 'bg-red-100';
+    };
+
+    const getImpactColor = (impact) => {
+        const val = Math.abs(impact);
+        if (val < 0.05) return 'bg-gray-400';
+        if (impact > 0.5) return 'bg-green-600';
+        if (impact > 0.2) return 'bg-green-500';
+        if (impact > 0.05) return 'bg-green-400';
+        if (impact > -0.05) return 'bg-gray-400';
+        if (impact > -0.2) return 'bg-orange-400';
+        if (impact > -0.5) return 'bg-orange-500';
+        return 'bg-red-600';
+    };
+
+    const tickerStats = selectedTicker ? {
+        totalNews: analyses.length,
+        positiveNews: analyses.filter(a => a.impact > 0.05).length,
+        negativeNews: analyses.filter(a => a.impact < -0.05).length,
+        neutralNews: analyses.filter(a => Math.abs(a.impact) <= 0.05).length,
+        avgImpact: analyses.length > 0 ? (analyses.reduce((sum, a) => sum + a.impact, 0) / analyses.length) : 0,
+        avgConfidence: analyses.length > 0 ? (analyses.reduce((sum, a) => sum + a.confidence, 0) / analyses.length) : 0
+    } : null;
+
+    return (
+        <div className="min-h-screen bg-gray-50 p-4">
+            <div className="max-w-7xl mx-auto">
+                    <div className="flex items-center justify-between mb-4">
+                        <h1 className="text-2xl font-bold text-gray-900">
+                            Analiza Sentymentu Tickerów
+                        </h1>
+                        <div className="flex items-center gap-3">
+                            <div className="flex items-center gap-2">
+                                <button
+                                    onClick={() => setViewMode('tickers')}
+                                    className={`px-3 py-1 text-sm rounded-lg transition-colors ${viewMode === 'tickers'
+                                        ? 'bg-blue-500 text-white'
+                                        : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+                                    }`}
+                                >
+                                    Widok Tickerów
+                                </button>
+                                <button
+                                    onClick={() => setViewMode('calendar')}
+                                    className={`px-3 py-1 text-sm rounded-lg transition-colors ${viewMode === 'calendar'
+                                        ? 'bg-blue-500 text-white'
+                                        : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+                                    }`}
+                                >
+                                    Kalendarz Analiz
+                                </button>
+                                <button
+                                    onClick={() => setViewMode('rejected')}
+                                    className={`px-3 py-1 text-sm rounded-lg transition-colors ${viewMode === 'rejected'
+                                        ? 'bg-red-500 text-white'
+                                        : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+                                    }`}
+                                >
+                                    Odrzucone Newsy
+                                </button>
+                                <button
+                                    onClick={() => setViewMode('portfolio')}
+                                    className={`px-3 py-1 text-sm rounded-lg transition-colors ${viewMode === 'portfolio'
+                                        ? 'bg-green-600 text-white'
+                                        : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+                                    }`}
+                                >
+                                    Portfolio
+                                </button>
+                            </div>
+                            <div className="flex items-center gap-2">
+                                <label className="text-xs text-gray-600">Okres:</label>
+                            <select
+                                value={days}
+                                onChange={(e) => setDays(Number(e.target.value))}
+                                className="px-2 py-1 text-sm border border-gray-300 rounded-lg"
+                            >
+                                <option value="7">7 dni</option>
+                                <option value="14">14 dni</option>
+                                <option value="30">1 miesiąc</option>
+                                <option value="90">3 miesiące</option>
+                                <option value="180">6 miesięcy</option>
+                                <option value="365">1 rok</option>
+                            </select>
+                        </div>
+                    </div>
+                </div>
+
+                {notification && (
+                    <div
+                        className={`fixed top-5 right-5 p-4 rounded-lg shadow-lg text-sm z-50 transition-opacity duration-300 ${notification.type === 'success' ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}`} 
+                        onClick={() => setNotification(null)}
+                    >
+                        {notification.message}
+                    </div>
+                )}
+
+                {viewMode === 'calendar' ? (
+                    <CalendarView days={days} onTickerSelect={handleTickerSelectFromCalendar} showNotification={showNotification} />
+                ) : viewMode === 'rejected' ? (
+                    <CalendarRejectedView days={days} />
+                ) : viewMode === 'portfolio' ? (
+                    <PortfolioView days={days} />
+                ) : (
+                    <div className="grid grid-cols-12 gap-4">
+                        <div className="col-span-3 bg-white rounded-lg shadow p-3 sticky top-4 self-start" style={{ maxHeight: 'calc(100vh - 2rem)' }}>
+                            <div className="mb-3">
+                                <input
+                                    type="text"
+                                    placeholder="Szukaj tickera..."
+                                    className="w-full px-3 py-1.5 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                                    value={searchTerm}
+                                    onChange={(e) => setSearchTerm(e.target.value)}
+                                />
+                            </div>
+
+                            <div className="space-y-1.5 overflow-y-auto" style={{ maxHeight: 'calc(100vh - 10rem)' }}>
+                                {listForView.map((ticker) => {
+                                    const togglePortfolio = async (e) => {
+                                        e.stopPropagation();
+                                        try {
+                                            const response = await fetch('/api/toggle_portfolio', {
+                                                method: 'POST',
+                                                headers: { 'Content-Type': 'application/json' },
+                                                body: JSON.stringify({ ticker: ticker.ticker, in_portfolio: !ticker.in_portfolio })
+                                            });
+                                            if (response.ok) {
+                                                fetchTickers();
+                                            }
+                                        } catch (error) {
+                                            console.error('Error toggling portfolio:', error);
+                                        }
+                                    };
+                                    const toggleFavorite = async (e) => {
+                                        e.stopPropagation();
+                                        try {
+                                            const response = await fetch('/api/toggle_favorite', {
+                                                method: 'POST',
+                                                headers: { 'Content-Type': 'application/json' },
+                                                body: JSON.stringify({ ticker: ticker.ticker, is_favorite: !ticker.is_favorite })
+                                            });
+                                            if (response.ok) {
+                                                fetchTickers();
+                                            }
+                                        } catch (error) {
+                                            console.error('Error toggling favorite:', error);
+                                        }
+                                    };
+
+                                    const handleScrape = async (e) => {
+                                        e.stopPropagation();
+
+                                        setScrapingTicker(ticker.ticker);
+                                        showNotification(`Rozpoczynam scraping dla ${ticker.ticker}...`, 'success');
+
+                                        try {
+                                            const response = await fetch('/api/scrape_ticker', {
+                                                method: 'POST',
+                                                headers: { 'Content-Type': 'application/json' },
+                                                body: JSON.stringify({ ticker: ticker.ticker })
+                                            });
+                                            const data = await response.json();
+
+                                            if (response.ok) {
+                                                showNotification(`Scraping dla ${ticker.ticker} zakończony! Nowe artykuły: ${data.new_articles}`, 'success');
+                                                fetchAnalyses(ticker.ticker);
+                                            } else {
+                                                showNotification(`Błąd podczas scrapingu ${ticker.ticker}: ${data.error}`, 'error');
+                                            }
+                                        } catch (error) {
+                                            showNotification(`Błąd sieci podczas scrapingu ${ticker.ticker}.`, 'error');
+                                        } finally {
+                                            setScrapingTicker(null);
+                                        }
+                                    };
+
+                                    return (
+                                        <div
+                                            key={ticker.ticker}
+                                            onClick={() => setSelectedTicker(ticker)}
+                                            className={`p-2 rounded-lg cursor-pointer transition-all relative ${ticker.in_portfolio
+                                                    ? (selectedTicker?.ticker === ticker.ticker
+                                                        ? 'bg-gradient-to-r from-green-100 to-emerald-100 border-2 border-blue-500'
+                                                        : 'bg-gradient-to-r from-green-50 to-emerald-50 hover:from-green-100 hover:to-emerald-100 border-2 border-green-200')
+                                                    : ticker.is_favorite
+                                                        ? (selectedTicker?.ticker === ticker.ticker
+                                                            ? 'bg-gradient-to-r from-blue-100 to-cyan-100 border-2 border-blue-500'
+                                                            : 'bg-gradient-to-r from-blue-50 to-cyan-50 hover:from-blue-100 hover:to-cyan-100 border-2 border-blue-200')
+                                                        : (selectedTicker?.ticker === ticker.ticker
+                                                            ? 'bg-blue-50 border-2 border-blue-500'
+                                                            : 'bg-gray-50 hover:bg-gray-100 border-2 border-transparent')
+                                                }`}
+                                        >
+                                            <div className="flex items-center justify-between">
+                                                <div className="flex-1 min-w-0">
+                                                    <div className="flex items-center gap-1.5">
+                                                        <span className={`text-base ${ticker.in_portfolio ? 'font-extrabold text-green-900' : 'font-bold text-gray-900'}`}>
+                                                            {ticker.ticker}
+                                                        </span>
+                                                        {ticker.in_portfolio && (
+                                                            <span className="text-xs bg-green-600 text-white px-1.5 py-0.5 rounded-full font-semibold">
+                                                                Portfolio
+                                                            </span>
+                                                        )}
+                                                        {ticker.is_favorite && (
+                                                            <span className="text-xs bg-blue-600 text-white px-1.5 py-0.5 rounded-full font-semibold">
+                                                                Ulubione
+                                                            </span>
+                                                        )}
+                                                    </div>
+                                                    <p className="text-xs text-gray-600 truncate">{ticker.company_name || 'Brak nazwy'}</p>
+                                                    <p className="text-xs text-gray-500">{ticker.sector || 'Brak sektora'}</p>
+                                                </div>
+                                                <div className="flex flex-col items-center gap-2 ml-2">
+                                                    <button onClick={handleScrape} disabled={scrapingTicker === ticker.ticker} className={`text-white px-2 py-1 rounded text-xs ${scrapingTicker === ticker.ticker ? 'bg-gray-400' : 'bg-blue-500'}`}>
+                                                        {scrapingTicker === ticker.ticker ? 'Scraping...' : 'Scrape'}
+                                                    </button>
+                                                    <div className="text-right">
+                                                        <div className={`text-base font-bold ${getSentimentColor(ticker.avg_sentiment)}`}>
+                                                            {ticker.avg_sentiment > 0 ? '+' : ''}{Number(ticker.avg_sentiment).toFixed(2)}
+                                                        </div>
+                                                        <div className="text-xs text-gray-500">
+                                                            {ticker.mentions} wzm.
+                                                        </div>
+                                                    </div>
+                                                    <div className="flex items-center gap-2">
+                                                        <input
+                                                            type="checkbox"
+                                                            checked={ticker.is_favorite}
+                                                            onChange={toggleFavorite}
+                                                            className="w-4 h-4 cursor-pointer accent-blue-600"
+                                                            title="Dodaj/usuń z ulubionych"
+                                                        />
+                                                        <input
+                                                            type="checkbox"
+                                                            checked={ticker.in_portfolio}
+                                                            onChange={togglePortfolio}
+                                                            className="w-4 h-4 cursor-pointer accent-green-600"
+                                                            title="Dodaj/usuń z portfolio"
+                                                        />
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                        </div>
+
+                        <div className="col-span-9">
+                            {!selectedTicker ? (
+                                <div className="bg-white rounded-lg shadow p-6 flex items-center justify-center" style={{ minHeight: '300px' }}>
+                                    <div className="text-center text-gray-400">
+                                        <p className="text-lg">Wybierz ticker z listy po lewej</p>
+                                    </div>
+                                </div>
+                            ) : (
+                                <div className="space-y-4">
+                                    <div className={`p-3 rounded-lg shadow ${getSentimentBg(selectedTicker.avg_sentiment)}`}>
+                                        <div className="flex items-center justify-between">
+                                            <div>
+                                                <h2 className="text-xl font-bold text-gray-900">
+                                                    {selectedTicker.ticker} - {selectedTicker.company_name || 'Brak nazwy'}
+                                                </h2>
+                                                <p className="text-sm text-gray-600">{selectedTicker.sector || 'Brak sektora'}</p>
+                                            </div>
+                                            <div className="text-right">
+                                                <div className={`text-2xl font-bold ${getSentimentColor(selectedTicker.avg_sentiment)}`}>
+                                                    {selectedTicker.avg_sentiment > 0 ? '+' : ''}{Number(selectedTicker.avg_sentiment).toFixed(2)}
+                                                </div>
+                                                <div className="text-xs text-gray-600">
+                                                    Średni sentyment
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    {tickerStats && showStats && (
+                                        <div className="bg-white rounded-lg shadow p-4">
+                                            <div className="flex items-center justify-between mb-3">
+                                                <h3 className="text-base font-semibold text-gray-900">Statystyki</h3>
+                                                <button
+                                                    onClick={() => setShowStats(false)}
+                                                    className="text-gray-400 hover:text-gray-600 text-sm"
+                                                >
+                                                    ✕
+                                                </button>
+                                            </div>
+                                            <div className="grid grid-cols-3 gap-3">
+                                                <div className="bg-gray-50 p-3 rounded-lg">
+                                                    <div className="text-xl font-bold text-gray-900">{tickerStats.totalNews}</div>
+                                                    <div className="text-xs text-gray-600">Wszystkie</div>
+                                                </div>
+                                                <div className="bg-green-50 p-3 rounded-lg">
+                                                    <div className="text-xl font-bold text-green-600">{tickerStats.positiveNews}</div>
+                                                    <div className="text-xs text-gray-600">Pozytywne</div>
+                                                </div>
+                                                <div className="bg-red-50 p-3 rounded-lg">
+                                                    <div className="text-xl font-bold text-red-600">{tickerStats.negativeNews}</div>
+                                                    <div className="text-xs text-gray-600">Negatywne</div>
+                                                </div>
+                                                <div className="bg-gray-50 p-3 rounded-lg">
+                                                    <div className="text-xl font-bold text-gray-600">{tickerStats.neutralNews}</div>
+                                                    <div className="text-xs text-gray-600">Neutralne</div>
+                                                </div>
+                                                <div className="bg-blue-50 p-3 rounded-lg">
+                                                    <div className={`text-xl font-bold ${getSentimentColor(tickerStats.avgImpact)}`}>
+                                                        {tickerStats.avgImpact > 0 ? '+' : ''}{tickerStats.avgImpact.toFixed(3)}
+                                                    </div>
+                                                    <div className="text-xs text-gray-600">Śr. impact</div>
+                                                </div>
+                                                <div className="bg-purple-50 p-3 rounded-lg">
+                                                    <div className="text-xl font-bold text-purple-600">
+                                                        {(tickerStats.avgConfidence * 100).toFixed(0)}%
+                                                    </div>
+                                                    <div className="text-xs text-gray-600">Śr. pewność</div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    )}
+
+                                    {loadingChart ? (
+                                        <div className="bg-white rounded-lg shadow-lg p-6 flex items-center justify-center">
+                                            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500"></div>
+                                        </div>
+                                    ) : (
+                                        <PriceChart
+                                            ticker={selectedTicker.ticker}
+                                            priceHistory={priceHistory}
+                                            brokerageAnalyses={brokerageAnalyses}
+                                            analyses={filteredAnalyses}
+                                        />
+                                    )}
+
+                                    <TechnicalAnalysis ticker={selectedTicker.ticker} />
+
+                                    {loading ? (
+                                        <div className="bg-white rounded-lg shadow-lg p-6 flex items-center justify-center py-12">
+                                            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500"></div>
+                                        </div>
+                                    ) : (
+                                        <div className="bg-white rounded-lg shadow p-4">
+                                            <div className="space-y-4">
+                                                <div>
+                                                    <div className="flex items-center justify-between mb-2">
+                                                        <h3 className="text-base font-semibold text-gray-900">
+                                                            Analizy newsowe ({filteredAnalyses.length})
+                                                        </h3>
+                                                        <div className="flex items-center gap-2">
+                                                            <label className="text-xs text-gray-600">Filtruj:</label>
+                                                            <select
+                                                                value={filterImpact}
+                                                                onChange={(e) => setFilterImpact(e.target.value)}
+                                                                className="px-2 py-1 text-xs border border-gray-300 rounded-lg"
+                                                            >
+                                                                <option value="all">Wszystkie</option>
+                                                                <option value="positive">Pozytywne</option>
+                                                                <option value="negative">Negatywne</option>
+                                                                <option value="neutral">Neutralne</option>
+                                                            </select>
+                                                        </div>
+                                                    </div>
+                                                    {filteredAnalyses.length === 0 ? (
+                                                        <p className="text-gray-500 text-xs">Brak analiz newsowych</p>
+                                                    ) : (
+                                                        <div className="space-y-2">
+                                                            {filteredAnalyses.map((analysis, idx) => (
+                                                                <div
+                                                                    key={idx}
+                                                                    className="border border-gray-200 rounded-lg p-3 hover:shadow-md transition-shadow relative"
+                                                                >
+                                                                    <button
+                                                                        onClick={() => markAsDuplicate(analysis.news_id)}
+                                                                        className="absolute top-1.5 right-1.5 w-6 h-6 flex items-center justify-center bg-red-500 hover:bg-red-600 text-white rounded-full text-sm font-bold transition-colors"
+                                                                        title="Oznacz jako duplikat"
+                                                                    >
+                                                                        ✕
+                                                                    </button>
+
+                                                                    <div className="flex items-start gap-3">
+                                                                        <div className="flex-shrink-0">
+                                                                            <div className={`w-2 h-16 ${getImpactColor(analysis.impact)} rounded`}></div>
+                                                                        </div>
+
+                                                                        <div className="flex-1 pr-8">
+                                                                            <div className="flex items-start justify-between mb-1.5">
+                                                                                <div className="flex-1">
+                                                                                    <h3 className="font-semibold text-sm text-gray-900 mb-0.5">
+                                                                                        {analysis.title}
+                                                                                    </h3>
+                                                                                    <div className="flex items-center gap-2 text-xs text-gray-500">
+                                                                                        <span>{analysis.date}</span>
+                                                                                        <span>•</span>
+                                                                                        <span>{analysis.source}</span>
+                                                                                        {analysis.url && (
+                                                                                            <>
+                                                                                                <span>•</span>
+                                                                                                <a
+                                                                                                    href={analysis.url}
+                                                                                                    target="_blank"
+                                                                                                    rel="noopener noreferrer"
+                                                                                                    className="text-blue-600 hover:underline"
+                                                                                                >
+                                                                                                    Link
+                                                                                                </a>
+                                                                                            </>
+                                                                                        )}
+                                                                                    </div>
+                                                                                </div>
+                                                                            </div>
+
+                                                                            <div className="flex items-center gap-3 mb-2">
+                                                                                <div className="flex items-center gap-1.5">
+                                                                                    <span className="text-xs text-gray-600">Impact:</span>
+                                                                                    <span className={`font-bold text-sm ${getSentimentColor(analysis.impact)}`}>
+                                                                                        {analysis.impact > 0 ? '+' : ''}{Number(analysis.impact).toFixed(2)}
+                                                                                    </span>
+                                                                                </div>
+                                                                                <div className="flex items-center gap-1.5">
+                                                                                    <span className="text-xs text-gray-600">Confidence:</span>
+                                                                                    <span className="font-bold text-sm text-blue-600">
+                                                                                        {(Number(analysis.confidence) * 100).toFixed(0)}%
+                                                                                    </span>
+                                                                                </div>
+                                                                                {analysis.occasion && (
+                                                                                    <div className="flex items-center gap-1.5">
+                                                                                        <span className="px-2 py-0.5 bg-blue-100 text-blue-700 text-xs rounded-full">
+                                                                                            {analysis.occasion}
+                                                                                        </span>
+                                                                                    </div>
+                                                                                )}
+                                                                            </div>
+
+                                                                            {analysis.summary && (
+                                                                                <div
+                                                                                    className="text-xs text-gray-700 leading-relaxed"
+                                                                                    dangerouslySetInnerHTML={{ __html: analysis.summary }}
+                                                                                />
+                                                                            )}
+                                                                        </div>
+                                                                    </div>
+                                                                </div>
+                                                            ))}
+                                                        </div>
+                                                    )}
+                                                </div>
+
+                                                {brokerageAnalyses.length > 0 && (
+                                                    <div className="mt-4 pt-4 border-t border-gray-200">
+                                                        <h3 className="text-base font-semibold text-gray-900 mb-2">
+                                                            Rekomendacje domów maklerskich ({brokerageAnalyses.length})
+                                                        </h3>
+                                                        <div className="overflow-x-auto">
+                                                            <table className="min-w-full divide-y divide-gray-200">
+                                                                <thead className="bg-gray-50">
+                                                                    <tr>
+                                                                        <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">
+                                                                            Data
+                                                                        </th>
+                                                                        <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">
+                                                                            Dom maklerski
+                                                                        </th>
+                                                                        <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">
+                                                                            Rekomendacja
+                                                                        </th>
+                                                                        <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">
+                                                                            Cena obecna
+                                                                        </th>
+                                                                        <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">
+                                                                            Cena docelowa
+                                                                        </th>
+                                                                        <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">
+                                                                            Zmiana %
+                                                                        </th>
+                                                                        <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">
+                                                                            Upside %
+                                                                        </th>
+                                                                    </tr>
+                                                                </thead>
+                                                                <tbody className="bg-white divide-y divide-gray-200">
+                                                                    {brokerageAnalyses.map((brokerage, idx) => (
+                                                                        <tr key={idx} className={getUpsideBg(brokerage.upside_percent)}>
+                                                                            <td className="px-3 py-2 whitespace-nowrap text-xs text-gray-700">
+                                                                                {brokerage.date}
+                                                                            </td>
+                                                                            <td className="px-3 py-2 text-xs text-gray-900 font-medium">
+                                                                                {brokerage.brokerage_house}
+                                                                            </td>
+                                                                            <td className={`px-3 py-2 whitespace-nowrap text-xs ${getRecommendationColor(brokerage.recommendation)}`}>
+                                                                                {brokerage.recommendation || '-'}
+                                                                            </td>
+                                                                            <td className="px-3 py-2 whitespace-nowrap text-xs text-gray-900 font-semibold">
+                                                                                {brokerage.current_price
+                                                                                    ? `${brokerage.current_price.toFixed(2)}`
+                                                                                    : (brokerage.price_old ? brokerage.price_old.toFixed(2) : '-')}
+                                                                            </td>
+                                                                            <td className="px-3 py-2 whitespace-nowrap text-xs text-gray-900 font-semibold">
+                                                                                {brokerage.price_new ? brokerage.price_new.toFixed(2) : '-'}
+                                                                            </td>
+                                                                            <td className={`px-3 py-2 whitespace-nowrap text-xs ${getUpsideColor(brokerage.price_change_percent)}`}>
+                                                                                {brokerage.price_change_percent !== null
+                                                                                    ? `${brokerage.price_change_percent > 0 ? '+' : ''}${brokerage.price_change_percent.toFixed(1)}%`
+                                                                                    : '-'}
+                                                                            </td>
+                                                                            <td className={`px-3 py-2 whitespace-nowrap text-xs ${getUpsideColor(brokerage.upside_percent)}`}>
+                                                                                {brokerage.upside_percent !== null
+                                                                                    ? `${brokerage.upside_percent > 0 ? '+' : ''}${brokerage.upside_percent.toFixed(1)}%`
+                                                                                    : '-'}
+                                                                            </td>
+                                                                        </tr>
+                                                                    ))}
+                                                                </tbody>
+                                                            </table>
+                                                        </div>
+                                                    </div>
+                                                )}
+                                            </div>
+                                        </div>
+                                    )}
+                                </div>
+                            )}
+                        </div>
+                    </div>
+                )}
+            </div>
+        </div>
+    );
+}
