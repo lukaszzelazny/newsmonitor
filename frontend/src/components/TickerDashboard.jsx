@@ -15,9 +15,17 @@ export default function TickerDashboard() {
     const [loading, setLoading] = useState(false);
     const [loadingChart, setLoadingChart] = useState(false);
     const [searchTerm, setSearchTerm] = useState('');
-    const [days, setDays] = useState(30);
+    const [days, setDays] = useState(365);
     const [filterImpact, setFilterImpact] = useState('all');
     const [showStats, setShowStats] = useState(true);
+    const [showNews, setShowNews] = useState(() => {
+        try {
+            const v = localStorage.getItem('pricechart_showNews');
+            return v === null ? true : v === 'true';
+        } catch (e) {
+            return true;
+        }
+    });
     const [viewMode, setViewMode] = useState('tickers'); // 'tickers', 'calendar', 'rejected' lub 'portfolio'
     const [scrapingTicker, setScrapingTicker] = useState(null);
     const [notification, setNotification] = useState(null);
@@ -546,6 +554,8 @@ export default function TickerDashboard() {
                                             priceHistory={priceHistory}
                                             brokerageAnalyses={brokerageAnalyses}
                                             analyses={filteredAnalyses}
+                                            showNews={showNews}
+                                            onToggleNews={(v) => { setShowNews(v); try { localStorage.setItem('pricechart_showNews', String(v)); } catch (e) {} }}
                                         />
                                     )}
 

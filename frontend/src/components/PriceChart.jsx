@@ -1,11 +1,13 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { createChart, ColorType } from 'lightweight-charts';
 
-export default function PriceChart({ ticker, priceHistory, brokerageAnalyses, analyses, onNewsClick }) {
+export default function PriceChart({ ticker, priceHistory, brokerageAnalyses, analyses, onNewsClick, showNews: propShowNews = true, onToggleNews }) {
     const chartContainerRef = useRef(null);
     const chartRef = useRef(null);
+    const mainSeriesRef = useRef(null);
     const [chartType, setChartType] = useState('candlestick');
     const [showVolume, setShowVolume] = useState(true);
+    const [showNews, setShowNews] = useState(propShowNews);
     const [transactions, setTransactions] = useState([]);
 
     useEffect(() => {
@@ -94,7 +96,10 @@ export default function PriceChart({ ticker, priceHistory, brokerageAnalyses, an
             mainSeries.setData(lineData);
         }
 
-        if (analyses && analyses.length > 0) {
+        // keep reference to main series so we can update markers without full chart recreation
+        mainSeriesRef.current = mainSeries;
+
+        if (showNews && analyses && analyses.length > 0) {
             const markers = [];
             analyses.forEach(news => {
                 let color = '#9ca3af';
@@ -113,6 +118,8 @@ export default function PriceChart({ ticker, priceHistory, brokerageAnalyses, an
             });
             markers.sort((a, b) => new Date(a.time) - new Date(b.time));
             mainSeries.setMarkers(markers);
+        } else {
+            try { mainSeries.setMarkers([]); } catch (e) { /* ignore if series not ready */ }
         }
 
         const latestBrokerage = brokerageAnalyses?.find(b => b.price_new);
@@ -244,8 +251,47 @@ export default function PriceChart({ ticker, priceHistory, brokerageAnalyses, an
                 console.debug('Error removing chart (already disposed?):', e);
             }
             chartRef.current = null;
+            mainSeriesRef.current = null;
         };
-    }, [priceHistory, chartType, showVolume, analyses, brokerageAnalyses, transactions]);
+    }, [priceHistory, chartType, showVolume, showNews, analyses, brokerageAnalyses, transactions]);
+
+    // update markers on the existing main series when user toggles showNews (so toggle is immediate)
+    useEffect(() => {
+        const series = mainSeriesRef.current;
+        const chart = chartRef.current;
+        if (!series) return;
+
+        if (showNews && analyses && analyses.length > 0) {
+            try {
+                const markers = [];
+                analyses.forEach(news => {
+                    let color = '#9ca3af';
+                    let shape = 'circle';
+                    if (news.impact > 0.2) { color = '#10b981'; shape = 'arrowUp'; }
+                    else if (news.impact < -0.2) { color = '#ef5350'; shape = 'arrowDown'; }
+
+                    markers.push({
+                        time: news.date,
+                        position: news.impact > 0 ? 'belowBar' : 'aboveBar',
+                        color: color,
+                        shape: shape,
+                        text: 'News',
+                        id: news.news_id
+                    });
+                });
+                markers.sort((a, b) => new Date(a.time) - new Date(b.time));
+                series.setMarkers(markers);
+                // ensure timeScale updates so markers become visible
+                try { chart?.timeScale()?.fitContent?.(); } catch (e) { /* ignore */ }
+            } catch (e) {
+                console.debug('Failed to set markers on series:', e);
+            }
+        } else {
+            try { series.setMarkers([]); } catch (e) { /* ignore */ }
+            try { chart?.timeScale()?.fitContent?.(); } catch (e) { /* ignore */ }
+        }
+    }, [showNews, analyses]);
+
 
     if (!priceHistory || priceHistory.length === 0) {
         return (
@@ -300,6 +346,15 @@ export default function PriceChart({ ticker, priceHistory, brokerageAnalyses, an
                        className="cursor-pointer w-3 h-3 accent-blue-600"
                    />
                    <span className="text-gray-600 font-medium">Wolumen</span>
+               </label>
+               <label className="flex items-center gap-1 cursor-pointer bg-gray-100 px-2 py-1 rounded hover:bg-gray-200 ml-2">
+                   <input 
+                       type="checkbox" 
+                       checked={showNews} 
+                       onChange={(e) => { const v = e.target.checked; setShowNews(v); try { onToggleNews && onToggleNews(v); } catch (err) {} }} 
+                       className="cursor-pointer w-3 h-3 accent-blue-600"
+                   />
+                   <span className="text-gray-600 font-medium">Newsy</span>
                </label>
             </div>
 
