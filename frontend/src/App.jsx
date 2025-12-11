@@ -1207,10 +1207,9 @@ function PortfolioView({ days }) {
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(null);
     const [timeRange, setTimeRange] = useState('ALL');
-    const [hoveredPoint, setHoveredPoint] = useState(null);
-    const [mousePos, setMousePos] = useState({ x: 0, y: 0 });
     const [sortConfig, setSortConfig] = useState({ key: 'value', direction: 'desc' });
-    const canvasRef = useRef(null);
+    const chartContainerRef = useRef(null);
+    const chartRef = useRef(null);
 
     const fmt = (n, digits = 2) => (n === null || n === undefined ? '-' : Number(n).toFixed(digits));
 
@@ -1310,181 +1309,62 @@ function PortfolioView({ days }) {
     };
 
     useEffect(() => {
-        const canvas = canvasRef.current;
-        if (!canvas) return;
-        const ctx = canvas.getContext('2d');
-        const width = canvas.width;
-        const height = canvas.height;
-        ctx.clearRect(0, 0, width, height);
+        if (!chartContainerRef.current || !roiSeries || roiSeries.length === 0) return;
 
-        if (!roiSeries || roiSeries.length === 0) {
-            // axes only
-            ctx.strokeStyle = '#e5e7eb';
-            ctx.beginPath();
-            ctx.moveTo(60, 20);
-            ctx.lineTo(60, height - 40);
-            ctx.lineTo(width - 20, height - 40);
-            ctx.stroke();
-            return;
-        }
-
-        const margin = { top: 20, right: 20, bottom: 40, left: 60 };
-        const chartW = width - margin.left - margin.right;
-        const chartH = height - margin.top - margin.bottom;
-
-        const values = roiSeries.map(p => Number(p.rate_of_return) || 0);
-        const minV = Math.min(...values);
-        const maxV = Math.max(...values);
-        const range = (maxV - minV) || 1;
-
-        // axes
-        ctx.strokeStyle = '#e5e7eb';
-        ctx.lineWidth = 1;
-        ctx.beginPath();
-        ctx.moveTo(margin.left, margin.top);
-        ctx.lineTo(margin.left, height - margin.bottom);
-        ctx.lineTo(width - margin.right, height - margin.bottom);
-        ctx.stroke();
-
-        // grid + y labels
-        ctx.fillStyle = '#6b7280';
-        ctx.font = '12px sans-serif';
-        const ySteps = 5;
-        for (let i = 0; i <= ySteps; i++) {
-            const y = margin.top + (chartH / ySteps) * i;
-            const val = maxV - (range / ySteps) * i;
-            ctx.strokeStyle = '#f3f4f6';
-            ctx.beginPath();
-            ctx.moveTo(margin.left, y);
-            ctx.lineTo(width - margin.right, y);
-            ctx.stroke();
-
-            ctx.fillStyle = '#6b7280';
-            ctx.textAlign = 'right';
-            ctx.fillText(`${val.toFixed(1)}%`, margin.left - 10, y + 4);
-        }
-
-        // Zero line
-        if (minV <= 0 && maxV >= 0) {
-            const yZero = margin.top + chartH - ((0 - minV) / range) * chartH;
-            ctx.strokeStyle = '#9ca3af';
-            ctx.lineWidth = 2;
-            ctx.setLineDash([4, 4]);
-            ctx.beginPath();
-            ctx.moveTo(margin.left, yZero);
-            ctx.lineTo(width - margin.right, yZero);
-            ctx.stroke();
-            ctx.setLineDash([]);
-        }
-
-        // ROI line
-        ctx.strokeStyle = '#0ea5e9';
-        ctx.lineWidth = 2;
-        ctx.beginPath();
-        const denom = Math.max(1, roiSeries.length - 1);
-        roiSeries.forEach((pt, i) => {
-            const x = margin.left + (chartW / denom) * i;
-            const y = margin.top + chartH - ((Number(pt.rate_of_return) - minV) / range) * chartH;
-            if (i === 0) ctx.moveTo(x, y);
-            else ctx.lineTo(x, y);
+        const chart = createChart(chartContainerRef.current, {
+            layout: {
+                background: { type: ColorType.Solid, color: 'white' },
+                textColor: 'black',
+            },
+            width: chartContainerRef.current.clientWidth,
+            height: 300,
+            grid: {
+                vertLines: { color: '#f0f0f0' },
+                horzLines: { color: '#f0f0f0' },
+            },
+            rightPriceScale: {
+                borderColor: '#d1d4dc',
+            },
+            timeScale: {
+                borderColor: '#d1d4dc',
+            },
         });
-        ctx.stroke();
+        chartRef.current = chart;
+
+        // Baseline Series for ROI
+        const series = chart.addBaselineSeries({
+            baseValue: { type: 'price', price: 0 },
+            topLineColor: '#10b981', // Green
+            topFillColor1: 'rgba(16, 185, 129, 0.28)',
+            topFillColor2: 'rgba(16, 185, 129, 0.05)',
+            bottomLineColor: '#ef4444', // Red
+            bottomFillColor1: 'rgba(239, 68, 68, 0.05)',
+            bottomFillColor2: 'rgba(239, 68, 68, 0.28)',
+        });
+
+        const data = roiSeries.map(d => ({
+            time: d.date,
+            value: d.rate_of_return
+        }));
         
-        // Punkty na wykresie - tylko hover
-        if (hoveredPoint) {
-             const x = margin.left + (chartW / denom) * roiSeries.findIndex(p => p.date === hoveredPoint.date);
-             const y = margin.top + chartH - ((Number(hoveredPoint.rate_of_return) - minV) / range) * chartH;
-             
-             ctx.fillStyle = '#0ea5e9';
-             ctx.beginPath();
-             ctx.arc(x, y, 5, 0, 2 * Math.PI);
-             ctx.fill();
-             ctx.strokeStyle = '#fff';
-             ctx.lineWidth = 2;
-             ctx.stroke();
-        }
-
-        // x labels - denser (roughly weekly if daily data)
-        ctx.fillStyle = '#6b7280';
-        ctx.textAlign = 'center';
-        ctx.font = '10px sans-serif';
+        // Ensure sorted by time
+        data.sort((a, b) => new Date(a.time) - new Date(b.time));
         
-        // Calculate step to show labels roughly every 50-60px
-        const labelWidth = 50; 
-        const maxLabels = Math.floor(chartW / labelWidth);
-        const step = Math.max(1, Math.floor(roiSeries.length / maxLabels));
+        series.setData(data);
+        chart.timeScale().fitContent();
 
-        for (let i = 0; i < roiSeries.length; i += step) {
-            const x = margin.left + (chartW / denom) * i;
-            const d = new Date(roiSeries[i]?.date);
-            
-            // Obrot etykiet jesli gesto
-            ctx.save();
-            ctx.translate(x, height - margin.bottom + 25);
-            ctx.rotate(-Math.PI / 4);
-            ctx.textAlign = 'right';
-            const label = d.toISOString().split('T')[0]; // YYYY-MM-DD
-            ctx.fillText(label, 0, 0);
-            ctx.restore();
-        }
-    }, [roiSeries, hoveredPoint]);
-
-    const handleMouseMove = (e) => {
-        const canvas = canvasRef.current;
-        if (!canvas || roiSeries.length === 0) return;
-        const rect = canvas.getBoundingClientRect();
-
-        // Skala CSS->canvas dla poprawnego mapowania pozycji kursora
-        const scaleX = canvas.width / rect.width;
-        const scaleY = canvas.height / rect.height;
-
-        // Pozycja kursora w przestrzeni canvas (px canvas)
-        const mouseX = (e.clientX - rect.left) * scaleX;
-        const mouseY = (e.clientY - rect.top) * scaleY;
-        
-        const width = canvas.width;
-        const height = canvas.height;
-        const margin = { top: 20, right: 20, bottom: 40, left: 60 };
-        const chartW = width - margin.left - margin.right;
-        const denom = Math.max(1, roiSeries.length - 1);
-
-        // Znajdź najbliższy punkt na osi X
-        let closestDist = Infinity;
-        let closestPoint = null;
-        let closestX = 0;
-        let closestY = 0;
-        
-        const values = roiSeries.map(p => Number(p.rate_of_return) || 0);
-        const minV = Math.min(...values);
-        const maxV = Math.max(...values);
-        const range = (maxV - minV) || 1;
-        const chartH = height - margin.top - margin.bottom;
-
-        roiSeries.forEach((pt, i) => {
-            const x = margin.left + (chartW / denom) * i; // canvas px
-            const dist = Math.abs(mouseX - x);           // canvas px
-            if (dist < closestDist) {
-                closestDist = dist;
-                closestPoint = pt;
-                closestX = x;
-                closestY = margin.top + chartH - ((Number(pt.rate_of_return) - minV) / range) * chartH;
+        const handleResize = () => {
+            if (chartContainerRef.current) {
+                chart.applyOptions({ width: chartContainerRef.current.clientWidth });
             }
-        });
+        };
+        window.addEventListener('resize', handleResize);
 
-        // Próg bliskości w px ekranu -> przelicz na px canvas
-        const threshold = 20 * scaleX;
-        if (closestDist < threshold) {
-            setHoveredPoint(closestPoint);
-            // Pozycja tooltipa powinna być w px CSS (nie canvas), więc przelicz w dół skalę
-            setMousePos({ x: closestX / scaleX, y: closestY / scaleY });
-        } else {
-            setHoveredPoint(null);
-        }
-    };
-
-    const handleMouseLeave = () => {
-        setHoveredPoint(null);
-    };
+        return () => {
+            window.removeEventListener('resize', handleResize);
+            chart.remove();
+        };
+    }, [roiSeries]);
 
     if (loading) {
         return (
@@ -1600,31 +1480,7 @@ function PortfolioView({ days }) {
                     </div>
                 </div>
                 
-                <div className="relative">
-                    <canvas
-                        ref={canvasRef}
-                        width={900}
-                        height={250}
-                        className="w-full cursor-crosshair"
-                        style={{ maxWidth: '100%', height: 'auto' }}
-                        onMouseMove={handleMouseMove}
-                        onMouseLeave={handleMouseLeave}
-                    />
-                    {hoveredPoint && (
-                        <div
-                            className="absolute bg-black bg-opacity-80 text-white text-xs p-2 rounded pointer-events-none z-10"
-                            style={{
-                                left: mousePos.x + 10,
-                                top: mousePos.y - 40,
-                                transform: 'translateX(-50%)'
-                            }}
-                        >
-                            <div className="font-bold">{hoveredPoint.date}</div>
-                            <div>ROI: {hoveredPoint.rate_of_return.toFixed(2)}%</div>
-                            <div>Value: {hoveredPoint.market_value.toFixed(0)} PLN</div>
-                        </div>
-                    )}
-                </div>
+                <div ref={chartContainerRef} className="w-full h-[300px]" />
             </div>
 
             {overview.assets && overview.assets.length > 0 && (
