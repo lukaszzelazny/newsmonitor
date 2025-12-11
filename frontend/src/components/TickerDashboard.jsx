@@ -34,6 +34,14 @@ export default function TickerDashboard() {
             return false;
         }
     });
+    const [showTransactions, setShowTransactions] = useState(() => {
+        try {
+            const v = localStorage.getItem('pricechart_showTransactions');
+            return v === null ? true : v === 'true';
+        } catch (e) {
+            return true;
+        }
+    });
     const [viewMode, setViewMode] = useState('tickers'); // 'tickers', 'calendar', 'rejected' lub 'portfolio'
     const [scrapingTicker, setScrapingTicker] = useState(null);
     const [notification, setNotification] = useState(null);
@@ -566,6 +574,8 @@ export default function TickerDashboard() {
                                             onToggleNews={(v) => { setShowNews(v); try { localStorage.setItem('pricechart_showNews', String(v)); } catch (e) {} }}
                                             showVolume={showVolume}
                                             onToggleVolume={(v) => { setShowVolume(v); try { localStorage.setItem('pricechart_showVolume', String(v)); } catch (e) {} }}
+                                            showTransactions={showTransactions}
+                                            onToggleTransactions={(v) => { setShowTransactions(v); try { localStorage.setItem('pricechart_showTransactions', String(v)); } catch (e) {} }}
                                         />
                                     )}
 

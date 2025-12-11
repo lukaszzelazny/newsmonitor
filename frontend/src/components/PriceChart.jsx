@@ -1,13 +1,14 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { createChart, ColorType } from 'lightweight-charts';
 
-export default function PriceChart({ ticker, priceHistory, brokerageAnalyses, analyses, onNewsClick, showNews: propShowNews = true, onToggleNews, showVolume: propShowVolume = false, onToggleVolume }) {
+export default function PriceChart({ ticker, priceHistory, brokerageAnalyses, analyses, onNewsClick, showNews: propShowNews = true, onToggleNews, showVolume: propShowVolume = false, onToggleVolume, showTransactions: propShowTransactions = true, onToggleTransactions }) {
     const chartContainerRef = useRef(null);
     const chartRef = useRef(null);
     const mainSeriesRef = useRef(null);
     const [chartType, setChartType] = useState('candlestick');
     const [showVolume, setShowVolume] = useState(propShowVolume);
     const [showNews, setShowNews] = useState(propShowNews);
+    const [showTransactions, setShowTransactions] = useState(propShowTransactions);
     const [transactions, setTransactions] = useState([]);
 
     useEffect(() => {
@@ -151,7 +152,7 @@ export default function PriceChart({ ticker, priceHistory, brokerageAnalyses, an
         const renderTransactions = () => {
             if (!overlay) return;
             overlay.innerHTML = '';
-            if (!transactions || transactions.length === 0) return;
+            if (!showTransactions || !transactions || transactions.length === 0) return;
 
             const markerSize = 12;
 
@@ -253,7 +254,7 @@ export default function PriceChart({ ticker, priceHistory, brokerageAnalyses, an
             chartRef.current = null;
             mainSeriesRef.current = null;
         };
-    }, [priceHistory, chartType, showVolume, showNews, analyses, brokerageAnalyses, transactions]);
+    }, [priceHistory, chartType, showVolume, showNews, showTransactions, analyses, brokerageAnalyses, transactions]);
 
     // update markers on the existing main series when user toggles showNews (so toggle is immediate)
     useEffect(() => {
@@ -355,6 +356,15 @@ export default function PriceChart({ ticker, priceHistory, brokerageAnalyses, an
                        className="cursor-pointer w-3 h-3 accent-blue-600"
                    />
                    <span className="text-gray-600 font-medium">Newsy</span>
+               </label>
+               <label className="flex items-center gap-1 cursor-pointer bg-gray-100 px-2 py-1 rounded hover:bg-gray-200 ml-2">
+                   <input
+                       type="checkbox"
+                       checked={showTransactions}
+                       onChange={(e) => { const v = e.target.checked; setShowTransactions(v); try { onToggleTransactions && onToggleTransactions(v); } catch (err) {} }}
+                       className="cursor-pointer w-3 h-3 accent-blue-600"
+                   />
+                   <span className="text-gray-600 font-medium">Transakcje</span>
                </label>
             </div>
 
