@@ -669,6 +669,10 @@ def get_price_history_from_stooq(ticker_symbol: str, days: int = 90):
                 price_data.append({
                     "date": row["Date"].strftime("%Y-%m-%d"),
                     "price": float(row["Close"]),
+                    "open": float(row["Open"]),
+                    "high": float(row["High"]),
+                    "low": float(row["Low"]),
+                    "close": float(row["Close"]),
                     "volume": int(row["Volume"])
                 })
             except (ValueError, TypeError):
@@ -767,6 +771,10 @@ def get_price_history(ticker_symbol: str, days: int = 90):
                     price_data.append({
                         "date": h.date.strftime("%Y-%m-%d"),
                         "price": float(h.close),
+                        "open": float(h.open) if h.open is not None else float(h.close),
+                        "high": float(h.high) if h.high is not None else float(h.close),
+                        "low": float(h.low) if h.low is not None else float(h.close),
+                        "close": float(h.close),
                         "volume": int(h.volume) if h.volume else 0
                     })
                 
@@ -833,6 +841,7 @@ def get_price_history(ticker_symbol: str, days: int = 90):
             series = hist.select_dtypes(include="number").iloc[:, 0].copy()
 
         # Convert to PLN if needed
+        fx_series = None
         if currency != "PLN":
             fx_ticker = fx_symbol_to_pln(currency)
             if fx_ticker:
@@ -847,13 +856,31 @@ def get_price_history(ticker_symbol: str, days: int = 90):
                 except Exception:
                     # If FX fails, return native currency series (better than empty)
                     pass
+        
+        # Apply FX to OHLC if needed
+        if fx_series is not None:
+             for col in ["Open", "High", "Low", "Close"]:
+                 if col in hist.columns:
+                     # Reindex fx_series to match hist index just in case
+                     aligned_fx = fx_series.reindex(hist.index).ffill().bfill()
+                     hist[col] = hist[col] * aligned_fx
 
         price_data = []
         for date, value in series.items():
+            # Get OHLC values
+            o = float(hist.loc[date]["Open"]) if "Open" in hist.columns else float(value)
+            h = float(hist.loc[date]["High"]) if "High" in hist.columns else float(value)
+            l = float(hist.loc[date]["Low"]) if "Low" in hist.columns else float(value)
+            c = float(hist.loc[date]["Close"]) if "Close" in hist.columns else float(value)
+            
             price_data.append(
                 {
                     "date": date.strftime("%Y-%m-%d"),
                     "price": float(value),
+                    "open": o,
+                    "high": h,
+                    "low": l,
+                    "close": c,
                     "volume": int(hist.loc[date]["Volume"]) if "Volume" in hist.columns else 0,
                 }
             )

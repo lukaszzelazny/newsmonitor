@@ -1,187 +1,142 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { createChart, ColorType } from 'lightweight-charts';
 
-// Komponent wykresu Canvas z punktami dla newsów
+// Komponent wykresu (Lightweight Charts)
 function PriceChart({ ticker, priceHistory, brokerageAnalyses, analyses, onNewsClick }) {
-    const canvasRef = useRef(null);
-    const [hoveredNews, setHoveredNews] = useState(null);
+    const chartContainerRef = useRef(null);
+    const chartRef = useRef(null);
+    const [chartType, setChartType] = useState('candlestick');
+    const [showVolume, setShowVolume] = useState(true);
 
     useEffect(() => {
-        if (!canvasRef.current || !priceHistory || priceHistory.length === 0) return;
+        if (!chartContainerRef.current || !priceHistory || priceHistory.length === 0) return;
 
-        const canvas = canvasRef.current;
-        const ctx = canvas.getContext('2d');
-        const width = canvas.width;
-        const height = canvas.height;
-
-        ctx.clearRect(0, 0, width, height);
-
-        const prices = priceHistory.map(p => p.price);
-        const minPrice = Math.min(...prices);
-        const maxPrice = Math.max(...prices);
-        const priceRange = maxPrice - minPrice;
-
-        const margin = { top: 20, right: 80, bottom: 40, left: 60 };
-        const chartWidth = width - margin.left - margin.right;
-        const chartHeight = height - margin.top - margin.bottom;
-
-        // Funkcja do konwersji daty na pozycję X
-        const dateToX = (dateStr) => {
-            const targetDate = new Date(dateStr);
-            const firstDate = new Date(priceHistory[0].date);
-            const lastDate = new Date(priceHistory[priceHistory.length - 1].date);
-            const totalRange = lastDate - firstDate;
-            const datePos = targetDate - firstDate;
-            return margin.left + (datePos / totalRange) * chartWidth;
-        };
-
-        // Osie
-        ctx.strokeStyle = '#e5e7eb';
-        ctx.lineWidth = 1;
-        ctx.beginPath();
-        ctx.moveTo(margin.left, margin.top);
-        ctx.lineTo(margin.left, height - margin.bottom);
-        ctx.lineTo(width - margin.right, height - margin.bottom);
-        ctx.stroke();
-
-        // Siatka i etykiety Y
-        ctx.fillStyle = '#6b7280';
-        ctx.font = '12px sans-serif';
-        const ySteps = 5;
-        for (let i = 0; i <= ySteps; i++) {
-            const y = margin.top + (chartHeight / ySteps) * i;
-            const price = maxPrice - (priceRange / ySteps) * i;
-
-            ctx.strokeStyle = '#f3f4f6';
-            ctx.beginPath();
-            ctx.moveTo(margin.left, y);
-            ctx.lineTo(width - margin.right, y);
-            ctx.stroke();
-
-            ctx.fillStyle = '#6b7280';
-            ctx.textAlign = 'right';
-            ctx.fillText(price.toFixed(2), margin.left - 10, y + 4);
-        }
-
-        // Wykres
-        ctx.strokeStyle = '#3b82f6';
-        ctx.lineWidth = 2;
-        ctx.beginPath();
-
-        priceHistory.forEach((item, i) => {
-            const x = margin.left + (chartWidth / (priceHistory.length - 1)) * i;
-            const y = margin.top + chartHeight - ((item.price - minPrice) / priceRange) * chartHeight;
-
-            if (i === 0) {
-                ctx.moveTo(x, y);
-            } else {
-                ctx.lineTo(x, y);
-            }
+        const chart = createChart(chartContainerRef.current, {
+            layout: {
+                background: { type: ColorType.Solid, color: 'white' },
+                textColor: 'black',
+            },
+            width: chartContainerRef.current.clientWidth,
+            height: 400,
+            grid: {
+                vertLines: { color: '#f0f0f0' },
+                horzLines: { color: '#f0f0f0' },
+            },
+            rightPriceScale: {
+                borderColor: '#d1d4dc',
+                scaleMargins: {
+                    top: 0.1,
+                    bottom: showVolume ? 0.08 : 0.02,
+                },
+            },
+            timeScale: {
+                borderColor: '#d1d4dc',
+            },
         });
+        chartRef.current = chart;
 
-        ctx.stroke();
-
-        // Etykiety X
-        ctx.fillStyle = '#6b7280';
-        ctx.textAlign = 'center';
-        const xSteps = Math.min(7, priceHistory.length);
-        const xInterval = Math.floor(priceHistory.length / xSteps);
-
-        for (let i = 0; i < priceHistory.length; i += xInterval) {
-            const x = margin.left + (chartWidth / (priceHistory.length - 1)) * i;
-            const date = new Date(priceHistory[i].date);
-            const label = `${date.getDate()}/${date.getMonth() + 1}`;
-            ctx.fillText(label, x, height - margin.bottom + 20);
-        }
-
-        // Rysowanie punktów dla newsów
-        if (analyses && analyses.length > 0) {
-            analyses.forEach((analysis) => {
-                const x = dateToX(analysis.date);
-
-                // Znajdź najbliższą cenę dla tej daty
-                const analysisDate = new Date(analysis.date);
-                const closestPrice = priceHistory.reduce((prev, curr) => {
-                    const prevDiff = Math.abs(new Date(prev.date) - analysisDate);
-                    const currDiff = Math.abs(new Date(curr.date) - analysisDate);
-                    return currDiff < prevDiff ? curr : prev;
-                });
-
-                const y = margin.top + chartHeight - ((closestPrice.price - minPrice) / priceRange) * chartHeight;
-
-                // Kolor punktu bazowany na impact
-                let color;
-                const impact = analysis.impact;
-                if (Math.abs(impact) < 0.05) color = '#9ca3af'; // gray
-                else if (impact > 0.5) color = '#059669'; // dark green
-                else if (impact > 0.2) color = '#10b981'; // green
-                else if (impact > 0.05) color = '#4ade80'; // light green
-                else if (impact > -0.2) color = '#fb923c'; // light orange
-                else if (impact > -0.5) color = '#f97316'; // orange
-                else color = '#dc2626'; // red
-
-                // Rysuj punkt
-                ctx.fillStyle = color;
-                ctx.beginPath();
-                ctx.arc(x, y, 6, 0, 2 * Math.PI);
-                ctx.fill();
-
-                // Obramowanie
-                ctx.strokeStyle = '#ffffff';
-                ctx.lineWidth = 2;
-                ctx.stroke();
-
-                // Podświetlenie hoverowanego newsa
-                if (hoveredNews && hoveredNews.date === analysis.date && hoveredNews.title === analysis.title) {
-                    ctx.strokeStyle = '#000000';
-                    ctx.lineWidth = 3;
-                    ctx.beginPath();
-                    ctx.arc(x, y, 8, 0, 2 * Math.PI);
-                    ctx.stroke();
-                }
+        // Volume Series
+        if (showVolume) {
+            const volumeSeries = chart.addHistogramSeries({
+                color: '#26a69a',
+                priceFormat: {
+                    type: 'volume',
+                },
+                priceScaleId: '', // Overlay
+                scaleMargins: {
+                    top: 0.92, // Show at bottom
+                    bottom: 0,
+                },
             });
+            
+            const volumeData = priceHistory.map(d => ({
+                time: d.date,
+                value: d.volume,
+                color: (d.close >= d.open) ? '#26a69a' : '#ef5350',
+            }));
+            volumeSeries.setData(volumeData);
         }
 
-        // Linia ceny docelowej
+        // Main Series
+        let mainSeries;
+        if (chartType === 'candlestick') {
+            mainSeries = chart.addCandlestickSeries({
+                upColor: '#26a69a',
+                downColor: '#ef5350',
+                borderVisible: false,
+                wickUpColor: '#26a69a',
+                wickDownColor: '#ef5350',
+            });
+            const candleData = priceHistory.map(d => ({
+                time: d.date,
+                open: d.open ?? d.price, // Fallback to price if open missing
+                high: d.high ?? d.price,
+                low: d.low ?? d.price,
+                close: d.close ?? d.price,
+            }));
+            mainSeries.setData(candleData);
+        } else {
+            mainSeries = chart.addLineSeries({
+                color: '#2962FF',
+                lineWidth: 2,
+            });
+            const lineData = priceHistory.map(d => ({
+                time: d.date,
+                value: d.close ?? d.price,
+            }));
+            mainSeries.setData(lineData);
+        }
+
+        // News Markers
+        if (analyses && analyses.length > 0) {
+            const markers = [];
+            analyses.forEach(news => {
+                let color = '#9ca3af';
+                let shape = 'circle';
+                if (news.impact > 0.2) { color = '#10b981'; shape = 'arrowUp'; }
+                else if (news.impact < -0.2) { color = '#ef5350'; shape = 'arrowDown'; }
+                
+                markers.push({
+                    time: news.date,
+                    position: news.impact > 0 ? 'belowBar' : 'aboveBar',
+                    color: color,
+                    shape: shape,
+                    text: 'News',
+                    id: news.news_id
+                });
+            });
+            markers.sort((a, b) => new Date(a.time) - new Date(b.time));
+            mainSeries.setMarkers(markers);
+        }
+
+        // Brokerage Target Line
         const latestBrokerage = brokerageAnalyses?.find(b => b.price_new);
         if (latestBrokerage && latestBrokerage.price_new) {
-            const targetPrice = latestBrokerage.price_new;
-            const y = margin.top + chartHeight - ((targetPrice - minPrice) / priceRange) * chartHeight;
-
-            ctx.strokeStyle = '#10b981';
-            ctx.lineWidth = 2;
-            ctx.setLineDash([5, 5]);
-            ctx.beginPath();
-            ctx.moveTo(margin.left, y);
-            ctx.lineTo(width - margin.right, y);
-            ctx.stroke();
-            ctx.setLineDash([]);
-
-            ctx.fillStyle = '#10b981';
-            ctx.font = 'bold 12px sans-serif';
-            ctx.textAlign = 'left';
-            ctx.fillText(`Cel: ${targetPrice.toFixed(2)}`, width - margin.right + 5, y + 4);
+             const priceLine = {
+                price: latestBrokerage.price_new,
+                color: '#10b981',
+                lineWidth: 2,
+                lineStyle: 2, // Dashed
+                axisLabelVisible: true,
+                title: 'Cel',
+            };
+            mainSeries.createPriceLine(priceLine);
         }
 
-    }, [priceHistory, brokerageAnalyses, analyses, hoveredNews]);
+        chart.timeScale().fitContent();
 
-    const handleCanvasClick = (e) => {
-        if (!canvasRef.current || !analyses) return;
-
-        const rect = canvasRef.current.getBoundingClientRect();
-        const x = e.clientX - rect.left;
-        const y = e.clientY - rect.top;
-
-        // Sprawdź czy kliknięto w któryś punkt
-        const clickRadius = 10;
-        for (const analysis of analyses) {
-            // Tutaj potrzebujemy odtworzyć pozycję punktu
-            // (uproszczone - w produkcji lepiej przechowywać pozycje)
-            if (onNewsClick) {
-                onNewsClick(analysis);
-                break;
+        const handleResize = () => {
+            if (chartContainerRef.current) {
+                chart.applyOptions({ width: chartContainerRef.current.clientWidth });
             }
-        }
-    };
+        };
+        window.addEventListener('resize', handleResize);
+
+        return () => {
+            window.removeEventListener('resize', handleResize);
+            chart.remove();
+        };
+    }, [priceHistory, chartType, showVolume, analyses, brokerageAnalyses]);
 
     if (!priceHistory || priceHistory.length === 0) {
         return (
@@ -193,8 +148,8 @@ function PriceChart({ ticker, priceHistory, brokerageAnalyses, analyses, onNewsC
         );
     }
 
-    const latestPrice = priceHistory[priceHistory.length - 1]?.price;
-    const firstPrice = priceHistory[0]?.price;
+    const latestPrice = priceHistory[priceHistory.length - 1]?.price ?? priceHistory[priceHistory.length - 1]?.close;
+    const firstPrice = priceHistory[0]?.price ?? priceHistory[0]?.close;
     const priceChange = latestPrice && firstPrice ? ((latestPrice - firstPrice) / firstPrice * 100) : 0;
     const latestBrokerage = brokerageAnalyses?.find(b => b.price_new);
 
@@ -215,35 +170,45 @@ function PriceChart({ ticker, priceHistory, brokerageAnalyses, analyses, onNewsC
                 </div>
             </div>
 
-            <canvas
-                ref={canvasRef}
-                width={900}
-                height={250}
-                className="w-full cursor-pointer"
-                style={{ maxWidth: '100%', height: 'auto' }}
-                onClick={handleCanvasClick}
-            />
+            {/* Toggle Buttons */}
+            <div className="flex gap-2 mb-2 justify-end text-xs">
+               <button 
+                   onClick={() => setChartType('candlestick')} 
+                   className={`px-3 py-1 rounded ${chartType==='candlestick' ? 'bg-blue-100 text-blue-700 font-bold' : 'bg-gray-100 text-gray-600'}`}
+               >
+                   Świece
+               </button>
+               <button 
+                   onClick={() => setChartType('line')} 
+                   className={`px-3 py-1 rounded ${chartType==='line' ? 'bg-blue-100 text-blue-700 font-bold' : 'bg-gray-100 text-gray-600'}`}
+               >
+                   Linia
+               </button>
+               <label className="flex items-center gap-1 cursor-pointer bg-gray-100 px-2 py-1 rounded hover:bg-gray-200 ml-2">
+                   <input 
+                       type="checkbox" 
+                       checked={showVolume} 
+                       onChange={(e) => setShowVolume(e.target.checked)} 
+                       className="cursor-pointer w-3 h-3 accent-blue-600"
+                   />
+                   <span className="text-gray-600 font-medium">Wolumen</span>
+               </label>
+            </div>
+
+            <div ref={chartContainerRef} className="w-full h-[400px]" />
 
             <div className="mt-4 flex items-center gap-4 text-xs text-gray-600">
                 <span className="flex items-center gap-2">
                     <span className="w-3 h-3 rounded-full bg-green-500"></span>
-                    {'Pozytywny (impact > 0.3)'}
+                    {'Pozytywny (impact > 0.2)'}
                 </span>
                 <span className="flex items-center gap-2">
-                    <span className="w-3 h-3 rounded-full bg-lime-500"></span>
-                    Lekko pozytywny
+                    <span className="w-3 h-3 rounded-full bg-red-500"></span>
+                    {'Negatywny (impact < -0.2)'}
                 </span>
-                <span className="flex items-center gap-2">
+                 <span className="flex items-center gap-2">
                     <span className="w-3 h-3 rounded-full bg-gray-400"></span>
                     Neutralny
-                </span>
-                <span className="flex items-center gap-2">
-                    <span className="w-3 h-3 rounded-full bg-orange-500"></span>
-                    Lekko negatywny
-                </span>
-                <span className="flex items-center gap-2">
-                  <span className="w-3 h-3 rounded-full bg-red-500"></span>
-                  {'Negatywny (impact < -0.3)'}
                 </span>
             </div>
 
