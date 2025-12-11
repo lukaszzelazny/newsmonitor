@@ -25,9 +25,6 @@ function PriceChart({ ticker, priceHistory, brokerageAnalyses, analyses, onNewsC
 
         // Tymczasowy mock (jeśli backend zwraca pustą listę) — ułatwia test wizualny
         const mock = [
-            { id: 'm1', transaction_type: 'buy', quantity: 100, price: 45.2, transaction_date: '2025-12-01' },
-            { id: 'm2', transaction_type: 'sell', quantity: 50, price: 47.8, transaction_date: '2025-12-05' },
-            { id: 'm3', transaction_type: 'buy', quantity: 200, price: 44.0, transaction_date: '2025-11-28' },
         ];
         // Ustaw mock tylko jeśli backend nie dostarczy danych po krótkim timeoutcie
         const t = setTimeout(() => {

@@ -151,15 +151,9 @@ def portfolio_transactions():
 
         # --- ZMODYFIKOWANA LOGIKA FILTROWANIA ---
 
-        # Jeśli ticker kończy się na .PL, tworzymy warunek OR, aby uwzględnić tickery z i bez sufiksu.
-        if ticker.endswith('.PL'):
-            # Usuwamy '.PL'
-            base_ticker = ticker[:-3]
-            # Używamy operatora OR (|) do znalezienia transakcji dla obu wariantów
-            filter_conditions = (Asset.ticker == ticker) | (Asset.ticker == base_ticker)
-        else:
-            # Dla innych tickerów używamy standardowego dopasowania
-            filter_conditions = (Asset.ticker == ticker)
+        base_pl = f'{ticker}.PL'
+        base_us = f'{ticker}.US'
+        filter_conditions = (Asset.ticker == ticker) | (Asset.ticker == base_pl) | (Asset.ticker == base_us)
 
         # Stosujemy zdefiniowany warunek filtrowania
         rows = session.query(Transaction).join(Asset).filter(
