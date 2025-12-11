@@ -26,6 +26,14 @@ export default function TickerDashboard() {
             return true;
         }
     });
+    const [showVolume, setShowVolume] = useState(() => {
+        try {
+            const v = localStorage.getItem('pricechart_showVolume');
+            return v === null ? false : v === 'true';
+        } catch (e) {
+            return false;
+        }
+    });
     const [viewMode, setViewMode] = useState('tickers'); // 'tickers', 'calendar', 'rejected' lub 'portfolio'
     const [scrapingTicker, setScrapingTicker] = useState(null);
     const [notification, setNotification] = useState(null);
@@ -556,6 +564,8 @@ export default function TickerDashboard() {
                                             analyses={filteredAnalyses}
                                             showNews={showNews}
                                             onToggleNews={(v) => { setShowNews(v); try { localStorage.setItem('pricechart_showNews', String(v)); } catch (e) {} }}
+                                            showVolume={showVolume}
+                                            onToggleVolume={(v) => { setShowVolume(v); try { localStorage.setItem('pricechart_showVolume', String(v)); } catch (e) {} }}
                                         />
                                     )}
 

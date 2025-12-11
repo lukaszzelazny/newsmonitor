@@ -1,12 +1,12 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { createChart, ColorType } from 'lightweight-charts';
 
-export default function PriceChart({ ticker, priceHistory, brokerageAnalyses, analyses, onNewsClick, showNews: propShowNews = true, onToggleNews }) {
+export default function PriceChart({ ticker, priceHistory, brokerageAnalyses, analyses, onNewsClick, showNews: propShowNews = true, onToggleNews, showVolume: propShowVolume = false, onToggleVolume }) {
     const chartContainerRef = useRef(null);
     const chartRef = useRef(null);
     const mainSeriesRef = useRef(null);
     const [chartType, setChartType] = useState('candlestick');
-    const [showVolume, setShowVolume] = useState(true);
+    const [showVolume, setShowVolume] = useState(propShowVolume);
     const [showNews, setShowNews] = useState(propShowNews);
     const [transactions, setTransactions] = useState([]);
 
@@ -342,7 +342,7 @@ export default function PriceChart({ ticker, priceHistory, brokerageAnalyses, an
                    <input 
                        type="checkbox" 
                        checked={showVolume} 
-                       onChange={(e) => setShowVolume(e.target.checked)} 
+                       onChange={(e) => { const v = e.target.checked; setShowVolume(v); try { onToggleVolume && onToggleVolume(v); } catch (err) {} }} 
                        className="cursor-pointer w-3 h-3 accent-blue-600"
                    />
                    <span className="text-gray-600 font-medium">Wolumen</span>
