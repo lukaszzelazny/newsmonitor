@@ -35,8 +35,8 @@ def portfolio_overview():
     db = Database()
     session = db.Session()
     try:
-        name = request.args.get('name', default=None, type=str)
-        portfolio = _get_portfolio(session, name)
+        name = request.args.get('name', default="XTB", type=str)
+        portfolio = _get_portfolio(session, "XTB")
         if not portfolio:
             return jsonify({'error': 'Brak portfela w bazie'}), 404
 
