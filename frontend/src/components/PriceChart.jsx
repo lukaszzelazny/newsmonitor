@@ -23,12 +23,6 @@ export default function PriceChart({ ticker, priceHistory, brokerageAnalyses, an
                 console.error('Error fetching transactions:', err);
                 setTransactions([]);
             });
-
-        const mock = [];
-        const t = setTimeout(() => {
-            setTransactions(prev => (prev && prev.length > 0) ? prev : mock);
-        }, 350);
-        return () => clearTimeout(t);
     }, [ticker]);
 
     useEffect(() => {
@@ -184,7 +178,7 @@ export default function PriceChart({ ticker, priceHistory, brokerageAnalyses, an
                 const isBuy = String(t.transaction_type).toLowerCase() === 'buy';
                 const qty = Number(t.quantity) || 0;
 
-                el.title = `${isBuy ? 'KUPNO' : 'SPRZEDAŻ'}: ${qty.toFixed(0)} szt. @ ${price.toFixed(2)} PLN`;
+                el.title = `${isBuy ? 'KUPNO' : 'SPRZEDAŻ'}: ${qty} szt. @ ${price.toFixed(2)} PLN`;
                 el.style.position = 'absolute';
                 el.style.left = `${x}px`;
                 el.style.top = `${y}px`;
@@ -309,6 +303,54 @@ export default function PriceChart({ ticker, priceHistory, brokerageAnalyses, an
     const priceChange = latestPrice && firstPrice ? ((latestPrice - firstPrice) / firstPrice * 100) : 0;
     const latestBrokerage = brokerageAnalyses?.find(b => b.price_new);
 
+    // Calculate profit/loss summary for transactions
+    const calculateProfitLoss = () => {
+        if (!transactions.length || !latestPrice) return null;
+        
+        let totalBuyQuantity = 0;
+        let totalBuyCost = 0;
+        let totalSellQuantity = 0;
+        let totalSellRevenue = 0;
+        
+        transactions.forEach(t => {
+            const qty = Number(t.quantity) || 0;
+            const price = Number(t.price) || 0;
+            const isBuy = String(t.transaction_type).toLowerCase() === 'buy';
+            
+            if (isBuy) {
+                totalBuyQuantity += qty;
+                totalBuyCost += qty * price;
+            } else {
+                totalSellQuantity += qty;
+                totalSellRevenue += qty * price;
+            }
+        });
+        
+        const netQuantity = totalBuyQuantity - totalSellQuantity;
+        const averageBuyPrice = totalBuyQuantity > 0 ? totalBuyCost / totalBuyQuantity : 0;
+        
+        // Realized P/L from sold shares
+        const realizedPL = totalSellRevenue - (totalSellQuantity * averageBuyPrice);
+        
+        // Unrealized P/L from remaining shares
+        const unrealizedPL = netQuantity * (latestPrice - averageBuyPrice);
+        
+        // Total P/L
+        const totalPL = realizedPL + unrealizedPL;
+        
+        return {
+            netQuantity,
+            averageBuyPrice,
+            realizedPL,
+            unrealizedPL,
+            totalPL,
+            totalBuyCost,
+            totalSellRevenue
+        };
+    };
+    
+    const profitLossData = calculateProfitLoss();
+
     return (
         <div className="bg-white rounded-lg shadow-lg p-6">
             <div className="flex items-center justify-between mb-4">
@@ -388,7 +430,7 @@ export default function PriceChart({ ticker, priceHistory, brokerageAnalyses, an
                                         : 'bg-red-50 border border-red-200'
                                 }`}>
                                     <div className="font-bold">
-                                        {isBuy ? 'KUPNO' : 'SPRZEDAŻ'} {qty.toFixed(0)} szt.
+                                        {isBuy ? 'KUPNO' : 'SPRZEDAŻ'} {qty} szt.
                                     </div>
                                     <div className="text-gray-600">
                                         {t.transaction_date}
@@ -399,6 +441,49 @@ export default function PriceChart({ ticker, priceHistory, brokerageAnalyses, an
                                 </div>
                             );
                         })}
+                    </div>
+                </div>
+            )}
+
+            {profitLossData && (
+                <div className="mt-3 p-4 bg-blue-50 rounded-lg border border-blue-200">
+                    <div className="text-sm font-semibold text-gray-700 mb-2">
+                        Strata/Zysk dla {ticker}
+                    </div>
+                    <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+                        <div className="p-2 bg-white rounded border">
+                            <div className="text-xs text-gray-500">Pozostało</div>
+                            <div className="text-lg font-bold text-gray-800">
+                                {profitLossData.netQuantity} szt.
+                            </div>
+                        </div>
+                        <div className="p-2 bg-white rounded border">
+                            <div className="text-xs text-gray-500">Średnia cena zakupu</div>
+                            <div className="text-lg font-bold text-gray-800">
+                                {profitLossData.averageBuyPrice.toFixed(2)} PLN
+                            </div>
+                        </div>
+                        <div className="p-2 bg-white rounded border">
+                            <div className="text-xs text-gray-500">Zrealizowany P/L</div>
+                            <div className={`text-lg font-bold ${profitLossData.realizedPL >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                                {profitLossData.realizedPL.toFixed(2)} PLN
+                            </div>
+                        </div>
+                        <div className="p-2 bg-white rounded border">
+                            <div className="text-xs text-gray-500">Niezrealizowany P/L</div>
+                            <div className={`text-lg font-bold ${profitLossData.unrealizedPL >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                                {profitLossData.unrealizedPL.toFixed(2)} PLN
+                            </div>
+                        </div>
+                        <div className="p-2 bg-white rounded border">
+                            <div className="text-xs text-gray-500">Całkowity P/L</div>
+                            <div className={`text-lg font-bold ${profitLossData.totalPL >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                                {profitLossData.totalPL.toFixed(2)} PLN
+                            </div>
+                        </div>
+                    </div>
+                    <div className="mt-2 text-xs text-gray-600">
+                        Obliczono na podstawie {transactions.length} transakcji i aktualnej ceny {latestPrice?.toFixed(2)} PLN
                     </div>
                 </div>
             )}
