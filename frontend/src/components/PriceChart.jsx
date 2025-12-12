@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { createChart, ColorType } from 'lightweight-charts';
 
 export default function PriceChart({ ticker, priceHistory, brokerageAnalyses, analyses, onNewsClick, showNews: propShowNews = true, onToggleNews, showVolume: propShowVolume = false, onToggleVolume, showTransactions: propShowTransactions = true, onToggleTransactions }) {
@@ -10,6 +10,40 @@ export default function PriceChart({ ticker, priceHistory, brokerageAnalyses, an
     const [showNews, setShowNews] = useState(propShowNews);
     const [showTransactions, setShowTransactions] = useState(propShowTransactions);
     const [transactions, setTransactions] = useState([]);
+
+    // Grupowanie transakcji według dnia i typu (kupno/sprzedaż)
+    const groupedTransactions = useMemo(() => {
+        const groups = {};
+        transactions.forEach(t => {
+            const date = t.transaction_date;
+            const type = String(t.transaction_type).toLowerCase();
+            const key = `${date}_${type}`;
+            
+            if (!groups[key]) {
+                groups[key] = {
+                    transaction_date: date,
+                    transaction_type: type,
+                    total_quantity: 0,
+                    total_value: 0,
+                    transactions: []
+                };
+            }
+            
+            const quantity = Number(t.quantity) || 0;
+            const price = Number(t.price) || 0;
+            
+            groups[key].total_quantity += quantity;
+            groups[key].total_value += quantity * price;
+            groups[key].transactions.push(t);
+        });
+
+        return Object.values(groups).map(group => ({
+            ...group,
+            average_price: group.total_value / group.total_quantity,
+            display_quantity: group.total_quantity,
+            display_price: group.total_value / group.total_quantity
+        }));
+    }, [transactions]);
 
     useEffect(() => {
         if (!ticker) return;
@@ -146,13 +180,13 @@ export default function PriceChart({ ticker, priceHistory, brokerageAnalyses, an
         const renderTransactions = () => {
             if (!overlay) return;
             overlay.innerHTML = '';
-            if (!showTransactions || !transactions || transactions.length === 0) return;
+            if (!showTransactions || !groupedTransactions || groupedTransactions.length === 0) return;
 
             const markerSize = 12;
 
-            transactions.forEach(t => {
+            groupedTransactions.forEach(t => {
                 const time = t.transaction_date;
-                const price = Number(t.price);
+                const price = t.display_price;
                 if (!time || !price) return;
 
                 let x = null, y = null;
@@ -176,9 +210,10 @@ export default function PriceChart({ ticker, priceHistory, brokerageAnalyses, an
 
                 const el = document.createElement('div');
                 const isBuy = String(t.transaction_type).toLowerCase() === 'buy';
-                const qty = Number(t.quantity) || 0;
+                const qty = t.display_quantity;
+                const avgPrice = t.display_price;
 
-                el.title = `${isBuy ? 'KUPNO' : 'SPRZEDAŻ'}: ${qty} szt. @ ${price.toFixed(2)} PLN`;
+                el.title = `${isBuy ? 'KUPNO' : 'SPRZEDAŻ'}: ${qty} szt. (średnia: ${avgPrice.toFixed(2)} PLN)`;
                 el.style.position = 'absolute';
                 el.style.left = `${x}px`;
                 el.style.top = `${y}px`;
@@ -412,19 +447,19 @@ export default function PriceChart({ ticker, priceHistory, brokerageAnalyses, an
 
             <div ref={chartContainerRef} className="w-full h-[400px]" />
 
-            {transactions.length > 0 && (
+            {groupedTransactions.length > 0 && (
                 <div className="mt-3 p-3 bg-gray-50 rounded-lg border border-gray-200">
                     <div className="text-sm font-semibold text-gray-700 mb-2">
-                        Transakcje na wykresie: {transactions.length}
+                        Transakcje na wykresie: {groupedTransactions.length} (zgrupowane)
                     </div>
                     <div className="grid grid-cols-2 gap-2 max-h-32 overflow-y-auto">
-                        {transactions.map((t) => {
-                            const isBuy = String(t.transaction_type).toLowerCase() === 'buy';
-                            const qty = Number(t.quantity) || 0;
-                            const price = Number(t.price) || 0;
+                        {groupedTransactions.map((t, index) => {
+                            const isBuy = t.transaction_type === 'buy';
+                            const qty = t.display_quantity;
+                            const avgPrice = t.display_price;
                             
                             return (
-                                <div key={t.id} className={`p-2 rounded text-xs ${
+                                <div key={`group_${t.transaction_date}_${t.transaction_type}_${index}`} className={`p-2 rounded text-xs ${
                                     isBuy
                                         ? 'bg-green-50 border border-green-200'
                                         : 'bg-red-50 border border-red-200'
@@ -436,7 +471,10 @@ export default function PriceChart({ ticker, priceHistory, brokerageAnalyses, an
                                         {t.transaction_date}
                                     </div>
                                     <div className="text-gray-800 font-semibold">
-                                        {price.toFixed(2)} PLN
+                                        {avgPrice.toFixed(2)} PLN
+                                    </div>
+                                    <div className="text-xs text-gray-500 mt-1">
+                                        (średnia z {t.transactions.length} trans.)
                                     </div>
                                 </div>
                             );
