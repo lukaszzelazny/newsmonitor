@@ -1,24 +1,22 @@
 import argparse
 import glob
 import os
-from database import Database
-from portfolio.models import Portfolio, Transaction
-from portfolio.importer import XtbImporter
+import sys
+from backend.database import Database
+from backend.portfolio.models import Portfolio, Transaction
+from backend.portfolio.importer import XtbImporter
 
 
-def find_latest_xtb_file():
-    """Finds the most recently modified XTB transaction file in Downloads."""
-    base = r"C:\Users\ukasz\Downloads"
-    # Pattern includes the known account number for specificity
-    pattern = os.path.join(base, "**", "*account_51885378*.xlsx")
-    candidates = glob.glob(pattern, recursive=True)
+def find_all_xtb_files():
+    """Finds all XTB transaction XLSX files in the current directory."""
+    base = os.getcwd()
+    pattern = os.path.join(base, "*.xlsx")
+    candidates = glob.glob(pattern)
 
     if not candidates:
-        return None
-
-    # Return the file that was most recently modified
-    latest_file = max(candidates, key=os.path.getmtime)
-    return latest_file
+        return []
+    
+    return candidates
 
 
 def get_or_create_portfolio(session, name: str | None):
@@ -36,35 +34,37 @@ def get_or_create_portfolio(session, name: str | None):
     return p
 
 
-def reimport_xtb(portfolio_name: str, append: bool = False):
+def reimport_xtb(portfolio_name: str, append: bool = True):
     """
-    Finds the latest XTB file and re-imports transactions for the given portfolio.
+    Finds all XTB XLSX files in the current directory and re-imports transactions for the given portfolio.
     This function is designed to be called from other modules (e.g., the API).
     """
     db = Database()
     session = db.Session()
     try:
-        latest_file = find_latest_xtb_file()
-        if not latest_file:
-            raise FileNotFoundError("Could not find any XTB transaction files in Downloads.")
+        files = find_all_xtb_files()
+        if not files:
+            raise FileNotFoundError("Could not find any XLSX files in the current directory.")
 
-        print(f"Found latest XTB file: {latest_file}")
+        print(f"Found {len(files)} XLSX file(s): {files}")
 
         portfolio = get_or_create_portfolio(session, portfolio_name)
         before = session.query(Transaction).filter_by(portfolio_id=portfolio.id).count()
         print(f"Portfolio: {portfolio.name} (id={portfolio.id}) - existing transactions: {before}")
 
-        if not append:
-            deleted = session.query(Transaction).filter_by(portfolio_id=portfolio.id).delete(synchronize_session=False)
-            session.commit()
-            print(f"Deleted transactions: {deleted}")
+        # if not append:
+        #     deleted = session.query(Transaction).filter_by(portfolio_id=portfolio.id).delete(synchronize_session=False)
+        #     session.commit()
+        #     print(f"Deleted transactions: {deleted}")
 
         importer = XtbImporter(session)
-        importer.import_transactions(latest_file, portfolio)
+        for file_path in files:
+            print(f"Importing from: {file_path}")
+            importer.import_transactions(file_path, portfolio)
 
         after = session.query(Transaction).filter_by(portfolio_id=portfolio.id).count()
         print(f"Import complete. Transactions now: {after}")
-        return {"file": latest_file, "before": before, "after": after}
+        return {"files": files, "before": before, "after": after}
 
     finally:
         session.close()
@@ -73,18 +73,17 @@ def reimport_xtb(portfolio_name: str, append: bool = False):
 def main():
     """Command-line interface for re-importing."""
     parser = argparse.ArgumentParser(description="Purge transactions and re-import from XTB XLSX file(s).")
-    parser.add_argument("--file", required=False, nargs="+", help="Path(s) to XTB XLSX file(s). If not provided, finds the latest in Downloads.")
+    parser.add_argument("--file", required=False, nargs="+", help="Path(s) to XTB XLSX file(s). If not provided, finds all XLSX files in the current directory.")
     parser.add_argument("--portfolio", required=False, help="Portfolio name (defaults to 'XTB').")
     parser.add_argument("--append", action="store_true", help="Append to existing transactions (do not purge).")
     args = parser.parse_args()
 
     files_to_import = args.file
     if not files_to_import:
-        latest_file = find_latest_xtb_file()
-        if not latest_file:
-            print("Error: No file specified and could not find an XTB file in Downloads.")
+        files_to_import = find_all_xtb_files()
+        if not files_to_import:
+            print("Error: No file specified and could not find any XLSX files in the current directory.")
             return
-        files_to_import = [latest_file]
 
     db = Database()
     session = db.Session()
@@ -93,10 +92,10 @@ def main():
         before = session.query(Transaction).filter_by(portfolio_id=portfolio.id).count()
         print(f"Portfolio: {portfolio.name} (id={portfolio.id}) - existing transactions: {before}")
 
-        if not args.append:
-            deleted = session.query(Transaction).filter_by(portfolio_id=portfolio.id).delete(synchronize_session=False)
-            session.commit()
-            print(f"Deleted transactions: {deleted}")
+        # if not args.append:
+        #     deleted = session.query(Transaction).filter_by(portfolio_id=portfolio.id).delete(synchronize_session=False)
+        #     session.commit()
+        #     print(f"Deleted transactions: {deleted}")
 
         importer = XtbImporter(session)
         for f in files_to_import:

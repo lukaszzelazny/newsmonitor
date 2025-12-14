@@ -29,7 +29,7 @@ from sqlalchemy.orm import sessionmaker
 
 # Conditional imports for type hints
 if TYPE_CHECKING:
-    from portfolio.models import Asset, AssetPriceHistory
+    from backend.portfolio.models import Asset, AssetPriceHistory
 
 # Configure logging
 logging.basicConfig(
@@ -207,7 +207,7 @@ class PriceSyncService:
 
     def get_assets_to_sync(self, ticker: Optional[str] = None) -> List:
         """Get list of assets that need price sync."""
-        from portfolio.models import Asset
+        from backend.portfolio.models import Asset
         query = self.session.query(Asset)
         if ticker:
             query = query.filter(Asset.ticker == ticker.upper())
@@ -215,7 +215,7 @@ class PriceSyncService:
 
     def get_last_sync_date(self, asset_id: int) -> Optional[datetime]:
         """Get the last date for which we have price data."""
-        from portfolio.models import AssetPriceHistory
+        from backend.portfolio.models import AssetPriceHistory
         last_record = (
             self.session.query(AssetPriceHistory)
             .filter(AssetPriceHistory.asset_id == asset_id)
@@ -226,7 +226,7 @@ class PriceSyncService:
 
     def get_first_sync_date(self, asset_id: int) -> Optional[datetime]:
         """Get the first date for which we have price data."""
-        from portfolio.models import AssetPriceHistory
+        from backend.portfolio.models import AssetPriceHistory
         first_record = (
             self.session.query(AssetPriceHistory)
             .filter(AssetPriceHistory.asset_id == asset_id)
@@ -293,7 +293,7 @@ class PriceSyncService:
 
     def save_price_data(self, asset, df):
         """Save price data to database."""
-        from portfolio.models import AssetPriceHistory
+        from backend.portfolio.models import AssetPriceHistory
 
         if df is None or df.empty:
             return 0

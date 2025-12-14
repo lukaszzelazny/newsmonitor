@@ -1,5 +1,9 @@
 """Importer for XTB transaction history files with support for CLOSED and OPEN positions."""
 
+import sys
+import os
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
+
 import pandas as pd
 from sqlalchemy.orm import Session
 from backend.portfolio.models import Asset, Transaction, TransactionType
@@ -93,6 +97,17 @@ class XtbImporter:
             open_type = TransactionType.BUY if str(row['Type']).strip().upper() == 'BUY' else TransactionType.SELL
             close_type = TransactionType.SELL if open_type == TransactionType.BUY else TransactionType.BUY
 
+            # Get purchase and sale values from columns L and M (index 11 and 12)
+            PURCHASE_COLUMN = 11
+            SALE_COLUMN = 12
+            row_values = list(row.values)
+            purchase_value_pln = None
+            sale_value_pln = None
+            if len(row_values) > PURCHASE_COLUMN:
+                purchase_value_pln = row_values[PURCHASE_COLUMN] if not pd.isna(row_values[PURCHASE_COLUMN]) else None
+            if len(row_values) > SALE_COLUMN:
+                sale_value_pln = row_values[SALE_COLUMN] if not pd.isna(row_values[SALE_COLUMN]) else None
+
             # Opening leg
             self.session.add(Transaction(
                 portfolio_id=portfolio.id,
@@ -101,7 +116,9 @@ class XtbImporter:
                 quantity=qty,
                 price=open_price,
                 transaction_date=open_time,
-                commission=open_comm
+                commission=open_comm,
+                purchase_value_pln=purchase_value_pln if open_type == TransactionType.BUY else None,
+                sale_value_pln=sale_value_pln if open_type == TransactionType.SELL else None
             ))
 
             # Closing leg if present
@@ -113,7 +130,9 @@ class XtbImporter:
                     quantity=qty,
                     price=close_price,
                     transaction_date=close_time,
-                    commission=close_comm
+                    commission=close_comm,
+                    purchase_value_pln=purchase_value_pln if close_type == TransactionType.BUY else None,
+                    sale_value_pln=sale_value_pln if close_type == TransactionType.SELL else None
                 ))
 
     def _process_open_positions_sheet(self, df: pd.DataFrame, portfolio):
@@ -166,6 +185,17 @@ class XtbImporter:
             # In open positions sheet, Type indicates current side. We only add opening leg.
             open_type = TransactionType.BUY if str(row['Type']).strip().upper() == 'BUY' else TransactionType.SELL
 
+            # Get purchase and sale values from columns L and M (index 10 and 11)
+            row_values = list(row.values)
+            purchase_value_pln = None
+            sale_value_pln = None
+            PURCHASE_COLUMN = 11
+            SALE_COLUMN = 12
+            if len(row_values) > PURCHASE_COLUMN:
+                purchase_value_pln = row_values[PURCHASE_COLUMN] if not pd.isna(row_values[PURCHASE_COLUMN]) else None
+            if len(row_values) > SALE_COLUMN:
+                sale_value_pln = row_values[SALE_COLUMN] if not pd.isna(row_values[SALE_COLUMN]) else None
+
             self.session.add(Transaction(
                 portfolio_id=portfolio.id,
                 asset_id=asset.id,
@@ -173,7 +203,9 @@ class XtbImporter:
                 quantity=qty,
                 price=open_price,
                 transaction_date=open_time,
-                commission=commission_val
+                commission=commission_val,
+                purchase_value_pln=purchase_value_pln if open_type == TransactionType.BUY else None,
+                sale_value_pln=sale_value_pln if open_type == TransactionType.SELL else None
             ))
 
     def import_transactions(self, file_path: str, portfolio):
@@ -208,24 +240,51 @@ class XtbImporter:
 
 
 if __name__ == '__main__':
-    # Example usage
+    import argparse
+    import sys
+    import os
+
+    parser = argparse.ArgumentParser(description='Import XTB transactions from XLSX file.')
+    parser.add_argument('file', nargs='?', help='Path to XLSX file. If not provided, looks for XLSX files in current directory.')
+    parser.add_argument('--portfolio', default='XTB', help='Portfolio name (default: XTB)')
+    args = parser.parse_args()
+
+    file_path = args.file
+    if not file_path:
+        # Look for any XLSX file in current directory
+        import glob
+        xlsx_files = glob.glob('*.xlsx')
+        if not xlsx_files:
+            print("Error: No XLSX file specified and no XLSX files found in current directory.")
+            sys.exit(1)
+        file_path = xlsx_files[0]
+        print(f"No file specified, using: {file_path}")
+
+    if not os.path.exists(file_path):
+        print(f"Error: File not found: {file_path}")
+        sys.exit(1)
+
     db = Database()
     session = db.Session()
 
     from backend.portfolio.models import Portfolio
 
-    # Create a dummy portfolio for testing
-    portfolio_name = "My XTB Portfolio"
+    portfolio_name = args.portfolio
     portfolio = session.query(Portfolio).filter_by(name=portfolio_name).first()
     if not portfolio:
         portfolio = Portfolio(name=portfolio_name, broker="XTB")
         session.add(portfolio)
         session.commit()
+        print(f"Created new portfolio: {portfolio_name}")
+    else:
+        print(f"Using existing portfolio: {portfolio_name}")
 
-    # Path to the uploaded file
-    file_path = "C:/Users/ukasz/Downloads/account_51885378_pl_xlsx_2005-12-31_2025-11-27/account_51885378_pl_xlsx_2005-12-31_2025-11-27.xlsx"
-    
-    importer = XtbImporter(session)
-    importer.import_transactions(file_path, portfolio)
-
-    session.close()
+    try:
+        importer = XtbImporter(session)
+        importer.import_transactions(file_path, portfolio)
+        print(f"Successfully imported from {file_path} into portfolio {portfolio_name}")
+    except Exception as e:
+        print(f"Import failed: {e}")
+        session.rollback()
+    finally:
+        session.close()

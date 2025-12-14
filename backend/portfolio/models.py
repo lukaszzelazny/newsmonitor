@@ -55,13 +55,14 @@ class Transaction(Base):
     price = Column(Float, nullable=False)
     transaction_date = Column(Date, nullable=False)
     commission = Column(Float, nullable=True)
+    purchase_value_pln = Column(Float, nullable=True)
+    sale_value_pln = Column(Float, nullable=True)
 
     portfolio = relationship('Portfolio', back_populates='transactions')
     asset = relationship('Asset', back_populates='transactions')
 
     def __repr__(self):
         return f"<Transaction(id={self.id}, asset_id={self.asset_id}, type='{self.transaction_type}')>"
-
 
 class PortfolioSnapshot(Base):
     """Stores a snapshot of portfolio performance at a point in time."""
