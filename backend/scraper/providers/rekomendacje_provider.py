@@ -5,7 +5,7 @@ from typing import List, Dict, Optional
 from bs4 import BeautifulSoup
 import requests
 
-from providers.base_provider import BaseProvider, NewsArticle
+from .base_provider import BaseProvider, NewsArticle
 
 
 class RekomendacjeProvider(BaseProvider):

@@ -1,7 +1,7 @@
 from flask import Blueprint, jsonify, request
-from database import Database
-from portfolio.models import Portfolio
-from portfolio.analysis import calculate_portfolio_overview, calculate_roi_over_time, calculate_portfolio_value_over_time, calculate_monthly_profit
+from backend.database import Database
+from backend.portfolio.models import Portfolio
+from backend.portfolio.analysis import calculate_portfolio_overview, calculate_roi_over_time, calculate_portfolio_value_over_time, calculate_monthly_profit
 
 portfolio_bp = Blueprint('portfolio', __name__)
 
@@ -147,7 +147,7 @@ def portfolio_transactions():
     db = Database()
     session = db.Session()
     try:
-        from portfolio.models import Transaction, Asset
+        from backend.portfolio.models import Transaction, Asset
 
         # --- ZMODYFIKOWANA LOGIKA FILTROWANIA ---
 

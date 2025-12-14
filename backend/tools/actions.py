@@ -1,11 +1,11 @@
 """Module for reusable scraping actions."""
 
-from config import Config
-from database import Database
-from scraper import Scraper
-from providers.strefa_investorow_provider import StrefaInwestorowProvider
-from portfolio.importer import XtbImporter
-from portfolio.models import Portfolio
+from backend.config import Config
+from backend.database import Database
+from backend.scraper import Scraper
+from backend.scraper.providers.strefa_investorow_provider import StrefaInwestorowProvider
+from backend.portfolio.importer import XtbImporter
+from backend.portfolio.models import Portfolio
 
 def run_ticker_scraper(ticker: str, page_from: int = 0, page_to: int = 4):
     """

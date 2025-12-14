@@ -1,6 +1,6 @@
 from flask import Blueprint, jsonify, request
 from sqlalchemy import text
-from analize.utils import get_db_engine
+from backend.analize.utils import get_db_engine
 
 rejected_bp = Blueprint('rejected', __name__)
 engine, schema = get_db_engine()
@@ -82,7 +82,7 @@ def reanalyze_news():
             return jsonify({'error': 'Missing news_id'}), 400
 
         # Import potrzebnych modułów
-        from ai_analist import analyze_articles
+        from backend.ai.ai_analist import analyze_articles
         from database import Database
 
         # Usuń news z news_not_analyzed

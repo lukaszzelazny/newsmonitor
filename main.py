@@ -5,16 +5,16 @@ from datetime import datetime
 from typing import List
 from dotenv import load_dotenv
 
-from config import Config
-from database import Database
-from scraper import Scraper
-from providers.pap_provider import PAPProvider
-from providers.strefa_investorow_provider import StrefaInwestorowProvider
-from providers.rekomendacje_provider import RekomendacjeProvider
-from providers.base_provider import BaseProvider
-from tools.actions import run_ticker_scraper, import_xtb_transactions
-from portfolio.analysis import calculate_portfolio_return, calculate_group_return, get_holdings
-from portfolio.models import Portfolio, Asset
+from backend.config import Config
+from backend.database import Database
+from backend.scraper import Scraper
+from backend.scraper.providers.pap_provider import PAPProvider
+from backend.scraper.providers.strefa_investorow_provider import StrefaInwestorowProvider
+from backend.scraper.providers.rekomendacje_provider import RekomendacjeProvider
+from backend.scraper.providers.base_provider import BaseProvider
+from backend.tools.actions import run_ticker_scraper, import_xtb_transactions
+from backend.portfolio.analysis import calculate_portfolio_return, calculate_group_return, get_holdings, calculate_asset_return
+from backend.portfolio.models import Portfolio, Asset, Transaction
 
 
 # Load environment variables

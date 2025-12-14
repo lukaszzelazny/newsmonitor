@@ -4,9 +4,9 @@ import numpy as np
 from openai import OpenAI
 from dotenv import load_dotenv
 from collections import defaultdict
-from database import Database, NewsArticle, AnalysisResult, TickerSentiment, Ticker, \
-    SectorSentiment, BrokerageAnalysis
-from tools.normalizer import get_normalizer
+from backend.database import Database, NewsArticle, AnalysisResult, TickerSentiment, Ticker, \
+    SectorSentiment, BrokerageAnalysis, NewsNotAnalyzed
+from backend.tools.normalizer import get_normalizer
 from sklearn.metrics.pairwise import cosine_similarity
 from sqlalchemy import text
 
@@ -15,8 +15,6 @@ normalizer = get_normalizer()
 load_dotenv()
 
 client = OpenAI(api_key=os.getenv('OPENAI_API', ''))
-
-normalizer = get_normalizer()
 
 def load_patterns(filepath='patterns.json', name="relevant_patterns"):
     """Wczytuje atrybut 'relevant_patterns' z pliku JSON"""
@@ -499,7 +497,6 @@ def get_unanalyzed_articles(db: Database, exclude_not_analyzed: bool = True):
 
         # Opcjonalnie wykluczamy artykuły z news_not_analyzed
         if exclude_not_analyzed:
-            from database import NewsNotAnalyzed
             query = query.outerjoin(
                 NewsNotAnalyzed, NewsArticle.id == NewsNotAnalyzed.news_id
             ).filter(NewsNotAnalyzed.id == None)
@@ -1193,7 +1190,7 @@ if __name__ == "__main__":
     print(result)
     """
     import sys
-    from config import Config
+    from backend.config import Config
 
     config = Config()
     db = Database()

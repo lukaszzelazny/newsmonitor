@@ -1,10 +1,9 @@
 """Functions for portfolio analysis."""
 
 from sqlalchemy.orm import Session
-from portfolio.models import Portfolio, Transaction, TransactionType
+from backend.portfolio.models import Portfolio, Transaction, TransactionType, Asset
 from collections import defaultdict
-from tools.price_fetcher import get_current_price, get_current_prices, get_historical_prices_for_tickers, get_currency_for_ticker, fx_symbol_to_pln, _fetch_fx_series, get_dividends_for_tickers
-from portfolio.models import Asset
+from backend.tools.price_fetcher import get_current_price, get_current_prices, get_historical_prices_for_tickers, get_currency_for_ticker, fx_symbol_to_pln, _fetch_fx_series, get_dividends_for_tickers
 import pandas as pd
 from datetime import timedelta
 import math

@@ -2,8 +2,8 @@
 
 import pandas as pd
 from sqlalchemy.orm import Session
-from portfolio.models import Asset, Transaction, TransactionType
-from database import Database
+from backend.portfolio.models import Asset, Transaction, TransactionType
+from backend.database import Database
 from datetime import datetime
 
 
@@ -212,7 +212,7 @@ if __name__ == '__main__':
     db = Database()
     session = db.Session()
 
-    from portfolio.models import Portfolio
+    from backend.portfolio.models import Portfolio
 
     # Create a dummy portfolio for testing
     portfolio_name = "My XTB Portfolio"

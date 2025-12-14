@@ -1,11 +1,10 @@
 import os
 import json
-import yfinance as yf
 from sqlalchemy import create_engine
 from functools import lru_cache
-from tools.ticker_analizer import getScoreWithDetails
-from tools.moving_analizer import calculate_moving_averages_signals
-from tools.price_fetcher import (
+from backend.tools.ticker_analizer import getScoreWithDetails
+from backend.tools.moving_analizer import calculate_moving_averages_signals
+from backend.tools.price_fetcher import (
     get_current_price as pf_get_current_price,
     get_price_history as pf_get_price_history,
     get_yf_symbol as map_yf_symbol,

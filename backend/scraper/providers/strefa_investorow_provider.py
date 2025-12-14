@@ -7,7 +7,7 @@ from datetime import date, datetime
 import time
 import re
 
-from providers.base_provider import BaseProvider, NewsArticle
+from .base_provider import BaseProvider, NewsArticle
 
 
 class StrefaInwestorowProvider(BaseProvider):

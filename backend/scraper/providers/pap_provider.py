@@ -7,7 +7,7 @@ from datetime import date
 import time
 import re
 
-from providers.base_provider import BaseProvider, NewsArticle
+from .base_provider import BaseProvider, NewsArticle
 
 
 class PAPProvider(BaseProvider):
@@ -276,4 +276,3 @@ class PAPProvider(BaseProvider):
         except requests.RequestException:
             # Return default if request fails
             return 50
-

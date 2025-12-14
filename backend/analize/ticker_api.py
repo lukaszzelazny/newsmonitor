@@ -1,15 +1,15 @@
 import sys
 import os
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
 
 from flask import Flask, jsonify, request
 from flask_cors import CORS
-from tools.actions import run_ticker_scraper
-from analize.utils import get_price_history, get_technical_analysis
-from analize.views.tickers import tickers_bp
-from analize.views.calendar import calendar_bp
-from analize.views.rejected import rejected_bp
-from analize.views.portfolio import portfolio_bp
+from backend.tools.actions import run_ticker_scraper
+from backend.analize.utils import get_price_history, get_technical_analysis
+from backend.analize.views.tickers import tickers_bp
+from backend.analize.views.calendar import calendar_bp
+from backend.analize.views.rejected import rejected_bp
+from backend.analize.views.portfolio import portfolio_bp
 
 
 app = Flask(__name__)
@@ -70,8 +70,8 @@ def scrape_ticker_endpoint():
 if __name__ == '__main__':
     import argparse
     from dotenv import load_dotenv
-    from database import Database
-    from tools.price_fetcher import enable_database_mode
+    from backend.database import Database
+    from backend.tools.price_fetcher import enable_database_mode
 
     load_dotenv()
 
