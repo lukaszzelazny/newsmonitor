@@ -6,6 +6,9 @@ export default function PortfolioView({ days }) {
     const [fullRoiSeries, setFullRoiSeries] = useState([]);
     const [roiSeries, setRoiSeries] = useState([]);
     const [monthlyProfits, setMonthlyProfits] = useState([]);
+    const [historicalAssets, setHistoricalAssets] = useState([]);
+    const [showOnlyCurrentInHistory, setShowOnlyCurrentInHistory] = useState(false);
+    const [tickerFilter, setTickerFilter] = useState('');
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(null);
     const [timeRange, setTimeRange] = useState('ALL');
@@ -37,19 +40,22 @@ export default function PortfolioView({ days }) {
             setLoading(true);
             setError(null);
             try {
-                const [ovrRes, roiRes, monthlyRes] = await Promise.all([
+                const [ovrRes, roiRes, monthlyRes, histRes] = await Promise.all([
                     fetch('/api/portfolio/overview'),
                     fetch('/api/portfolio/roi'),
-                    fetch('/api/portfolio/monthly_profit')
+                    fetch('/api/portfolio/monthly_profit'),
+                    fetch('/api/portfolio/all_assets_summary')
                 ]);
                 const ovr = await ovrRes.json();
                 const roi = await roiRes.json();
                 const monthly = await monthlyRes.json();
+                const hist = await histRes.json();
                 
                 setOverview(ovr);
                 setMonthlyProfits(Array.isArray(monthly) ? monthly : []);
                 const series = Array.isArray(roi) ? roi : [];
                 setFullRoiSeries(series);
+                setHistoricalAssets(Array.isArray(hist) ? hist : []);
                 filterData(series, 'ALL');
             } catch (e) {
                 console.error('Error fetching portfolio data:', e);
@@ -377,6 +383,90 @@ export default function PortfolioView({ days }) {
                                         </td>
                                     </tr>
                                 ))}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            )}
+
+            {historicalAssets.length > 0 && (
+                <div className="bg-white rounded-lg shadow-lg overflow-hidden mt-6">
+                    <div className="px-4 py-3 border-b border-gray-200 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                        <h3 className="text-lg font-bold text-gray-900">Wszystkie aktywa (historyczne)</h3>
+                        <div className="flex flex-wrap items-center gap-3">
+                            <div className="flex items-center">
+                                <input
+                                    type="text"
+                                    placeholder="Filtr ticker..."
+                                    value={tickerFilter}
+                                    onChange={(e) => setTickerFilter(e.target.value)}
+                                    className="px-3 py-1 border border-gray-300 rounded text-sm w-32 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                                />
+                            </div>
+                            <label className="flex items-center space-x-2 cursor-pointer">
+                                <input
+                                    type="checkbox"
+                                    checked={showOnlyCurrentInHistory}
+                                    onChange={(e) => setShowOnlyCurrentInHistory(e.target.checked)}
+                                    className="h-4 w-4 text-blue-600 rounded"
+                                />
+                                <span className="text-sm text-gray-700 whitespace-nowrap">Pokaż tylko w portfelu</span>
+                            </label>
+                        </div>
+                    </div>
+                    <div className="overflow-x-auto">
+                        <table className="min-w-full divide-y divide-gray-200 text-xs">
+                            <thead className="bg-gray-50">
+                                <tr>
+                                    <th className="px-2 py-2 text-left font-medium text-gray-500 uppercase tracking-wider">Ticker</th>
+                                    <th className="px-2 py-2 text-right font-medium text-gray-500 uppercase tracking-wider">Ilość</th>
+                                    <th className="px-2 py-2 text-right font-medium text-gray-500 uppercase tracking-wider">Śr. cena</th>
+                                    <th className="px-2 py-2 text-right font-medium text-gray-500 uppercase tracking-wider">Cena akt.</th>
+                                    <th className="px-2 py-2 text-right font-medium text-gray-500 uppercase tracking-wider">Wartość</th>
+                                    <th className="px-2 py-2 text-right font-medium text-gray-500 uppercase tracking-wider">Zysk</th>
+                                    <th className="px-2 py-2 text-right font-medium text-gray-500 uppercase tracking-wider">Zwrot %</th>
+                                    <th className="px-2 py-2 text-right font-medium text-gray-500 uppercase tracking-wider">Zreal.</th>
+                                    <th className="px-2 py-2 text-right font-medium text-gray-500 uppercase tracking-wider">Niezreal.</th>
+                                    <th className="px-2 py-2 text-right font-medium text-gray-500 uppercase tracking-wider">Trans.</th>
+                                    <th className="px-2 py-2 text-right font-medium text-gray-500 uppercase tracking-wider">Pierwsza data</th>
+                                    <th className="px-2 py-2 text-right font-medium text-gray-500 uppercase tracking-wider">Ostatnia data</th>
+                                    <th className="px-2 py-2 text-right font-medium text-gray-500 uppercase tracking-wider">W portf.</th>
+                                </tr>
+                            </thead>
+                            <tbody className="bg-white divide-y divide-gray-200">
+                                {historicalAssets
+                                    .filter(asset => {
+                                        if (showOnlyCurrentInHistory && !asset.still_held) return false;
+                                        if (tickerFilter && !asset.ticker.toLowerCase().includes(tickerFilter.toLowerCase())) return false;
+                                        return true;
+                                    })
+                                    .map((asset, idx) => (
+                                        <tr key={asset.ticker} className="hover:bg-gray-50">
+                                            <td className="px-2 py-2 whitespace-nowrap font-bold text-gray-900">{asset.ticker}</td>
+                                            <td className="px-2 py-2 whitespace-nowrap text-right text-gray-500">{fmt(asset.quantity_held, 4)}</td>
+                                            <td className="px-2 py-2 whitespace-nowrap text-right text-gray-500">{fmt(asset.avg_purchase_price, 2)}</td>
+                                            <td className="px-2 py-2 whitespace-nowrap text-right text-gray-900 font-medium">{fmt(asset.current_price, 2)}</td>
+                                            <td className="px-2 py-2 whitespace-nowrap text-right text-gray-900 font-bold">{fmt(asset.value, 2)}</td>
+                                            <td className={`px-2 py-2 whitespace-nowrap text-right font-bold ${asset.profit_pln >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                                                {asset.profit_pln >= 0 ? '+' : ''}{fmt(asset.profit_pln, 2)}
+                                            </td>
+                                            <td className={`px-2 py-2 whitespace-nowrap text-right font-bold ${asset.return_pct >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                                                {asset.return_pct >= 0 ? '+' : ''}{fmt(asset.return_pct, 2)}%
+                                            </td>
+                                            <td className={`px-2 py-2 whitespace-nowrap text-right ${asset.realized_pnl >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                                                {fmt(asset.realized_pnl, 2)}
+                                            </td>
+                                            <td className={`px-2 py-2 whitespace-nowrap text-right ${asset.unrealized_pnl >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                                                {fmt(asset.unrealized_pnl, 2)}
+                                            </td>
+                                            <td className="px-2 py-2 whitespace-nowrap text-right text-gray-500">{asset.total_transactions}</td>
+                                            <td className="px-2 py-2 whitespace-nowrap text-right text-gray-500">{asset.first_transaction_date || '-'}</td>
+                                            <td className="px-2 py-2 whitespace-nowrap text-right text-gray-500">{asset.last_transaction_date || '-'}</td>
+                                            <td className="px-2 py-2 whitespace-nowrap text-right text-gray-500">
+                                                {asset.still_held ? '✓' : ''}
+                                            </td>
+                                        </tr>
+                                    ))}
                             </tbody>
                         </table>
                     </div>

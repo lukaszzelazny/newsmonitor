@@ -2,8 +2,7 @@ import argparse
 import glob
 import os
 import sys
-from backend.database import Database
-from backend.portfolio.models import Portfolio, Transaction
+from backend.database import Database, Portfolio, Transaction
 from backend.portfolio.importer import XtbImporter
 
 

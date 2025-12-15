@@ -1,12 +1,14 @@
 """Functions for portfolio analysis."""
 
 from sqlalchemy.orm import Session
-from backend.portfolio.models import Portfolio, Transaction, TransactionType, Asset
 from collections import defaultdict
-from backend.tools.price_fetcher import get_current_price, get_current_prices, get_historical_prices_for_tickers, get_currency_for_ticker, fx_symbol_to_pln, _fetch_fx_series, get_dividends_for_tickers
 import pandas as pd
 from datetime import timedelta
 import math
+
+# Import models using absolute path to avoid conflicts
+from backend.database import Portfolio, Asset, TransactionType, Transaction
+from backend.tools.price_fetcher import get_current_price, get_current_prices, get_historical_prices_for_tickers, get_currency_for_ticker, fx_symbol_to_pln, _fetch_fx_series, get_dividends_for_tickers
 
 
 def get_holdings(session: Session, portfolio_id: int) -> dict:
@@ -63,13 +65,16 @@ def calculate_asset_return(session: Session, portfolio_id: int, asset_id: int, p
         if price_map and asset_ticker in price_map:
              current_price = price_map[asset_ticker]
         else:
-             current_price = get_current_price(asset_ticker)
+             try:
+                 current_price = get_current_price(asset_ticker)
+             except Exception:
+                 current_price = None
              
         if current_price:
             market_value = quantity_held * current_price
             # Simplified unrealized PnL. A more accurate calculation would use average cost basis.
-            avg_cost_per_share = total_cost / sum(t.quantity for t in transactions if t.transaction_type == TransactionType.BUY)
-            unrealized_pnl = (current_price - avg_cost_per_share) * quantity_held
+            avg_cost_per_share = total_cost / sum(t.quantity for t in transactions if t.transaction_type == TransactionType.BUY) if sum(t.quantity for t in transactions if t.transaction_type == TransactionType.BUY) > 0 else 0
+            unrealized_pnl = (current_price - avg_cost_per_share) * quantity_held if avg_cost_per_share > 0 else 0
 
     total_pnl = realized_pnl + unrealized_pnl
     rate_of_return = (total_pnl / total_cost) * 100 if total_cost > 0 else 0
@@ -160,52 +165,6 @@ def calculate_group_return(session: Session) -> dict:
         "rate_of_return": rate_of_return
     }
 
-
-if __name__ == '__main__':
-    # Example usage:
-    from database import Database
-    from portfolio.models import Portfolio, Asset
-
-    db = Database()
-    session = db.Session()
-
-    # Assuming a portfolio exists
-    portfolio = session.query(Portfolio).first()
-    if portfolio:
-        print(f"--- Analysis for Portfolio: {portfolio.name} ---")
-
-        # Holdings
-        current_holdings = get_holdings(session, portfolio.id)
-        print("\nCurrent Holdings:")
-        for ticker, qty in current_holdings.items():
-            print(f"  {ticker}: {qty:.2f}")
-
-        # Per-asset return
-        print("\nAsset Returns:")
-        assets = session.query(Asset.id, Asset.ticker).join(Transaction).filter(Transaction.portfolio_id == portfolio.id).distinct().all()
-        for asset_id, ticker in assets:
-            asset_return = calculate_asset_return(session, portfolio.id, asset_id)
-            print(f"  {ticker}:")
-            print(f"    Realized PnL: {asset_return['realized_pnl']:.2f}")
-            print(f"    Rate of Return: {asset_return['rate_of_return']:.2f}%")
-
-        # Portfolio return
-        portfolio_return = calculate_portfolio_return(session, portfolio.id)
-        print("\nPortfolio Summary:")
-        print(f"  Total Cost: {portfolio_return['total_cost']:.2f}")
-        print(f"  Total Revenue: {portfolio_return['total_revenue']:.2f}")
-        print(f"  Realized PnL: {portfolio_return['realized_pnl']:.2f}")
-        print(f"  Rate of Return: {portfolio_return['rate_of_return']:.2f}%")
-
-    # Group return for all portfolios
-    group_return = calculate_group_return(session)
-    print("\n--- Group Analysis (All Portfolios) ---")
-    print(f"  Total Cost: {group_return['total_cost']:.2f}")
-    print(f"  Total Revenue: {group_return['total_revenue']:.2f}")
-    print(f"  Realized PnL: {group_return['realized_pnl']:.2f}")
-    print(f"  Rate of Return: {group_return['rate_of_return']:.2f}%")
-
-    session.close()
 
 """Poprawiona funkcja calculate_roi_over_time"""
 
@@ -841,6 +800,98 @@ def calculate_portfolio_value_over_time(session: Session, portfolio_id: int):
     df['value'] = df['value'].replace(0, pd.NA).ffill().fillna(0)
 
     return df.to_dict('records')
+
+
+def calculate_all_assets_summary(session: Session, portfolio_id: int):
+    """
+    Zwraca podsumowanie wszystkich aktywów (tickerów) kiedykolwiek obecnych w portfelu,
+    z danymi historycznymi (zrealizowany zysk, niezrealizowany, ilość transakcji, itp.)
+
+    Returns:
+        Lista słowników z danymi per ticker.
+    """
+    # Pobierz wszystkie transakcje portfela
+    transactions = session.query(Transaction).filter_by(
+        portfolio_id=portfolio_id
+    ).order_by(Transaction.transaction_date).all()
+
+    if not transactions:
+        return []
+
+    # Unikalne asset_id
+    asset_ids_result = session.query(Transaction.asset_id).filter_by(
+        portfolio_id=portfolio_id
+    ).distinct().all()
+    asset_ids = [row[0] for row in asset_ids_result]
+
+    # Pre-fetch current prices dla wszystkich tickerów (opcjonalnie)
+    tickers = []
+    for asset_id in asset_ids:
+        ticker = session.query(Asset.ticker).filter_by(id=asset_id).scalar()
+        if ticker:
+            tickers.append(ticker)
+    price_map = get_current_prices(tickers) if tickers else {}
+
+    assets_summary = []
+    for asset_id in asset_ids:
+        # Użyj istniejącej funkcji calculate_asset_return
+        asset_return = calculate_asset_return(session, portfolio_id, asset_id, price_map=price_map)
+        ticker = session.query(Asset.ticker).filter_by(id=asset_id).scalar()
+        if not ticker:
+            continue
+
+        # Pobierz transakcje dla tego assetu
+        asset_transactions = [t for t in transactions if t.asset_id == asset_id]
+        buy_count = sum(1 for t in asset_transactions if t.transaction_type == TransactionType.BUY)
+        sell_count = sum(1 for t in asset_transactions if t.transaction_type == TransactionType.SELL)
+        total_transactions = buy_count + sell_count
+
+        # Oblicz daty pierwszej i ostatniej transakcji
+        if asset_transactions:
+            first_date = min(t.transaction_date for t in asset_transactions)
+            last_date = max(t.transaction_date for t in asset_transactions)
+        else:
+            first_date = last_date = None
+
+        # Określ czy nadal w portfelu (quantity_held > 0)
+        quantity_held = asset_return['quantity_held']
+        still_held = quantity_held > 0
+
+        # Oblicz całkowity koszt (suma kwot zakupu) i przychód (suma kwot sprzedaży)
+        total_cost = asset_return['total_cost']
+        total_revenue = asset_return['total_revenue']
+
+        # Zrealizowany zysk (realized_pnl) już jest w asset_return
+        realized_pnl = asset_return['realized_pnl']
+        unrealized_pnl = asset_return['unrealized_pnl']
+        total_pnl = realized_pnl + unrealized_pnl
+
+        # Udział procentowy w całkowitym koszcie? Możemy obliczyć później po zebraniu wszystkich.
+        # Na razie zwracamy surowe dane.
+        assets_summary.append({
+            'ticker': ticker,
+            'quantity_held': quantity_held,
+            'avg_purchase_price': total_cost / sum(t.quantity for t in asset_transactions if t.transaction_type == TransactionType.BUY) if buy_count > 0 else 0,
+            'current_price': price_map.get(ticker, 0),
+            'value': asset_return['market_value'],
+            'daily_change': 0,  # Nie mamy danych historycznych dziennych zmian dla podsumowania
+            'profit_pln': total_pnl,
+            'return_pct': asset_return['rate_of_return'],
+            'realized_pnl': realized_pnl,
+            'unrealized_pnl': unrealized_pnl,
+            'total_cost': total_cost,
+            'total_revenue': total_revenue,
+            'buy_count': buy_count,
+            'sell_count': sell_count,
+            'total_transactions': total_transactions,
+            'first_transaction_date': first_date.strftime('%Y-%m-%d') if first_date else None,
+            'last_transaction_date': last_date.strftime('%Y-%m-%d') if last_date else None,
+            'still_held': still_held
+        })
+
+    # Posortuj po tickerze
+    assets_summary.sort(key=lambda x: x['ticker'])
+    return assets_summary
 
 
 def calculate_monthly_profit(session: Session, portfolio_id: int):

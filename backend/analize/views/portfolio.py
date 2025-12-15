@@ -1,6 +1,5 @@
 from flask import Blueprint, jsonify, request
-from backend.database import Database
-from backend.portfolio.models import Portfolio
+from backend.database import Database, Portfolio, Asset, Transaction
 from backend.portfolio.analysis import calculate_portfolio_overview, calculate_roi_over_time, calculate_portfolio_value_over_time, calculate_monthly_profit
 
 portfolio_bp = Blueprint('portfolio', __name__)
@@ -133,6 +132,32 @@ def portfolio_monthly_profit():
         session.close()
 
 
+@portfolio_bp.route('/api/portfolio/all_assets_summary')
+def portfolio_all_assets_summary():
+    """
+    Zwraca podsumowanie wszystkich aktywów (tickerów) kiedykolwiek obecnych w portfelu,
+    z danymi historycznymi (zrealizowany zysk, niezrealizowany, ilość transakcji, itp.)
+    """
+    db = Database()
+    session = db.Session()
+    try:
+        name = request.args.get('name', default=None, type=str)
+        portfolio = _get_portfolio(session, name)
+        if not portfolio:
+            return jsonify([])
+
+        from backend.portfolio.analysis import calculate_all_assets_summary
+        summary = calculate_all_assets_summary(session, portfolio.id) or []
+        return jsonify(summary)
+    except Exception as e:
+        print(f"Error in /api/portfolio/all_assets_summary: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+    finally:
+        session.close()
+
+
 @portfolio_bp.route('/api/portfolio/transactions')
 def portfolio_transactions():
     """
@@ -147,7 +172,6 @@ def portfolio_transactions():
     db = Database()
     session = db.Session()
     try:
-        from backend.portfolio.models import Transaction, Asset
 
         # --- ZMODYFIKOWANA LOGIKA FILTROWANIA ---
 

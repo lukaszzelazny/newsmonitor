@@ -6,8 +6,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 
 import pandas as pd
 from sqlalchemy.orm import Session
-from backend.portfolio.models import Asset, Transaction, TransactionType
-from backend.database import Database
+from backend.database import Database, Portfolio, Asset, TransactionType, Transaction
 from datetime import datetime
 
 
@@ -266,8 +265,6 @@ if __name__ == '__main__':
 
     db = Database()
     session = db.Session()
-
-    from backend.portfolio.models import Portfolio
 
     portfolio_name = args.portfolio
     portfolio = session.query(Portfolio).filter_by(name=portfolio_name).first()

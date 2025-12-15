@@ -29,7 +29,7 @@ from sqlalchemy.orm import sessionmaker
 
 # Conditional imports for type hints
 if TYPE_CHECKING:
-    from backend.portfolio.models import Asset, AssetPriceHistory
+    from backend.database import Asset, AssetPriceHistory
 
 # Configure logging
 logging.basicConfig(
