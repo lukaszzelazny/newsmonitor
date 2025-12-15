@@ -43,7 +43,7 @@ def _find_asset_in_db(session: Session, ticker_symbol: str):
     DB seems to store Polish stocks with .PL suffix, while app might use .WA or no suffix.
     """
     try:
-        from portfolio.models import Asset
+        from backend.database import Asset
         
         # 1. Exact match
         asset = session.query(Asset).filter(Asset.ticker == ticker_symbol).first()
@@ -429,7 +429,35 @@ def get_current_price(ticker_symbol: str):
             return price
         
         # If not found in DB, return None (Database mode implies preferring DB)
+        # Try Stooq for Polish tickers
+        if ticker_symbol.endswith('.PL'):
+            # Use Stooq
+            clean_ticker = ticker_symbol.replace('.PL', '').lower()
+            url = f'https://stooq.pl/q/l/?s={clean_ticker}&f=sd2t2ohlcv&h&e=csv'
+            try:
+                import pandas as pd
+                df = pd.read_csv(url)
+                if not df.empty and 'Close' in df.columns:
+                    price = float(df['Close'].iloc[0])
+                    return price
+            except Exception:
+                pass
+        
         return None
+
+    # Non-database mode
+    # For Polish tickers, try Stooq first
+    if ticker_symbol.endswith('.PL'):
+        clean_ticker = ticker_symbol.replace('.PL', '').lower()
+        url = f'https://stooq.pl/q/l/?s={clean_ticker}&f=sd2t2ohlcv&h&e=csv'
+        try:
+            import pandas as pd
+            df = pd.read_csv(url)
+            if not df.empty and 'Close' in df.columns:
+                price = float(df['Close'].iloc[0])
+                return price
+        except Exception:
+            pass
 
     yf_symbol = get_yf_symbol(ticker_symbol)
     currency = get_currency_for_ticker(yf_symbol)

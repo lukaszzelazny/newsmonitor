@@ -207,7 +207,7 @@ class PriceSyncService:
 
     def get_assets_to_sync(self, ticker: Optional[str] = None) -> List:
         """Get list of assets that need price sync."""
-        from backend.portfolio.models import Asset
+        from backend.database import Asset
         query = self.session.query(Asset)
         if ticker:
             query = query.filter(Asset.ticker == ticker.upper())
@@ -215,7 +215,7 @@ class PriceSyncService:
 
     def get_last_sync_date(self, asset_id: int) -> Optional[datetime]:
         """Get the last date for which we have price data."""
-        from backend.portfolio.models import AssetPriceHistory
+        from backend.database import AssetPriceHistory
         last_record = (
             self.session.query(AssetPriceHistory)
             .filter(AssetPriceHistory.asset_id == asset_id)
@@ -226,7 +226,7 @@ class PriceSyncService:
 
     def get_first_sync_date(self, asset_id: int) -> Optional[datetime]:
         """Get the first date for which we have price data."""
-        from backend.portfolio.models import AssetPriceHistory
+        from backend.database import AssetPriceHistory
         first_record = (
             self.session.query(AssetPriceHistory)
             .filter(AssetPriceHistory.asset_id == asset_id)
@@ -293,7 +293,7 @@ class PriceSyncService:
 
     def save_price_data(self, asset, df):
         """Save price data to database."""
-        from backend.portfolio.models import AssetPriceHistory
+        from backend.database import AssetPriceHistory
 
         if df is None or df.empty:
             return 0
@@ -502,8 +502,7 @@ def main():
 
     # Database mode - requires database connection
     try:
-        from portfolio.models import Asset, AssetPriceHistory
-        from database import Database
+        from backend.database import Asset, AssetPriceHistory, Database
     except ImportError as e:
         logger.error(f"Cannot import database modules: {e}")
         logger.error("Use --csv-mode if you don't have database access")
