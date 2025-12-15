@@ -82,7 +82,7 @@ def _get_or_create_asset(session: Session, ticker_symbol: str):
     """
     Finds an asset or creates it if it doesn't exist.
     """
-    from portfolio.models import Asset
+    from backend.database import Asset
     
     asset = _find_asset_in_db(session, ticker_symbol)
     if asset:
@@ -104,7 +104,7 @@ def _save_history_to_db(session: Session, asset_id: int, df: pd.DataFrame):
     Saves DataFrame history to DB.
     df index should be DatetimeIndex or contain Date column.
     """
-    from portfolio.models import AssetPriceHistory
+    from backend.database import AssetPriceHistory
     
     if df is None or df.empty:
         return
@@ -288,7 +288,7 @@ def _fetch_fx_series(currencies: List[str], start_date, end_date) -> Dict[str, p
     if _DB_SESSION_FACTORY:
         session = _get_db_session()
         try:
-            from portfolio.models import AssetPriceHistory
+            from backend.database import AssetPriceHistory
             
             missing_in_db = []
             for fx in fx_needed:
@@ -373,7 +373,7 @@ def _fetch_fx_rate_from_db_or_yf(currency: str) -> Optional[float]:
     if _DB_SESSION_FACTORY:
         session = _get_db_session()
         try:
-            from portfolio.models import AssetPriceHistory
+            from backend.database import AssetPriceHistory
             
             asset = _find_asset_in_db(session, fx_ticker)
             if asset:
@@ -403,7 +403,7 @@ def get_current_price(ticker_symbol: str):
         session = _get_db_session()
         price = None
         try:
-            from portfolio.models import AssetPriceHistory
+            from backend.database import AssetPriceHistory
             
             asset = _find_asset_in_db(session, ticker_symbol)
             
@@ -699,7 +699,7 @@ def get_price_history(ticker_symbol: str, days: int = 90):
     if session:
         price_data = []
         try:
-            from portfolio.models import AssetPriceHistory
+            from backend.database import AssetPriceHistory
             
             # In caching mode, we ensure asset exists. In forced mode, we just look for it.
             asset = None
@@ -966,7 +966,7 @@ def get_historical_prices_for_tickers(tickers, start_date, end_date):
             return result
         
         try:
-            from portfolio.models import AssetPriceHistory
+            from backend.database import AssetPriceHistory
             
             # Resolve assets and currencies first
             ticker_to_asset = {}
@@ -1034,7 +1034,7 @@ def get_ohlc_history_df(ticker_symbol: str, days: int = 365) -> pd.DataFrame:
 
     if session:
         try:
-            from portfolio.models import AssetPriceHistory
+            from backend.database import AssetPriceHistory
             
             asset = None
             if is_caching_mode:
