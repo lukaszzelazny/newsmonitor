@@ -202,8 +202,8 @@ def calculate_roi_over_time(session: Session, portfolio_id: int):
     gdzie ri = (EV - CF - BV) / BV
     EV: End Value, BV: Begin Value, CF: Cash Flow
 
-    Używa purchase_value_pln/sale_value_pln gdy dostępne (dla tickerów zagranicznych),
-    fallback na konwersję ręczną dla PLN/brakujących wartości.
+    Używa purchase_value_pln/sale_value_pln gdy dostępne (dla wartości transakcji),
+    ale MUSI konwertować ceny rynkowe z USD/EUR na PLN dla wyceny bieżącej.
     """
     # Pobierz wszystkie transakcje
     transactions = session.query(Transaction).filter_by(
@@ -218,11 +218,11 @@ def calculate_roi_over_time(session: Session, portfolio_id: int):
     end_date = pd.Timestamp.today().date()
 
     # Pobierz unikalne tickery
-    # asset_ids = session.query(Transaction.asset_id).filter_by(
-    #     portfolio_id=portfolio_id
-    # ).distinct().all()
-    asset_ids = [(20,)]
+    asset_ids = session.query(Transaction.asset_id).filter_by(
+        portfolio_id=portfolio_id
+    ).distinct().all()
     tickers = []
+    asset_ids = [(20,)]
     for asset_id in asset_ids:
         ticker = session.query(Asset.ticker).filter_by(id=asset_id[0]).scalar()
         if ticker:
@@ -231,10 +231,67 @@ def calculate_roi_over_time(session: Session, portfolio_id: int):
     if not tickers:
         return []
 
-    # Pobierz historyczne ceny dla wszystkich tickerów (już w PLN z bazy)
+    # Pobierz informacje o walutach i kursy wymiany
+    try:
+        currency_by_ticker = {t: get_currency_for_ticker(t) for t in tickers}
+        currencies = sorted({c for c in currency_by_ticker.values() if c != "PLN"})
+        fx_series_map = _fetch_fx_series(currencies, start_date,
+                                         end_date) if currencies else {}
+
+        # Debug: sprawdź co zostało pobrane
+        if currencies and not fx_series_map:
+            print(f"UWAGA: Wymagane waluty {currencies}, ale fx_series_map jest pusty!")
+            print(f"Próba pobrania kursów ponownie...")
+    except Exception as e:
+        print(f"Błąd pobierania kursów walut: {e}")
+        import traceback
+        traceback.print_exc()
+        currency_by_ticker = {t: "PLN" for t in tickers}
+        fx_series_map = {}
+
+    # Pobierz historyczne ceny (w oryginalnej walucie: USD dla NVDA.US, PLN dla .PL)
     historical_prices = get_historical_prices_for_tickers(tickers, start_date, end_date)
 
-    # Helper: Pobierz wartość transakcji w PLN (preferuje kolumny *_value_pln)
+    # Helper: Konwersja ceny rynkowej na PLN
+    def convert_price_to_pln(price, ticker, date):
+        """
+        Konwertuje cenę rynkową (z asset_price_history) na PLN.
+        Ceny w bazie są w oryginalnej walucie (USD dla .US, PLN dla .PL).
+        """
+        currency = "PLN" #currency_by_ticker.get(ticker, "PLN")
+        if currency == "PLN" or 1:
+            return float(price)
+
+        fx_ticker = fx_symbol_to_pln(currency)
+        fx_series = fx_series_map.get(fx_ticker)
+
+        if fx_series is None or fx_series.empty:
+            # Fallback: spróbuj pobrać kurs pojedynczo dla tej daty
+            print(
+                f"UWAGA: Brak serii FX dla {currency}, próba pobrania kursu dla {date}...")
+            try:
+                # Możesz użyć funkcji która pobiera pojedynczy kurs
+                # np. z NBP API lub innego źródła
+                # Na razie zwracamy warning i 1.0
+                print(
+                    f"  fx_ticker={fx_ticker}, fx_series_map.keys()={list(fx_series_map.keys())}")
+                return float(price)  # BŁĄD: zwraca w oryginalnej walucie!
+            except:
+                return float(price)
+
+        date_ts = pd.Timestamp(date)
+        if date_ts in fx_series.index:
+            fx_rate = float(fx_series.loc[date_ts])
+        else:
+            prev_dates = fx_series.index[fx_series.index <= date_ts]
+            if len(prev_dates) > 0:
+                fx_rate = float(fx_series.loc[prev_dates.max()])
+            else:
+                fx_rate = float(fx_series.iloc[0])
+
+        return float(price) * fx_rate
+
+    # Helper: Pobierz wartość transakcji w PLN (preferuje *_value_pln)
     def get_tx_value_pln(t):
         """
         Zwraca wartość transakcji w PLN:
@@ -242,28 +299,33 @@ def calculate_roi_over_time(session: Session, portfolio_id: int):
         - SELL: kwota otrzymana (po prowizji)
 
         Preferuje purchase_value_pln/sale_value_pln jeśli dostępne.
+        Fallback: price * quantity ± commission (z konwersją jeśli foreign)
         """
         if t.transaction_type == TransactionType.BUY:
             # Preferuj purchase_value_pln jeśli jest
             if t.purchase_value_pln is not None and float(t.purchase_value_pln) > 0:
                 return float(t.purchase_value_pln)
             else:
-                # Fallback: zakładamy że price jest już w PLN (dla tickerów .PL)
-                return float(t.quantity) * float(t.price) + float(t.commission or 0.0)
+                # Fallback: konwertuj price na PLN
+                price_pln = convert_price_to_pln(t.price, t.asset.ticker,
+                                                 t.transaction_date)
+                return float(t.quantity) * price_pln + float(t.commission or 0.0)
 
         else:  # SELL
             # Preferuj sale_value_pln jeśli jest
             if t.sale_value_pln is not None and float(t.sale_value_pln) > 0:
                 return float(t.sale_value_pln)
             else:
-                # Fallback: zakładamy że price jest już w PLN
-                return float(t.quantity) * float(t.price) - float(t.commission or 0.0)
+                # Fallback: konwertuj price na PLN
+                price_pln = convert_price_to_pln(t.price, t.asset.ticker,
+                                                 t.transaction_date)
+                return float(t.quantity) * price_pln - float(t.commission or 0.0)
 
     # Helper: Pobierz cenę za akcję w PLN z transakcji (dla last_known_prices)
     def get_tx_price_per_share_pln(t):
         """
         Oblicza cenę za jedną akcję w PLN z transakcji.
-        Używa *_value_pln jeśli dostępne, inaczej price.
+        Używa *_value_pln jeśli dostępne, inaczej konwertuje price.
         """
         if t.transaction_type == TransactionType.BUY and t.purchase_value_pln is not None and float(
                 t.purchase_value_pln) > 0:
@@ -272,25 +334,31 @@ def calculate_roi_over_time(session: Session, portfolio_id: int):
                 t.sale_value_pln) > 0:
             return float(t.sale_value_pln) / float(t.quantity)
         else:
-            # Fallback: zakładamy że price jest już w PLN
-            return float(t.price)
+            # Fallback: konwertuj price na PLN
+            return convert_price_to_pln(t.price, t.asset.ticker, t.transaction_date)
 
-    # Helper: Pobierz cenę rynkową na dany dzień lub wcześniej (już w PLN z bazy)
+    # Helper: Pobierz cenę rynkową na dany dzień lub wcześniej (konwertując na PLN)
     def get_price_on_or_before(ticker, date):
         """
-        Zwraca cenę historyczną na lub przed daną datą.
-        Ceny z historical_prices są już w PLN (z bazy danych).
+        Zwraca cenę historyczną na lub przed daną datą, skonwertowaną do PLN.
+        Ceny z historical_prices są w oryginalnej walucie i wymagają konwersji.
         """
         if ticker not in historical_prices or not historical_prices[ticker]:
             return None
         prices = historical_prices[ticker]
         date_ts = pd.Timestamp(date)
+
+        # Znajdź cenę na ten dzień lub wcześniej
         if date_ts in prices:
-            return float(prices[date_ts])
+            price_orig = float(prices[date_ts])
+            return convert_price_to_pln(price_orig, ticker, date)
+
         prev_dates = [d for d in prices.keys() if d <= date_ts]
         if prev_dates:
             prev_date = max(prev_dates)
-            return float(prices[prev_date])
+            price_orig = float(prices[prev_date])
+            return convert_price_to_pln(price_orig, ticker, prev_date)
+
         return None
 
     date_range = pd.date_range(start=start_date, end=end_date, freq='D')
@@ -356,7 +424,7 @@ def calculate_roi_over_time(session: Session, portfolio_id: int):
             elif t.transaction_type == TransactionType.SELL:
                 holdings[t.asset.ticker] -= qty
 
-        # 3. Oblicz wartość rynkową na koniec dnia (End Value)
+        # 3. Oblicz wartość rynkową na koniec dnia (End Value) - w PLN
         market_value = 0.0
         for ticker, qty in holdings.items():
             if qty > 0:
@@ -783,7 +851,7 @@ def calculate_portfolio_value_over_time(session: Session, portfolio_id: int):
 
     def convert_to_pln(price, ticker, date):
         currency = currency_by_ticker.get(ticker, "PLN")
-        if currency == "PLN":
+        if currency == "PLN" or 1:
             return float(price)
         fx_ticker = fx_symbol_to_pln(currency)
         fx_series = fx_series_map.get(fx_ticker)
