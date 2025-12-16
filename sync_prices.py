@@ -23,6 +23,7 @@ from datetime import datetime, timedelta
 from typing import List, Optional, TYPE_CHECKING
 import yfinance as yf
 from sqlalchemy.orm import sessionmaker
+import pandas as pd
 # import requests
 # from requests.adapters import HTTPAdapter
 # from urllib3.util.retry import Retry
@@ -178,6 +179,11 @@ class PriceSyncService:
 
     def __init__(self, session):
         self.session = session
+        # Import price_fetcher functions locally to avoid circular imports
+        from backend.tools.price_fetcher import get_currency_for_ticker, fx_symbol_to_pln, _fetch_fx_series
+        self.get_currency_for_ticker = get_currency_for_ticker
+        self.fx_symbol_to_pln = fx_symbol_to_pln
+        self._fetch_fx_series = _fetch_fx_series
 
     def normalize_ticker_for_yf(self, ticker: str) -> str:
         """
@@ -336,6 +342,133 @@ class PriceSyncService:
 
         return records_added
 
+    def _convert_df_to_pln(self, asset, df):
+        """Convert a DataFrame of price data from original currency to PLN."""
+        if df is None or df.empty:
+            return df
+        
+        # Determine currency from ticker
+        yf_ticker = self.normalize_ticker_for_yf(asset.ticker)
+        currency = self.get_currency_for_ticker(yf_ticker)
+        
+        if currency == "PLN":
+            # Already in PLN, no conversion needed
+            return df
+        
+        # Get date range for FX series
+        start_date = df.index.min().date()
+        end_date = df.index.max().date()
+        
+        # Fetch FX series for this currency
+        fx_ticker = self.fx_symbol_to_pln(currency)
+        if not fx_ticker:
+            logger.error(f"Cannot get FX ticker for currency {currency}, skipping conversion.")
+            return df
+        
+        fx_series_map = self._fetch_fx_series([currency], start_date, end_date)
+        fx_series = fx_series_map.get(fx_ticker)
+        
+        if fx_series is None or fx_series.empty:
+            logger.error(f"Cannot fetch FX rates for {fx_ticker} in range {start_date} to {end_date}")
+            return df
+        
+        # Align FX series with df index (ensure same timezone/format)
+        # fx_series index is datetime64[ns], df index is also datetime64[ns] from yfinance
+        # Reindex fx_series to df.index and forward/backward fill
+        aligned_fx = fx_series.reindex(df.index).ffill().bfill()
+        
+        # Convert all price columns
+        price_columns = ['Open', 'High', 'Low', 'Close', 'Adj Close'] if 'Adj Close' in df.columns else ['Open', 'High', 'Low', 'Close']
+        for col in price_columns:
+            if col in df.columns:
+                df[col] = df[col] * aligned_fx.values
+        
+        # Volume remains unchanged
+        return df
+
+    def convert_existing_prices_to_pln(self, asset):
+        """Convert existing price records for an asset from original currency to PLN using historical FX rates."""
+        from backend.database import AssetPriceHistory
+        logger.info(f"Converting existing prices for {asset.ticker} to PLN...")
+        
+        # Get all price records for this asset
+        records = self.session.query(AssetPriceHistory).filter(
+            AssetPriceHistory.asset_id == asset.id
+        ).order_by(AssetPriceHistory.date.asc()).all()
+        
+        if not records:
+            logger.info(f"No price records found for {asset.ticker}")
+            return 0
+        
+        # Determine currency from ticker
+        yf_ticker = self.normalize_ticker_for_yf(asset.ticker)
+        currency = self.get_currency_for_ticker(yf_ticker)
+        
+        if currency == "PLN":
+            logger.info(f"{asset.ticker} is already in PLN, skipping conversion.")
+            return 0
+        
+        # Get date range for FX series
+        dates = [r.date for r in records]
+        start_date = min(dates)
+        end_date = max(dates)
+        
+        # Fetch FX series for this currency
+        fx_ticker = self.fx_symbol_to_pln(currency)
+        if not fx_ticker:
+            logger.error(f"Cannot get FX ticker for currency {currency}, skipping conversion.")
+            return 0
+        
+        fx_series_map = self._fetch_fx_series([currency], start_date, end_date)
+        fx_series = fx_series_map.get(fx_ticker)
+        
+        if fx_series is None or fx_series.empty:
+            logger.error(f"Cannot fetch FX rates for {fx_ticker} in range {start_date} to {end_date}")
+            return 0
+        
+        # Convert each record
+        updated_count = 0
+        for record in records:
+            # Get FX rate for the specific date
+            # FX series index is datetime64[ns], convert record.date to same type
+            record_date = pd.Timestamp(record.date)
+            if record_date in fx_series.index:
+                fx_rate = float(fx_series.loc[record_date])
+            else:
+                # Try to find nearest previous date (forward fill)
+                # Use pandas to reindex and ffill
+                # Create a single-element series
+                try:
+                    # Get the FX rate at or before record_date
+                    # Use asof which returns last valid value up to record_date
+                    fx_rate = float(fx_series.asof(record_date))
+                    if pd.isna(fx_rate):
+                        # If still NaN, try backward fill
+                        fx_rate = float(fx_series.bfill().iloc[0])
+                except Exception as e:
+                    logger.warning(f"Cannot get FX rate for {record.date}: {e}, skipping")
+                    continue
+            
+            # Convert all price fields
+            if record.open is not None:
+                record.open = float(record.open) * fx_rate
+            if record.high is not None:
+                record.high = float(record.high) * fx_rate
+            if record.low is not None:
+                record.low = float(record.low) * fx_rate
+            record.close = float(record.close) * fx_rate
+            record.adjusted_close = float(record.adjusted_close) * fx_rate
+            
+            updated_count += 1
+        
+        if updated_count > 0:
+            self.session.commit()
+            logger.info(f"✓ Converted {updated_count} price records for {asset.ticker} to PLN")
+        else:
+            logger.info(f"No records converted for {asset.ticker}")
+        
+        return updated_count
+
     def sync_asset(self, asset, full_sync: bool = False):
         """Sync price data for a single asset."""
         logger.info(f"Syncing {asset.ticker} ({asset.name})")
@@ -396,6 +529,8 @@ class PriceSyncService:
         for start, end, suppress_errors in ranges_to_sync:
             df = self.fetch_yahoo_data(asset.ticker, start, end, suppress_errors=suppress_errors)
             if df is not None:
+                # Convert new data to PLN before saving
+                df = self._convert_df_to_pln(asset, df)
                 records = self.save_price_data(asset, df)
                 total_records += records
             elif not suppress_errors:
@@ -467,6 +602,7 @@ def main():
     parser.add_argument('--tickers-file', type=str, help='Path to file with tickers (one per line) for CSV mode')
     parser.add_argument('--output', type=str, help='Output CSV filename')
     parser.add_argument('--gpw', action='store_true', help='Add .WA suffix for Warsaw Stock Exchange tickers')
+    parser.add_argument('--convert-to-pln', action='store_true', help='Convert existing prices in database to PLN using historical FX rates')
 
     args = parser.parse_args()
 
@@ -517,6 +653,18 @@ def main():
 
         # Create sync service and run
         service = PriceSyncService(session)
+        
+        # Convert existing prices to PLN if requested
+        if args.convert_to_pln:
+            logger.info("Converting existing prices to PLN using historical FX rates...")
+            assets = service.get_assets_to_sync(ticker=args.ticker)
+            total_converted = 0
+            for asset in assets:
+                converted = service.convert_existing_prices_to_pln(asset)
+                total_converted += converted
+            logger.info(f"Total records converted to PLN: {total_converted}")
+            # Continue with normal sync after conversion
+        
         service.sync_all_assets(full_sync=args.full, ticker=args.ticker)
     except Exception as e:
         logger.error(f"Fatal error: {str(e)}")

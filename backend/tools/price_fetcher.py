@@ -72,6 +72,19 @@ def _find_asset_in_db(session: Session, ticker_symbol: str):
             asset = session.query(Asset).filter(Asset.ticker == alt).first()
             if asset:
                 return asset
+                
+        # 5. If ticker ends with .PL, try without .PL (e.g., SNT.PL -> SNT)
+        if ticker_symbol.endswith('.PL'):
+            base = ticker_symbol[:-3]  # remove '.PL'
+            asset = session.query(Asset).filter(Asset.ticker == base).first()
+            if asset:
+                return asset
+                
+        # 6. If ticker has no suffix but we have .PL version, try that (reverse of 5)
+        if '.' not in ticker_symbol:
+            asset = session.query(Asset).filter(Asset.ticker == ticker_symbol + '.PL').first()
+            if asset:
+                return asset
 
     except ImportError:
         pass
@@ -430,6 +443,7 @@ def get_current_price(ticker_symbol: str):
         
         # If not found in DB, return None (Database mode implies preferring DB)
         # Try Stooq for Polish tickers
+        price = None
         if ticker_symbol.endswith('.PL'):
             # Use Stooq
             clean_ticker = ticker_symbol.replace('.PL', '').lower()
@@ -443,7 +457,24 @@ def get_current_price(ticker_symbol: str):
             except Exception:
                 pass
         
-        return None
+        # If still no price, try Yahoo Finance as fallback (especially for .PL tickers)
+        if price is None:
+            yf_symbol = get_yf_symbol(ticker_symbol)
+            try:
+                api_res = _fetch_quotes_batch_via_api([yf_symbol])
+                if yf_symbol in api_res:
+                    price = api_res[yf_symbol]
+                    # Convert to PLN if needed (YF returns price in original currency)
+                    currency = get_currency_for_ticker(yf_symbol)
+                    if currency != "PLN":
+                        fx_rate = _fetch_fx_rate_from_db_or_yf(currency)
+                        if fx_rate:
+                            price = price * float(fx_rate)
+                    return price
+            except Exception:
+                pass
+        
+        return price
 
     # Non-database mode
     # For Polish tickers, try Stooq first

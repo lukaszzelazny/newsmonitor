@@ -38,27 +38,56 @@ def get_holdings(session: Session, portfolio_id: int) -> dict:
 def calculate_asset_return(session: Session, portfolio_id: int, asset_id: int, price_map: dict = None) -> dict:
     """
     Calculates the rate of return for a single asset in a portfolio.
+    Uses purchase_value_pln and sale_value_pln if available.
     """
     transactions = session.query(Transaction).filter_by(
         portfolio_id=portfolio_id, asset_id=asset_id
     ).order_by(Transaction.transaction_date).all()
 
-    total_cost = 0
-    total_revenue = 0
-    quantity_held = 0
+    total_cost_pln = 0.0
+    total_revenue_pln = 0.0
+    total_bought_shares = 0.0
+    total_sold_shares = 0.0
+    quantity_held = 0.0
     asset_ticker = transactions[0].asset.ticker if transactions else None
 
-    for t in transactions:
+    # Helper to get transaction value in PLN
+    def get_tx_value_pln_asset(t):
         if t.transaction_type == TransactionType.BUY:
-            total_cost += t.quantity * t.price + (t.commission or 0)
-            quantity_held += t.quantity
+            if t.purchase_value_pln is not None and float(t.purchase_value_pln) > 0:
+                return float(t.purchase_value_pln)
+            else:
+                # Fallback: assume price is in original currency, but we don't have FX rate here.
+                # This function is used for realized PnL, so we need PLN values.
+                # For consistency, we'll use price * quantity + commission, but that may be in original currency.
+                # However, the caller expects PLN. Since we don't have historical FX, we'll assume price is in PLN.
+                return float(t.quantity) * float(t.price) + float(t.commission or 0.0)
+        else:  # SELL
+            if t.sale_value_pln is not None and float(t.sale_value_pln) > 0:
+                return float(t.sale_value_pln)
+            else:
+                return float(t.quantity) * float(t.price) - float(t.commission or 0.0)
+
+    for t in transactions:
+        tx_value_pln = get_tx_value_pln_asset(t)
+        if t.transaction_type == TransactionType.BUY:
+            total_cost_pln += tx_value_pln
+            total_bought_shares += float(t.quantity)
+            quantity_held += float(t.quantity)
         elif t.transaction_type == TransactionType.SELL:
-            total_revenue += t.quantity * t.price - (t.commission or 0)
-            quantity_held -= t.quantity
+            total_revenue_pln += tx_value_pln
+            total_sold_shares += float(t.quantity)
+            quantity_held -= float(t.quantity)
     
-    realized_pnl = total_revenue - total_cost
-    unrealized_pnl = 0
-    market_value = 0
+    # Average cost per share (PLN) for bought shares
+    avg_cost_per_share_pln = total_cost_pln / total_bought_shares if total_bought_shares > 0 else 0.0
+    
+    # Realized PnL: revenue from sales minus cost of sold shares (using average cost)
+    cost_of_sold = avg_cost_per_share_pln * total_sold_shares
+    realized_pnl = total_revenue_pln - cost_of_sold
+    
+    unrealized_pnl = 0.0
+    market_value = 0.0
 
     if quantity_held > 0 and asset_ticker:
         current_price = None
@@ -66,22 +95,20 @@ def calculate_asset_return(session: Session, portfolio_id: int, asset_id: int, p
              current_price = price_map[asset_ticker]
         else:
              try:
-                 current_price = get_current_price(asset_ticker)
+                 current_price = get_current_price(asset_ticker)  # already in PLN
              except Exception:
                  current_price = None
              
         if current_price:
             market_value = quantity_held * current_price
-            # Simplified unrealized PnL. A more accurate calculation would use average cost basis.
-            avg_cost_per_share = total_cost / sum(t.quantity for t in transactions if t.transaction_type == TransactionType.BUY) if sum(t.quantity for t in transactions if t.transaction_type == TransactionType.BUY) > 0 else 0
-            unrealized_pnl = (current_price - avg_cost_per_share) * quantity_held if avg_cost_per_share > 0 else 0
+            unrealized_pnl = (current_price - avg_cost_per_share_pln) * quantity_held if avg_cost_per_share_pln > 0 else 0.0
 
     total_pnl = realized_pnl + unrealized_pnl
-    rate_of_return = (total_pnl / total_cost) * 100 if total_cost > 0 else 0
+    rate_of_return = (total_pnl / total_cost_pln) * 100 if total_cost_pln > 0 else 0.0
 
     return {
-        "total_cost": total_cost,
-        "total_revenue": total_revenue,
+        "total_cost": total_cost_pln,
+        "total_revenue": total_revenue_pln,
         "realized_pnl": realized_pnl,
         "unrealized_pnl": unrealized_pnl,
         "market_value": market_value,
@@ -166,17 +193,17 @@ def calculate_group_return(session: Session) -> dict:
     }
 
 
-"""Poprawiona funkcja calculate_roi_over_time"""
-
-
 def calculate_roi_over_time(session: Session, portfolio_id: int):
     """
     Oblicza stopę zwrotu portfela w czasie używając Time-Weighted Return (TWR).
-    
+
     TWR eliminuje wpływ wpłat i wypłat na wynik procentowy.
     TWR = (1 + r1) * (1 + r2) * ... * (1 + rn) - 1
     gdzie ri = (EV - CF - BV) / BV
     EV: End Value, BV: Begin Value, CF: Cash Flow
+
+    Używa purchase_value_pln/sale_value_pln gdy dostępne (dla tickerów zagranicznych),
+    fallback na konwersję ręczną dla PLN/brakujących wartości.
     """
     # Pobierz wszystkie transakcje
     transactions = session.query(Transaction).filter_by(
@@ -191,9 +218,10 @@ def calculate_roi_over_time(session: Session, portfolio_id: int):
     end_date = pd.Timestamp.today().date()
 
     # Pobierz unikalne tickery
-    asset_ids = session.query(Transaction.asset_id).filter_by(
-        portfolio_id=portfolio_id
-    ).distinct().all()
+    # asset_ids = session.query(Transaction.asset_id).filter_by(
+    #     portfolio_id=portfolio_id
+    # ).distinct().all()
+    asset_ids = [(20,)]
     tickers = []
     for asset_id in asset_ids:
         ticker = session.query(Asset.ticker).filter_by(id=asset_id[0]).scalar()
@@ -203,157 +231,185 @@ def calculate_roi_over_time(session: Session, portfolio_id: int):
     if not tickers:
         return []
 
-    # Przygotuj dane walutowe
-    try:
-        currency_by_ticker = {t: get_currency_for_ticker(t) for t in tickers}
-        currencies = sorted({c for c in currency_by_ticker.values() if c != "PLN"})
-        fx_series_map = _fetch_fx_series(currencies, start_date, end_date) if currencies else {}
-    except Exception as e:
-        print(f"Błąd pobierania kursów walut: {e}")
-        currency_by_ticker = {t: "PLN" for t in tickers}
-        fx_series_map = {}
-
-    # Pobierz historyczne ceny dla wszystkich tickerów (już skonwertowane na PLN)
+    # Pobierz historyczne ceny dla wszystkich tickerów (już w PLN z bazy)
     historical_prices = get_historical_prices_for_tickers(tickers, start_date, end_date)
 
-    # Funkcja pomocnicza do konwersji ceny na PLN (dla transakcji)
-    def convert_to_pln(price, ticker, date):
-        currency = currency_by_ticker.get(ticker, "PLN")
-        if currency == "PLN":
-            return float(price)
-        fx_ticker = fx_symbol_to_pln(currency)
-        fx_series = fx_series_map.get(fx_ticker)
-        if fx_series is None or fx_series.empty:
-            return float(price)
-        date_ts = pd.Timestamp(date)
-        if date_ts in fx_series.index:
-            fx_rate = float(fx_series.loc[date_ts])
-        else:
-            prev_dates = fx_series.index[fx_series.index <= date_ts]
-            if len(prev_dates) > 0:
-                fx_rate = float(fx_series.loc[prev_dates.max()])
-            else:
-                fx_rate = float(fx_series.iloc[0])
-        return float(price) * fx_rate
+    # Helper: Pobierz wartość transakcji w PLN (preferuje kolumny *_value_pln)
+    def get_tx_value_pln(t):
+        """
+        Zwraca wartość transakcji w PLN:
+        - BUY: kwota wydana (z prowizją)
+        - SELL: kwota otrzymana (po prowizji)
 
-    # Pobierz cenę rynkową (już w PLN, bez ponownej konwersji)
+        Preferuje purchase_value_pln/sale_value_pln jeśli dostępne.
+        """
+        if t.transaction_type == TransactionType.BUY:
+            # Preferuj purchase_value_pln jeśli jest
+            if t.purchase_value_pln is not None and float(t.purchase_value_pln) > 0:
+                return float(t.purchase_value_pln)
+            else:
+                # Fallback: zakładamy że price jest już w PLN (dla tickerów .PL)
+                return float(t.quantity) * float(t.price) + float(t.commission or 0.0)
+
+        else:  # SELL
+            # Preferuj sale_value_pln jeśli jest
+            if t.sale_value_pln is not None and float(t.sale_value_pln) > 0:
+                return float(t.sale_value_pln)
+            else:
+                # Fallback: zakładamy że price jest już w PLN
+                return float(t.quantity) * float(t.price) - float(t.commission or 0.0)
+
+    # Helper: Pobierz cenę za akcję w PLN z transakcji (dla last_known_prices)
+    def get_tx_price_per_share_pln(t):
+        """
+        Oblicza cenę za jedną akcję w PLN z transakcji.
+        Używa *_value_pln jeśli dostępne, inaczej price.
+        """
+        if t.transaction_type == TransactionType.BUY and t.purchase_value_pln is not None and float(
+                t.purchase_value_pln) > 0:
+            return float(t.purchase_value_pln) / float(t.quantity)
+        elif t.transaction_type == TransactionType.SELL and t.sale_value_pln is not None and float(
+                t.sale_value_pln) > 0:
+            return float(t.sale_value_pln) / float(t.quantity)
+        else:
+            # Fallback: zakładamy że price jest już w PLN
+            return float(t.price)
+
+    # Helper: Pobierz cenę rynkową na dany dzień lub wcześniej (już w PLN z bazy)
     def get_price_on_or_before(ticker, date):
+        """
+        Zwraca cenę historyczną na lub przed daną datą.
+        Ceny z historical_prices są już w PLN (z bazy danych).
+        """
         if ticker not in historical_prices or not historical_prices[ticker]:
             return None
         prices = historical_prices[ticker]
         date_ts = pd.Timestamp(date)
         if date_ts in prices:
-            return prices[date_ts] 
+            return float(prices[date_ts])
         prev_dates = [d for d in prices.keys() if d <= date_ts]
         if prev_dates:
             prev_date = max(prev_dates)
-            return prices[prev_date]
+            return float(prices[prev_date])
         return None
 
     date_range = pd.date_range(start=start_date, end=end_date, freq='D')
-    
-    # Agreguj przepływy pieniężne według dat (PLN)
+
+    # Agreguj przepływy pieniężne według dat (już w PLN)
     cash_flows_by_date = defaultdict(float)
     for t in transactions:
         date = t.transaction_date
-        price_pln = convert_to_pln(t.price, t.asset.ticker, date)
-        gross = float(t.quantity) * price_pln
-        commission = float(t.commission or 0.0)
+        tx_value = get_tx_value_pln(t)
 
         if t.transaction_type == TransactionType.BUY:
-            cash_flow = (gross + commission) # Inflow to assets
-            cash_flows_by_date[date] += cash_flow
+            # Wpływ kapitału do portfela (dodatni cash flow)
+            cash_flows_by_date[date] += tx_value
         elif t.transaction_type == TransactionType.SELL:
-            cash_flow = -(gross - commission) # Outflow from assets
-            cash_flows_by_date[date] += cash_flow
+            # Wypływ kapitału z portfela (ujemny cash flow)
+            cash_flows_by_date[date] -= tx_value
 
     holdings = defaultdict(float)
-    last_known_prices = {} # Fallback prices from transactions
+    last_known_prices = {}  # Fallback prices (PLN per share)
     results = []
-    
+
     cumulative_twr = 1.0
     prev_market_value = 0.0
-    cumulative_invested = 0.0
-    
-    split_ratios = {} # Ticker -> Ratio
+    cumulative_invested = 0.0  # Do wyświetlania, nie używane w TWR
+
+    # Inicjalizuj last_known_prices z pierwszych transakcji
+    for t in transactions:
+        ticker = t.asset.ticker
+        if ticker not in last_known_prices:
+            price = get_tx_price_per_share_pln(t)
+            if price > 0:
+                last_known_prices[ticker] = price
 
     for date in date_range:
         date_obj = date.date()
-        
-        # Update holdings and split heuristic
+
+        # 1. Przepływy pieniężne w tym dniu
         daily_cash_flow = cash_flows_by_date.get(date_obj, 0.0)
         cumulative_invested += daily_cash_flow
 
-        # Process transactions for today
-        day_transactions = [tr for tr in transactions if tr.transaction_date == date_obj]
-        
-        for t in day_transactions:
-             # Update last known price from transaction
-             # (Heuristic Split Detection removed to maintain consistency with main view)
-             market_p = get_price_on_or_before(t.asset.ticker, date)
-             trans_p = convert_to_pln(t.price, t.asset.ticker, date)
-             
-             if market_p and market_p > 0:
-                 last_known_prices[t.asset.ticker] = market_p
-             else:
-                 last_known_prices[t.asset.ticker] = trans_p
+        # 2. Przetwórz transakcje dla tego dnia
+        day_transactions = [tr for tr in transactions if
+                            tr.transaction_date == date_obj]
 
-        # Apply quantity updates
+        # Aktualizuj last_known_prices z cen rynkowych (jeśli dostępne)
         for t in day_transactions:
-            # ratio = split_ratios.get(t.asset.ticker, 1.0) 
-            # Assuming DB transactions are source of truth for Quantity
-            qty = t.quantity 
-            
+            ticker = t.asset.ticker
+            market_price = get_price_on_or_before(ticker, date)
+
+            if market_price and market_price > 0:
+                last_known_prices[ticker] = market_price
+            else:
+                # Fallback na cenę z transakcji
+                tx_price = get_tx_price_per_share_pln(t)
+                if tx_price > 0:
+                    last_known_prices[ticker] = tx_price
+
+        # Aktualizuj holdingi (ilość akcji)
+        for t in day_transactions:
+            qty = float(t.quantity)
             if t.transaction_type == TransactionType.BUY:
                 holdings[t.asset.ticker] += qty
             elif t.transaction_type == TransactionType.SELL:
                 holdings[t.asset.ticker] -= qty
 
-        # Calculate End Market Value
+        # 3. Oblicz wartość rynkową na koniec dnia (End Value)
         market_value = 0.0
         for ticker, qty in holdings.items():
             if qty > 0:
                 price = get_price_on_or_before(ticker, date)
-                
-                # Fallback
+
+                # Fallback na last_known_prices jeśli brak danych historycznych
                 if price is None or price <= 0:
                     price = last_known_prices.get(ticker)
                 else:
+                    # Aktualizuj last_known_prices świeżą ceną
                     last_known_prices[ticker] = price
-                
+
                 if price is not None and price > 0:
                     market_value += qty * price
-        
-        # Calculate Daily Return (End-of-Day TWR)
-        # r = (V_end - CF - V_begin) / V_begin
+
+        # 4. Oblicz dzienny zwrot (TWR formula)
+        # r = (End_Value - Cash_Flow - Begin_Value) / Begin_Value
+
+        daily_return = 0.0
+
         if prev_market_value > 0.01:
-            daily_return = (market_value - daily_cash_flow - prev_market_value) / prev_market_value
+            # Normalny przypadek: mamy kapitał z poprzedniego dnia
+            daily_return = (
+                                       market_value - daily_cash_flow - prev_market_value) / prev_market_value
         elif daily_cash_flow > 0.01:
-            # Initial funding or restart
+            # Pierwszy dzień z kapitałem (initial funding)
+            # Zwrot = (End - Cash_Flow) / Cash_Flow
             daily_return = (market_value - daily_cash_flow) / daily_cash_flow
-        else:
-            daily_return = 0.0
-            
-        cumulative_twr *= (1 + daily_return)
-        
+        # else: daily_return = 0.0 (brak kapitału, brak zwrotu)
+
+        # 5. Aktualizuj skumulowany TWR
+        cumulative_twr *= (1.0 + daily_return)
+
+        # 6. Zapisz wyniki
         results.append({
             'date': date,
             'market_value': market_value,
             'invested': cumulative_invested,
-            'rate_of_return': (cumulative_twr - 1) * 100.0
+            'rate_of_return': (cumulative_twr - 1.0) * 100.0
         })
-        
+
         prev_market_value = market_value
 
     # Utwórz DataFrame
     df = pd.DataFrame(results)
     df['date'] = pd.to_datetime(df['date'])
-    
-    # Forward fill 
+
+    # Forward fill wartości na weekendy/święta (kiedy nie ma notowań)
     df['market_value'] = df['market_value'].replace(0, pd.NA).ffill().fillna(0)
     df['rate_of_return'] = df['rate_of_return'].ffill().fillna(0)
     df['invested'] = df['invested'].ffill().fillna(0)
 
+    # Konwersja do listy słowników
     roi_data = []
     for _, row in df.iterrows():
         roi_data.append({
@@ -396,40 +452,23 @@ def calculate_portfolio_overview(session: Session, portfolio_id: int) -> dict:
     start_date = transactions[0].transaction_date
     end_date = pd.Timestamp.today().date()
 
-    # Buys/Sells aggregations in PLN by historical FX at transaction dates
-    try:
-        currencies = sorted({get_currency_for_ticker(t.asset.ticker) for t in transactions if get_currency_for_ticker(t.asset.ticker) != "PLN"})
-        fx_series_map = _fetch_fx_series(currencies, start_date, end_date) if currencies else {}
-    except Exception:
-        fx_series_map = {}
-
-    def get_fx_rate(ticker, date):
-        currency = "PLN"
-        try:
-            currency = get_currency_for_ticker(ticker)
-        except Exception:
-            pass
-        if currency == "PLN":
-            return 1.0
-        
-        fx_ticker = fx_symbol_to_pln(currency)
-        fx_series = fx_series_map.get(fx_ticker)
-        if fx_series is not None and not fx_series.empty:
-            d = pd.Timestamp(date)
-            if d in fx_series.index:
-                return float(fx_series.loc[d])
+    # Helper to get transaction value in PLN using purchase_value_pln/sale_value_pln if available
+    def get_tx_value_pln(t):
+        if t.transaction_type == TransactionType.BUY:
+            if t.purchase_value_pln is not None and float(t.purchase_value_pln) > 0:
+                return float(t.purchase_value_pln)
             else:
-                prev_idx = fx_series.index[fx_series.index <= d]
-                return float(fx_series.loc[prev_idx.max()]) if len(prev_idx) > 0 else float(fx_series.iloc[0])
-        return 1.0
+                # Assume price is already in PLN
+                return float(t.quantity) * float(t.price) + float(t.commission or 0.0)
+        else:  # SELL
+            if t.sale_value_pln is not None and float(t.sale_value_pln) > 0:
+                return float(t.sale_value_pln)
+            else:
+                # Assume price is already in PLN
+                return float(t.quantity) * float(t.price) - float(t.commission or 0.0)
 
-    def to_pln(t):
-        px = float(t.price)
-        fx = get_fx_rate(t.asset.ticker, t.transaction_date)
-        return px * fx
-
-    total_buys = sum(float(t.quantity) * to_pln(t) + float(t.commission or 0.0) for t in transactions if t.transaction_type == TransactionType.BUY)
-    total_sells = sum(float(t.quantity) * to_pln(t) - float(t.commission or 0.0) for t in transactions if t.transaction_type == TransactionType.SELL)
+    total_buys = sum(get_tx_value_pln(t) for t in transactions if t.transaction_type == TransactionType.BUY)
+    total_sells = sum(get_tx_value_pln(t) for t in transactions if t.transaction_type == TransactionType.SELL)
     net_invested = total_buys - total_sells
 
     # Calculate per-asset avg price (Original Currency) and Cost Basis (PLN)
@@ -445,7 +484,7 @@ def calculate_portfolio_overview(session: Session, portfolio_id: int) -> dict:
         old_qty = curr['qty']
         tx_qty = float(t.quantity)
         tx_price = float(t.price)
-        tx_val_pln = tx_qty * to_pln(t)
+        tx_val_pln = get_tx_value_pln(t)  # already includes commission if purchase_value_pln/sale_value_pln available
         
         if t.transaction_type == TransactionType.BUY:
             # Buying
@@ -456,7 +495,7 @@ def calculate_portfolio_overview(session: Session, portfolio_id: int) -> dict:
                 if new_qty > 0:
                     curr['avg_price_org'] = ((old_qty * curr['avg_price_org']) + (tx_qty * tx_price)) / new_qty
                 
-                curr['cost_basis_pln'] += (tx_val_pln + float(t.commission or 0.0))
+                curr['cost_basis_pln'] += tx_val_pln
                 curr['qty'] = new_qty
             else:
                 # Short: Covering
@@ -474,7 +513,7 @@ def calculate_portfolio_overview(session: Session, portfolio_id: int) -> dict:
                         # Opened long
                         curr['qty'] = excess_qty
                         curr['avg_price_org'] = tx_price
-                        curr['cost_basis_pln'] = excess_qty * to_pln(t) # approx cost basis for new long
+                        curr['cost_basis_pln'] = get_tx_value_pln(t)  # use same value for the part that becomes long
                 else:
                     # Partial cover
                     remaining_fraction = (abs_old - tx_qty) / abs_old
@@ -494,7 +533,7 @@ def calculate_portfolio_overview(session: Session, portfolio_id: int) -> dict:
                     curr['avg_price_org'] = ((abs(old_qty) * curr['avg_price_org']) + (tx_qty * tx_price)) / abs_new
                 
                 # Cost Basis (Proceeds) Update
-                curr['cost_basis_pln'] += (tx_val_pln - float(t.commission or 0.0))
+                curr['cost_basis_pln'] += tx_val_pln
                 curr['qty'] = new_qty
             else:
                 # Long: Selling
@@ -509,7 +548,7 @@ def calculate_portfolio_overview(session: Session, portfolio_id: int) -> dict:
                         # Opened short
                         curr['qty'] = -excess_qty
                         curr['avg_price_org'] = tx_price
-                        curr['cost_basis_pln'] = excess_qty * to_pln(t) # Proceeds
+                        curr['cost_basis_pln'] = get_tx_value_pln(t)  # proceeds from the part that becomes short
                 else:
                     # Partial sell
                     fraction_remaining = (old_qty - tx_qty) / old_qty
@@ -527,8 +566,8 @@ def calculate_portfolio_overview(session: Session, portfolio_id: int) -> dict:
     assets_list = []
 
     if tickers:
-        # Look back enough to find previous available trading day
-        hist_start = end_date - timedelta(days=30)
+        # Look back from start of transactions to end date to get full history
+        hist_start = start_date
         hist = get_historical_prices_for_tickers(tickers, hist_start, end_date)
         
         # Pre-fetch live prices for all tickers to avoid loop calls
