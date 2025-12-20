@@ -89,18 +89,8 @@ export default function PortfolioView({ days }) {
 
         const rawFiltered = data.slice(startIndex);
         
-        if (rawFiltered.length > 0) {
-            const startRoi = rawFiltered[0].rate_of_return;
-            const startFactor = 1 + (startRoi / 100.0);
-            
-            const rebased = rawFiltered.map(item => ({
-                ...item,
-                rate_of_return: (((1 + item.rate_of_return / 100.0) / startFactor) - 1) * 100.0
-            }));
-            setRoiSeries(rebased);
-        } else {
-            setRoiSeries(rawFiltered);
-        }
+        // Disable rebasing to show absolute ROI as calculated by backend
+        setRoiSeries(rawFiltered);
     };
 
     const handleTimeRangeChange = (range) => {

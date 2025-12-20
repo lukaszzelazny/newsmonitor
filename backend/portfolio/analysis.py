@@ -194,7 +194,7 @@ def calculate_group_return(session: Session) -> dict:
 
 
 def calculate_roi_over_time(session: Session, portfolio_id: int):
-    asset_id_test = [8]
+    asset_id_test = [4]
     """
     Oblicza stopę zwrotu portfela w czasie używając Time-Weighted Return (TWR).
 
@@ -206,16 +206,16 @@ def calculate_roi_over_time(session: Session, portfolio_id: int):
     UWAGA: Wszystkie ceny w asset_price_history są już w PLN!
     """
     # Pobierz wszystkie transakcje
-    # transactions = session.query(Transaction).filter_by(
-    #     portfolio_id=portfolio_id
-    # ).order_by(Transaction.transaction_date).all()
+    transactions = session.query(Transaction).filter_by(
+        portfolio_id=portfolio_id
+    ).order_by(Transaction.transaction_date).all()
 
-    transactions = (
-        session.query(Transaction)
-        .filter(Transaction.asset_id.in_(asset_id_test))
-        .order_by(Transaction.transaction_date)
-        .all()
-    )
+    # transactions = (
+    #     session.query(Transaction)
+    #     .filter(Transaction.asset_id.in_(asset_id_test))
+    #     .order_by(Transaction.transaction_date)
+    #     .all()
+    # )
 
     if not transactions:
         return []
@@ -225,16 +225,16 @@ def calculate_roi_over_time(session: Session, portfolio_id: int):
     end_date = pd.Timestamp.today().date()
 
     # Pobierz unikalne tickery
-    # asset_ids = session.query(Transaction.asset_id).filter_by(
-    #     portfolio_id=portfolio_id
-    # ).distinct().all()
+    asset_ids = session.query(Transaction.asset_id).filter_by(
+        portfolio_id=portfolio_id
+    ).distinct().all()
 
-    asset_ids = (
-        session.query(Transaction.asset_id)
-        .filter(Transaction.asset_id.in_(asset_id_test))
-        .distinct()
-        .all()
-    )
+    # asset_ids = (
+    #     session.query(Transaction.asset_id)
+    #     .filter(Transaction.asset_id.in_(asset_id_test))
+    #     .distinct()
+    #     .all()
+    # )
 
     tickers = []
     for asset_id in asset_ids:
