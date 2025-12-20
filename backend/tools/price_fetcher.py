@@ -1011,41 +1011,34 @@ def _get_historical_prices_cached(tickers_tuple, start_date, end_date):
 
     return price_dict
 
-def get_historical_prices_for_tickers(tickers, start_date, end_date):
+def get_historical_prices_for_tickers(tickers, start_date, end_date, session: Optional[Session] = None):
     """
     Fetches historical daily closing prices for a list of tickers in a given date range.
     All prices are converted to PLN using historical FX rates.
     Wrapper to allow caching on tuple arguments.
     """
-    if _DB_SESSION_FACTORY:
+    if session or _DB_SESSION_FACTORY:
         # DB Mode Implementation
-        session = _get_db_session()
+        db_session = session if session else _get_db_session()
         result = {}
-        if not session:
+        if not db_session:
             return result
+        
+        should_close = (session is None)
         
         try:
             from backend.database import AssetPriceHistory
             
-            # Resolve assets and currencies first
+            # Resolve assets
             ticker_to_asset = {}
-            currency_by_ticker = {}
             
             for ticker in tickers:
-                asset = _find_asset_in_db(session, ticker)
+                asset = _find_asset_in_db(db_session, ticker)
                 if asset:
                     ticker_to_asset[ticker] = asset
-                    # Determine currency from asset ticker to be precise
-                    yf_sym = get_yf_symbol(asset.ticker)
-                    currency_by_ticker[ticker] = get_currency_for_ticker(yf_sym)
-                else:
-                    currency_by_ticker[ticker] = "PLN" # Default
-
-            unique_currencies = sorted({c for c in currency_by_ticker.values() if c != "PLN"})
-            fx_series_map = _fetch_fx_series(unique_currencies, start_date, end_date)
 
             for ticker, asset in ticker_to_asset.items():
-                history = session.query(AssetPriceHistory)\
+                history = db_session.query(AssetPriceHistory)\
                     .filter(AssetPriceHistory.asset_id == asset.id)\
                     .filter(AssetPriceHistory.date >= start_date)\
                     .filter(AssetPriceHistory.date <= end_date)\
@@ -1060,22 +1053,15 @@ def get_historical_prices_for_tickers(tickers, start_date, end_date):
                     index=pd.to_datetime([h.date for h in history])
                 )
                 
-                # FX Conversion
-                currency = currency_by_ticker.get(ticker, "PLN")
-                if currency != "PLN":
-                    fx_ticker = fx_symbol_to_pln(currency)
-                    fx_series = fx_series_map.get(fx_ticker)
-                    if fx_series is not None and not fx_series.empty:
-                        aligned_fx = fx_series.reindex(series.index).ffill().bfill()
-                        series = series * aligned_fx
+                # NO FX Conversion when using DB prices (assumed to be already in PLN per requirements)
                 
                 result[ticker] = series.to_dict()
                 
         except Exception as e:
             print(f"DB Batch History Error: {e}")
         finally:
-            if session:
-                session.close()
+            if should_close and db_session:
+                db_session.close()
         return result
 
     return _get_historical_prices_cached(tuple(tickers), start_date, end_date)

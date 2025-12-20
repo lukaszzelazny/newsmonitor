@@ -1,6 +1,7 @@
 from flask import Blueprint, jsonify, request
 from backend.database import Database, Portfolio, Asset, Transaction
 from backend.portfolio.analysis import calculate_portfolio_overview, calculate_roi_over_time, calculate_portfolio_value_over_time, calculate_monthly_profit
+from backend.utils import clean_nan_in_data
 
 portfolio_bp = Blueprint('portfolio', __name__)
 
@@ -46,7 +47,8 @@ def portfolio_overview():
             'broker': portfolio.broker,
             'description': portfolio.description,
         }
-        return jsonify(overview)
+        # Clean NaN values before returning JSON
+        return jsonify(clean_nan_in_data(overview))
     except Exception as e:
         print(f"Error in /api/portfolio/overview: {e}")
         import traceback
@@ -72,7 +74,8 @@ def portfolio_value_over_time():
             return jsonify([])
 
         series = calculate_portfolio_value_over_time(session, portfolio.id) or []
-        return jsonify(series)
+        # Clean NaN values before returning JSON
+        return jsonify(clean_nan_in_data(series))
     except Exception as e:
         print(f"Error in /api/portfolio/value_over_time: {e}")
         import traceback
@@ -98,7 +101,8 @@ def portfolio_roi():
             return jsonify([])
 
         series = calculate_roi_over_time(session, portfolio.id) or []
-        return jsonify(series)
+        # Clean NaN values before returning JSON
+        return jsonify(clean_nan_in_data(series))
     except Exception as e:
         print(f"Error in /api/portfolio/roi: {e}")
         import traceback
@@ -122,7 +126,8 @@ def portfolio_monthly_profit():
             return jsonify([])
 
         stats = calculate_monthly_profit(session, portfolio.id) or []
-        return jsonify(stats)
+        # Clean NaN values before returning JSON
+        return jsonify(clean_nan_in_data(stats))
     except Exception as e:
         print(f"Error in /api/portfolio/monthly_profit: {e}")
         import traceback
@@ -148,7 +153,8 @@ def portfolio_all_assets_summary():
 
         from backend.portfolio.analysis import calculate_all_assets_summary
         summary = calculate_all_assets_summary(session, portfolio.id) or []
-        return jsonify(summary)
+        # Clean NaN values before returning JSON
+        return jsonify(clean_nan_in_data(summary))
     except Exception as e:
         print(f"Error in /api/portfolio/all_assets_summary: {e}")
         import traceback
@@ -196,7 +202,8 @@ def portfolio_transactions():
                 'transaction_date': t.transaction_date.strftime('%Y-%m-%d') if hasattr(
                     t.transaction_date, 'strftime') else str(t.transaction_date),
             })
-        return jsonify(result)
+        # Clean NaN values before returning JSON (though unlikely in transactions, we do it for consistency)
+        return jsonify(clean_nan_in_data(result))
     except Exception as e:
         print(f"Error in /api/portfolio/transactions: {e}")
         import traceback
