@@ -13,6 +13,7 @@ export default function PortfolioView({ days }) {
     const [error, setError] = useState(null);
     const [timeRange, setTimeRange] = useState('ALL');
     const [sortConfig, setSortConfig] = useState({ key: 'value', direction: 'desc' });
+    const [historySortConfig, setHistorySortConfig] = useState({ key: 'ticker', direction: 'asc' });
     const chartContainerRef = useRef(null);
     const chartRef = useRef(null);
 
@@ -198,6 +199,14 @@ export default function PortfolioView({ days }) {
         setSortConfig({ key, direction });
     };
 
+    const handleHistorySort = (key) => {
+        let direction = 'desc';
+        if (historySortConfig.key === key && historySortConfig.direction === 'desc') {
+            direction = 'asc';
+        }
+        setHistorySortConfig({ key, direction });
+    };
+
     const sortedAssets = [...(overview.assets || [])].sort((a, b) => {
         if (a[sortConfig.key] < b[sortConfig.key]) {
             return sortConfig.direction === 'asc' ? -1 : 1;
@@ -208,15 +217,125 @@ export default function PortfolioView({ days }) {
         return 0;
     });
 
-    const SortIcon = ({ column }) => {
-        if (sortConfig.key !== column) return <span className="text-gray-300 ml-1">⇅</span>;
-        return sortConfig.direction === 'asc' ? <span className="ml-1">▲</span> : <span className="ml-1">▼</span>;
+    const sortedHistoricalAssets = [...historicalAssets]
+        .filter(asset => {
+            if (showOnlyCurrentInHistory && !asset.still_held) return false;
+            if (tickerFilter && !asset.ticker.toLowerCase().includes(tickerFilter.toLowerCase())) return false;
+            return true;
+        })
+        .sort((a, b) => {
+            if (a[historySortConfig.key] < b[historySortConfig.key]) {
+                return historySortConfig.direction === 'asc' ? -1 : 1;
+            }
+            if (a[historySortConfig.key] > b[historySortConfig.key]) {
+                return historySortConfig.direction === 'asc' ? 1 : -1;
+            }
+            return 0;
+        });
+
+    const SortIcon = ({ column, config }) => {
+        const c = config || sortConfig;
+        if (c.key !== column) return <span className="text-gray-300 ml-1">⇅</span>;
+        return c.direction === 'asc' ? <span className="ml-1">▲</span> : <span className="ml-1">▼</span>;
     };
 
     const getProfitColor = (val) => {
         if (val > 0) return 'text-green-600 bg-green-50';
         if (val < 0) return 'text-red-600 bg-red-50';
         return 'text-gray-400';
+    };
+
+    // Simple Pie Chart Component
+    const PortfolioPieChart = ({ assets }) => {
+        if (!assets || assets.length === 0) return null;
+
+        // Group small assets into "Other"
+        const sorted = [...assets].sort((a, b) => b.value - a.value);
+        let data = [];
+        let otherValue = 0;
+        let totalValue = assets.reduce((sum, a) => sum + a.value, 0);
+
+        sorted.forEach(a => {
+            if (a.share_pct < 2.0 && sorted.length > 8) { // Threshold for "Other"
+                otherValue += a.value;
+            } else {
+                data.push({ ...a, color: '' });
+            }
+        });
+
+        if (otherValue > 0) {
+            data.push({ ticker: 'Inne', value: otherValue, share_pct: (otherValue / totalValue) * 100 });
+        }
+
+        const colors = [
+            '#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', 
+            '#ec4899', '#06b6d4', '#84cc16', '#6366f1', '#14b8a6', '#9ca3af'
+        ];
+        
+        data = data.map((d, i) => ({ ...d, color: colors[i % colors.length] }));
+
+        let cumulativePercent = 0;
+        
+        const getCoordinatesForPercent = (percent) => {
+            const x = Math.cos(2 * Math.PI * percent);
+            const y = Math.sin(2 * Math.PI * percent);
+            return [x, y];
+        };
+
+        return (
+            <div className="flex flex-col md:flex-row items-center justify-center gap-8 py-4">
+                <div className="relative w-64 h-64">
+                    <svg viewBox="-1 -1 2 2" className="transform -rotate-90 w-full h-full">
+                        {data.map((slice, i) => {
+                            const startPercent = cumulativePercent;
+                            const slicePercent = slice.share_pct / 100;
+                            cumulativePercent += slicePercent;
+                            const endPercent = cumulativePercent;
+
+                            const [startX, startY] = getCoordinatesForPercent(startPercent);
+                            const [endX, endY] = getCoordinatesForPercent(endPercent);
+                            
+                            const largeArcFlag = slicePercent > 0.5 ? 1 : 0;
+                            
+                            const pathData = [
+                                `M 0 0`,
+                                `L ${startX} ${startY}`,
+                                `A 1 1 0 ${largeArcFlag} 1 ${endX} ${endY}`,
+                                `L 0 0`,
+                            ].join(' ');
+
+                            return (
+                                <path 
+                                    key={i} 
+                                    d={pathData} 
+                                    fill={slice.color} 
+                                    stroke="white" 
+                                    strokeWidth="0.01"
+                                    className="hover:opacity-80 transition-opacity"
+                                >
+                                    <title>{`${slice.ticker}: ${fmt(slice.value)} PLN (${fmt(slice.share_pct, 1)}%)`}</title>
+                                </path>
+                            );
+                        })}
+                        {/* Inner circle for donut chart effect (optional) */}
+                        <circle cx="0" cy="0" r="0.6" fill="white" />
+                    </svg>
+                    <div className="absolute inset-0 flex items-center justify-center flex-col pointer-events-none">
+                       <div className="text-gray-500 text-xs">Razem</div>
+                       <div className="font-bold text-gray-800">{fmt(totalValue, 0)} PLN</div>
+                    </div>
+                </div>
+                <div className="grid grid-cols-2 gap-x-8 gap-y-2">
+                    {data.map((slice, i) => (
+                        <div key={i} className="flex items-center gap-2 text-sm">
+                            <div className="w-3 h-3 rounded-full" style={{ backgroundColor: slice.color }}></div>
+                            <div className="font-medium text-gray-700">{slice.ticker}</div>
+                            <div className="text-gray-500">{fmt(slice.share_pct, 1)}%</div>
+                        </div>
+                    ))}
+                </div>
+            </div>
+        );
     };
 
     return (
@@ -285,34 +404,34 @@ export default function PortfolioView({ days }) {
                         <h3 className="text-lg font-bold text-gray-900">Aktywa w portfelu</h3>
                     </div>
                     <div className="overflow-x-auto">
-                        <table className="min-w-full divide-y divide-gray-200">
+                        <table className="min-w-full divide-y divide-gray-200 text-xs">
                             <thead className="bg-gray-50 select-none">
                                 <tr>
-                                    <th onClick={() => handleSort('ticker')} className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100">
+                                    <th onClick={() => handleSort('ticker')} className="px-3 py-2 text-left font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100">
                                         Ticker <SortIcon column="ticker" />
                                     </th>
-                                    <th onClick={() => handleSort('daily_change')} className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100">
+                                    <th onClick={() => handleSort('daily_change')} className="px-3 py-2 text-right font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100">
                                         Zmiana 1D <SortIcon column="daily_change" />
                                     </th>
-                                    <th onClick={() => handleSort('quantity')} className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100">
+                                    <th onClick={() => handleSort('quantity')} className="px-3 py-2 text-right font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100">
                                         Ilość <SortIcon column="quantity" />
                                     </th>
-                                    <th onClick={() => handleSort('avg_purchase_price')} className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100">
-                                        Śr. cena zakupu <SortIcon column="avg_purchase_price" />
+                                    <th onClick={() => handleSort('avg_purchase_price')} className="px-3 py-2 text-right font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100">
+                                        Śr. cena <SortIcon column="avg_purchase_price" />
                                     </th>
-                                    <th onClick={() => handleSort('current_price')} className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100">
+                                    <th onClick={() => handleSort('current_price')} className="px-3 py-2 text-right font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100">
                                         Cena akt. <SortIcon column="current_price" />
                                     </th>
-                                    <th onClick={() => handleSort('value')} className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100">
+                                    <th onClick={() => handleSort('value')} className="px-3 py-2 text-right font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100">
                                         Wartość [PLN] <SortIcon column="value" />
                                     </th>
-                                    <th onClick={() => handleSort('share_pct')} className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100">
+                                    <th onClick={() => handleSort('share_pct')} className="px-3 py-2 text-right font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100">
                                         Udział % <SortIcon column="share_pct" />
                                     </th>
-                                    <th onClick={() => handleSort('return_pct')} className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100">
+                                    <th onClick={() => handleSort('return_pct')} className="px-3 py-2 text-right font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100">
                                         Zwrot % <SortIcon column="return_pct" />
                                     </th>
-                                    <th onClick={() => handleSort('profit_pln')} className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100">
+                                    <th onClick={() => handleSort('profit_pln')} className="px-3 py-2 text-right font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100">
                                         Zysk [PLN] <SortIcon column="profit_pln" />
                                     </th>
                                 </tr>
@@ -320,25 +439,31 @@ export default function PortfolioView({ days }) {
                             <tbody className="bg-white divide-y divide-gray-200">
                                 {sortedAssets.map((asset, idx) => (
                                     <tr key={asset.ticker} className="hover:bg-gray-50">
-                                        <td className="px-6 py-4 whitespace-nowrap text-sm font-bold text-gray-900">{asset.ticker}</td>
-                                        <td className={`px-6 py-4 whitespace-nowrap text-sm text-right font-semibold ${asset.daily_change >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                                        <td className="px-3 py-2 whitespace-nowrap font-bold text-gray-900">{asset.ticker}</td>
+                                        <td className={`px-3 py-2 whitespace-nowrap text-right font-semibold ${asset.daily_change >= 0 ? 'text-green-600' : 'text-red-600'}`}>
                                             {asset.daily_change >= 0 ? '+' : ''}{fmt(asset.daily_change, 2)}%
                                         </td>
-                                        <td className="px-6 py-4 whitespace-nowrap text-sm text-right text-gray-500">{fmt(asset.quantity, 4)}</td>
-                                        <td className="px-6 py-4 whitespace-nowrap text-sm text-right text-gray-500">{fmt(asset.avg_purchase_price, 2)}</td>
-                                        <td className="px-6 py-4 whitespace-nowrap text-sm text-right text-gray-900 font-medium">{fmt(asset.current_price, 2)}</td>
-                                        <td className="px-6 py-4 whitespace-nowrap text-sm text-right text-gray-900 font-bold">{fmt(asset.value, 2)}</td>
-                                        <td className="px-6 py-4 whitespace-nowrap text-sm text-right text-gray-500">{fmt(asset.share_pct, 1)}%</td>
-                                        <td className={`px-6 py-4 whitespace-nowrap text-sm text-right font-bold ${asset.return_pct >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                                        <td className="px-3 py-2 whitespace-nowrap text-right text-gray-500">{fmt(asset.quantity, 4)}</td>
+                                        <td className="px-3 py-2 whitespace-nowrap text-right text-gray-500">{fmt(asset.avg_purchase_price, 2)}</td>
+                                        <td className="px-3 py-2 whitespace-nowrap text-right text-gray-900 font-medium">{fmt(asset.current_price, 2)}</td>
+                                        <td className="px-3 py-2 whitespace-nowrap text-right text-gray-900 font-bold">{fmt(asset.value, 2)}</td>
+                                        <td className="px-3 py-2 whitespace-nowrap text-right text-gray-500">{fmt(asset.share_pct, 1)}%</td>
+                                        <td className={`px-3 py-2 whitespace-nowrap text-right font-bold ${asset.return_pct >= 0 ? 'text-green-600' : 'text-red-600'}`}>
                                             {asset.return_pct >= 0 ? '+' : ''}{fmt(asset.return_pct, 2)}%
                                         </td>
-                                        <td className={`px-6 py-4 whitespace-nowrap text-sm text-right font-bold ${asset.profit_pln >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                                        <td className={`px-3 py-2 whitespace-nowrap text-right font-bold ${asset.profit_pln >= 0 ? 'text-green-600' : 'text-red-600'}`}>
                                             {asset.profit_pln >= 0 ? '+' : ''}{fmt(asset.profit_pln, 2)}
                                         </td>
                                     </tr>
                                 ))}
                             </tbody>
                         </table>
+                    </div>
+                    
+                    {/* Pie Chart Section */}
+                    <div className="px-6 py-4 border-t border-gray-200">
+                        <h3 className="text-lg font-bold text-gray-900 mb-4">Struktura portfela</h3>
+                        <PortfolioPieChart assets={sortedAssets} />
                     </div>
                 </div>
             )}
@@ -406,30 +531,51 @@ export default function PortfolioView({ days }) {
                     </div>
                     <div className="overflow-x-auto">
                         <table className="min-w-full divide-y divide-gray-200 text-xs">
-                            <thead className="bg-gray-50">
+                            <thead className="bg-gray-50 cursor-pointer select-none">
                                 <tr>
-                                    <th className="px-2 py-2 text-left font-medium text-gray-500 uppercase tracking-wider">Ticker</th>
-                                    <th className="px-2 py-2 text-right font-medium text-gray-500 uppercase tracking-wider">Ilość</th>
-                                    <th className="px-2 py-2 text-right font-medium text-gray-500 uppercase tracking-wider">Śr. cena</th>
-                                    <th className="px-2 py-2 text-right font-medium text-gray-500 uppercase tracking-wider">Cena akt.</th>
-                                    <th className="px-2 py-2 text-right font-medium text-gray-500 uppercase tracking-wider">Wartość</th>
-                                    <th className="px-2 py-2 text-right font-medium text-gray-500 uppercase tracking-wider">Zysk</th>
-                                    <th className="px-2 py-2 text-right font-medium text-gray-500 uppercase tracking-wider">Zwrot %</th>
-                                    <th className="px-2 py-2 text-right font-medium text-gray-500 uppercase tracking-wider">Zreal.</th>
-                                    <th className="px-2 py-2 text-right font-medium text-gray-500 uppercase tracking-wider">Niezreal.</th>
-                                    <th className="px-2 py-2 text-right font-medium text-gray-500 uppercase tracking-wider">Trans.</th>
-                                    <th className="px-2 py-2 text-right font-medium text-gray-500 uppercase tracking-wider">Pierwsza data</th>
-                                    <th className="px-2 py-2 text-right font-medium text-gray-500 uppercase tracking-wider">Ostatnia data</th>
-                                    <th className="px-2 py-2 text-right font-medium text-gray-500 uppercase tracking-wider">W portf.</th>
+                                    <th onClick={() => handleHistorySort('ticker')} className="px-2 py-2 text-left font-medium text-gray-500 uppercase tracking-wider hover:bg-gray-100">
+                                        Ticker <SortIcon column="ticker" config={historySortConfig} />
+                                    </th>
+                                    <th onClick={() => handleHistorySort('quantity_held')} className="px-2 py-2 text-right font-medium text-gray-500 uppercase tracking-wider hover:bg-gray-100">
+                                        Ilość <SortIcon column="quantity_held" config={historySortConfig} />
+                                    </th>
+                                    <th onClick={() => handleHistorySort('avg_purchase_price')} className="px-2 py-2 text-right font-medium text-gray-500 uppercase tracking-wider hover:bg-gray-100">
+                                        Śr. cena <SortIcon column="avg_purchase_price" config={historySortConfig} />
+                                    </th>
+                                    <th onClick={() => handleHistorySort('current_price')} className="px-2 py-2 text-right font-medium text-gray-500 uppercase tracking-wider hover:bg-gray-100">
+                                        Cena akt. <SortIcon column="current_price" config={historySortConfig} />
+                                    </th>
+                                    <th onClick={() => handleHistorySort('value')} className="px-2 py-2 text-right font-medium text-gray-500 uppercase tracking-wider hover:bg-gray-100">
+                                        Wartość <SortIcon column="value" config={historySortConfig} />
+                                    </th>
+                                    <th onClick={() => handleHistorySort('profit_pln')} className="px-2 py-2 text-right font-medium text-gray-500 uppercase tracking-wider hover:bg-gray-100">
+                                        Zysk <SortIcon column="profit_pln" config={historySortConfig} />
+                                    </th>
+                                    <th onClick={() => handleHistorySort('return_pct')} className="px-2 py-2 text-right font-medium text-gray-500 uppercase tracking-wider hover:bg-gray-100">
+                                        Zwrot % <SortIcon column="return_pct" config={historySortConfig} />
+                                    </th>
+                                    <th onClick={() => handleHistorySort('realized_pnl')} className="px-2 py-2 text-right font-medium text-gray-500 uppercase tracking-wider hover:bg-gray-100">
+                                        Zreal. <SortIcon column="realized_pnl" config={historySortConfig} />
+                                    </th>
+                                    <th onClick={() => handleHistorySort('unrealized_pnl')} className="px-2 py-2 text-right font-medium text-gray-500 uppercase tracking-wider hover:bg-gray-100">
+                                        Niezreal. <SortIcon column="unrealized_pnl" config={historySortConfig} />
+                                    </th>
+                                    <th onClick={() => handleHistorySort('total_transactions')} className="px-2 py-2 text-right font-medium text-gray-500 uppercase tracking-wider hover:bg-gray-100">
+                                        Trans. <SortIcon column="total_transactions" config={historySortConfig} />
+                                    </th>
+                                    <th onClick={() => handleHistorySort('first_transaction_date')} className="px-2 py-2 text-right font-medium text-gray-500 uppercase tracking-wider hover:bg-gray-100">
+                                        Pierwsza data <SortIcon column="first_transaction_date" config={historySortConfig} />
+                                    </th>
+                                    <th onClick={() => handleHistorySort('last_transaction_date')} className="px-2 py-2 text-right font-medium text-gray-500 uppercase tracking-wider hover:bg-gray-100">
+                                        Ostatnia data <SortIcon column="last_transaction_date" config={historySortConfig} />
+                                    </th>
+                                    <th onClick={() => handleHistorySort('still_held')} className="px-2 py-2 text-right font-medium text-gray-500 uppercase tracking-wider hover:bg-gray-100">
+                                        W portf. <SortIcon column="still_held" config={historySortConfig} />
+                                    </th>
                                 </tr>
                             </thead>
                             <tbody className="bg-white divide-y divide-gray-200">
-                                {historicalAssets
-                                    .filter(asset => {
-                                        if (showOnlyCurrentInHistory && !asset.still_held) return false;
-                                        if (tickerFilter && !asset.ticker.toLowerCase().includes(tickerFilter.toLowerCase())) return false;
-                                        return true;
-                                    })
+                                {sortedHistoricalAssets
                                     .map((asset, idx) => (
                                         <tr key={asset.ticker} className="hover:bg-gray-50">
                                             <td className="px-2 py-2 whitespace-nowrap font-bold text-gray-900">{asset.ticker}</td>
