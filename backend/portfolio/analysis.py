@@ -477,11 +477,10 @@ def calculate_portfolio_overview(session: Session, portfolio_id: int) -> dict:
     - assets details (list of holdings with metrics)
     """
     # Load transactions
-    # transactions = session.query(Transaction).filter_by(
-    #     portfolio_id=portfolio_id
-    # ).order_by(Transaction.transaction_date).all()
-    
-    return []
+    transactions = session.query(Transaction).filter_by(
+         portfolio_id=portfolio_id
+     ).order_by(Transaction.transaction_date).all()
+
 
     if not transactions:
         return {
@@ -798,9 +797,7 @@ def calculate_portfolio_value_over_time(session: Session, portfolio_id: int):
     Returns:
         Lista słowników z kluczami: 'date', 'value'.
     """
-    
-    return []
-    
+
     transactions = session.query(Transaction).filter_by(
         portfolio_id=portfolio_id
     ).order_by(Transaction.transaction_date).all()
@@ -891,7 +888,6 @@ def calculate_portfolio_value_over_time(session: Session, portfolio_id: int):
 
 
 def calculate_all_assets_summary(session: Session, portfolio_id: int):
-    return []
 
     """
     Zwraca podsumowanie wszystkich aktywów (tickerów) kiedykolwiek obecnych w portfelu,
@@ -985,7 +981,6 @@ def calculate_all_assets_summary(session: Session, portfolio_id: int):
 
 
 def calculate_monthly_profit(session: Session, portfolio_id: int):
-    return []
     """
     Calculates monthly total profit (PnL) for the portfolio.
     
