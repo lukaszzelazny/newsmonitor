@@ -194,28 +194,15 @@ def calculate_group_return(session: Session) -> dict:
 
 
 def calculate_roi_over_time(session: Session, portfolio_id: int):
-    asset_id_test = [4]
+    asset_id = 11
     """
-    Oblicza stopę zwrotu portfela w czasie używając Time-Weighted Return (TWR).
-
-    TWR eliminuje wpływ wpłat i wypłat na wynik procentowy.
-    TWR = (1 + r1) * (1 + r2) * ... * (1 + rn) - 1
-    gdzie ri = (EV - CF - BV) / BV
-    EV: End Value, BV: Begin Value, CF: Cash Flow
-
-    UWAGA: Wszystkie ceny w asset_price_history są już w PLN!
+    Oblicza stopę zwrotu portfela w czasie.
+    Używa Simple Cumulative Return (PnL / Total Invested).
     """
-    # Pobierz wszystkie transakcje
+    # Pobierz wszystkie transakcje dla portfela
     transactions = session.query(Transaction).filter_by(
         portfolio_id=portfolio_id
     ).order_by(Transaction.transaction_date).all()
-
-    # transactions = (
-    #     session.query(Transaction)
-    #     .filter(Transaction.asset_id.in_(asset_id_test))
-    #     .order_by(Transaction.transaction_date)
-    #     .all()
-    # )
 
     if not transactions:
         return []
@@ -228,13 +215,6 @@ def calculate_roi_over_time(session: Session, portfolio_id: int):
     asset_ids = session.query(Transaction.asset_id).filter_by(
         portfolio_id=portfolio_id
     ).distinct().all()
-
-    # asset_ids = (
-    #     session.query(Transaction.asset_id)
-    #     .filter(Transaction.asset_id.in_(asset_id_test))
-    #     .distinct()
-    #     .all()
-    # )
 
     tickers = []
     for asset_id in asset_ids:
@@ -330,9 +310,14 @@ def calculate_roi_over_time(session: Session, portfolio_id: int):
     holdings = defaultdict(float)
     last_known_prices = {}
     
-    # Track Cumulative metrics for Simple Return
+    # Track Cumulative metrics for PnL
     cumulative_buys = 0.0
     cumulative_sells = 0.0
+    
+    # Track metrics for Average Capital (Modified Dietz)
+    cumulative_weighted_capital = 0.0
+    days_with_capital = 0
+    prev_invested_sum = 0.0
     
     # Track Cost Basis per ticker for 'invested' line
     cost_basis_by_ticker = defaultdict(float)
@@ -422,25 +407,41 @@ def calculate_roi_over_time(session: Session, portfolio_id: int):
         cumulative_buys += daily_buys_val
         cumulative_sells += daily_sells_val
         
-        # Calculate Simple Cumulative ROI
-        # ROI = (Current Market Value + Total Sells - Total Buys) / Total Buys
-        # This reflects "Total Return on Capital Deployed".
-        
-        total_pnl = current_market_value + cumulative_sells - cumulative_buys
-        roi_pct = 0.0
-        
-        if cumulative_buys > 0.0001:
-            roi_pct = (total_pnl / cumulative_buys) * 100.0
-            
         # Invested for chart is sum of current cost bases
         current_invested_sum = sum(cost_basis_by_ticker.values())
         
+        # Calculate Average Capital Employed (Modified Dietz approximation)
+        # We estimate daily capital as max of start/end to cover high water mark of exposure
+        daily_capital = max(prev_invested_sum, current_invested_sum)
+        
+        # Handle Intraday Trading (Buy then Sell same day) where EOD is 0 but capital was used
+        if daily_capital < 0.0001 and daily_buys_val > 0.0001:
+            daily_capital = daily_buys_val
+
+        # Only update average capital if capital was actually employed
+        if daily_capital > 0.0001:
+            cumulative_weighted_capital += daily_capital
+            days_with_capital += 1
+        
+        avg_capital = 0.0
+        if days_with_capital > 0:
+            avg_capital = cumulative_weighted_capital / days_with_capital
+        
+        # Calculate ROI
+        total_pnl = current_market_value + cumulative_sells - cumulative_buys
+        roi_pct = 0.0
+        
+        if avg_capital > 0.0001:
+            roi_pct = (total_pnl / avg_capital) * 100.0
+            
         results.append({
             'date': date,
             'market_value': current_market_value,
             'invested': current_invested_sum,
             'rate_of_return': roi_pct
         })
+        
+        prev_invested_sum = current_invested_sum
 
     # Utwórz DataFrame
     df = pd.DataFrame(results)

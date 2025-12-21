@@ -1,4 +1,5 @@
 """Utility functions for fetching financial market data with PLN normalization."""
+import os
 import yfinance as yf
 from functools import lru_cache
 import pandas as pd
@@ -242,6 +243,17 @@ def get_yf_symbol(ticker_symbol: str) -> str:
 def get_currency_for_ticker(ticker_symbol: str) -> str:
     """Best-effort currency inference from ticker suffixes/maps."""
     t = ticker_symbol.upper()
+
+    # Check environment overrides first
+    # Format: "TICKER1:CURRENCY,TICKER2:CURRENCY"
+    overrides = os.getenv('CURRENCY_OVERRIDES', '')
+    if overrides:
+        for entry in overrides.split(','):
+            if ':' in entry:
+                key, val = entry.split(':')
+                if key.strip().upper() == t:
+                    return val.strip().upper()
+
     if t in ("BITCOIN", "ETHEREUM"):
         return "USD"
     if t.endswith(".US"):
@@ -910,6 +922,12 @@ def get_price_history(ticker_symbol: str, days: int = 90):
                     if not fx_hist.empty:
                         fx_col = "Close" if "Close" in fx_hist.columns else ("Adj Close" if "Adj Close" in fx_hist.columns else None)
                         if fx_col:
+                            # Normalize TZs to ensure alignment
+                            if series.index.tz is not None:
+                                series.index = series.index.tz_localize(None)
+                            if fx_hist.index.tz is not None:
+                                fx_hist.index = fx_hist.index.tz_localize(None)
+                                
                             fx_series = fx_hist[fx_col].reindex(series.index).ffill().bfill()
                             series = series * fx_series
                 except Exception:

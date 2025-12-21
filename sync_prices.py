@@ -3,7 +3,7 @@ Script to sync historical price data from Yahoo Finance to local database.
 Can be run manually or scheduled as a daily job.
 
 Usage:
-    python sync_prices.py [--full] [--ticker TICKER] [--csv-mode] [--tickers-file TICKERS_FILE] [--output OUTPUT] [--gpw]
+    python sync_prices.py [--full] [--ticker TICKER] [--csv-mode] [--tickers-file TICKERS_FILE] [--output OUTPUT] [--gpw] [--active-only]
 
 Options:
     --full: Download full history instead of incremental update
@@ -12,6 +12,8 @@ Options:
     --tickers-file: Path to file with tickers (one per line) for CSV mode
     --output: Output CSV filename (default: price_history_YYYYMMDD.csv)
     --gpw: Add .WA suffix to tickers for Warsaw Stock Exchange (GPW)
+    --active-only: Sync only assets that are currently held (quantity > 0) or marked as favorites
+    --convert-to-pln: Convert existing prices in database to PLN using historical FX rates
 """
 
 import argparse
@@ -21,6 +23,7 @@ import time
 import random
 from datetime import datetime, timedelta
 from typing import List, Optional, TYPE_CHECKING
+from dotenv import load_dotenv
 import yfinance as yf
 from sqlalchemy.orm import sessionmaker
 import pandas as pd
@@ -31,6 +34,9 @@ import pandas as pd
 # Conditional imports for type hints
 if TYPE_CHECKING:
     from backend.database import Asset, AssetPriceHistory
+
+# Load environment variables
+load_dotenv()
 
 # Configure logging
 logging.basicConfig(
@@ -211,12 +217,48 @@ class PriceSyncService:
             # Keep as is
             return ticker
 
-    def get_assets_to_sync(self, ticker: Optional[str] = None) -> List:
+    def get_assets_to_sync(self, ticker: Optional[str] = None, active_only: bool = False) -> List:
         """Get list of assets that need price sync."""
-        from backend.database import Asset
+        from backend.database import Asset, Ticker, Transaction, TransactionType
+        
         query = self.session.query(Asset)
         if ticker:
             query = query.filter(Asset.ticker == ticker.upper())
+            
+        if active_only:
+            logger.info("Filtering for active assets (held or favorites)...")
+            
+            # 1. Get Favorite Tickers
+            favorite_tickers = {
+                t[0] for t in self.session.query(Ticker.ticker)
+                .filter(Ticker.in_portfolio == 1).all()
+            }
+            
+            # 2. Get Currently Held Asset IDs
+            transactions = self.session.query(Transaction).all()
+            holdings = {}
+            for t in transactions:
+                aid = t.asset_id
+                qty = float(t.quantity)
+                if t.transaction_type == TransactionType.BUY:
+                    holdings[aid] = holdings.get(aid, 0.0) + qty
+                else:
+                    holdings[aid] = holdings.get(aid, 0.0) - qty
+            
+            held_asset_ids = {aid for aid, qty in holdings.items() if qty > 0.0001}
+            
+            # Filter assets
+            all_assets = query.all()
+            filtered_assets = []
+            for asset in all_assets:
+                is_fav = asset.ticker in favorite_tickers
+                is_held = asset.id in held_asset_ids
+                if is_fav or is_held:
+                    filtered_assets.append(asset)
+            
+            logger.info(f"Selected {len(filtered_assets)} active assets (out of {len(all_assets)})")
+            return filtered_assets
+            
         return query.all()
 
     def get_last_sync_date(self, asset_id: int) -> Optional[datetime]:
@@ -357,7 +399,7 @@ class PriceSyncService:
         
         # Get date range for FX series
         start_date = df.index.min().date()
-        end_date = df.index.max().date()
+        end_date = df.index.max().date() + timedelta(days=1)
         
         # Fetch FX series for this currency
         fx_ticker = self.fx_symbol_to_pln(currency)
@@ -375,6 +417,14 @@ class PriceSyncService:
         # Align FX series with df index (ensure same timezone/format)
         # fx_series index is datetime64[ns], df index is also datetime64[ns] from yfinance
         # Reindex fx_series to df.index and forward/backward fill
+        
+        # Fix timezone mismatch (df is usually aware, fx_series from yf.download is naive)
+        if df.index.tz is not None:
+            df.index = df.index.tz_localize(None)
+        
+        if fx_series.index.tz is not None:
+            fx_series.index = fx_series.index.tz_localize(None)
+
         aligned_fx = fx_series.reindex(df.index).ffill().bfill()
         
         # Convert all price columns
@@ -411,7 +461,7 @@ class PriceSyncService:
         # Get date range for FX series
         dates = [r.date for r in records]
         start_date = min(dates)
-        end_date = max(dates)
+        end_date = max(dates) + timedelta(days=1)
         
         # Fetch FX series for this currency
         fx_ticker = self.fx_symbol_to_pln(currency)
@@ -548,9 +598,9 @@ class PriceSyncService:
             logger.error(f"✗ {asset.ticker}: Failed to fetch data for some ranges")
             return False
 
-    def sync_all_assets(self, full_sync: bool = False, ticker: Optional[str] = None):
+    def sync_all_assets(self, full_sync: bool = False, ticker: Optional[str] = None, active_only: bool = False):
         """Sync price data for all assets (or specific ticker)."""
-        assets = self.get_assets_to_sync(ticker)
+        assets = self.get_assets_to_sync(ticker, active_only=active_only)
 
         if not assets:
             logger.warning("No assets found to sync")
@@ -603,6 +653,7 @@ def main():
     parser.add_argument('--output', type=str, help='Output CSV filename')
     parser.add_argument('--gpw', action='store_true', help='Add .WA suffix for Warsaw Stock Exchange tickers')
     parser.add_argument('--convert-to-pln', action='store_true', help='Convert existing prices in database to PLN using historical FX rates')
+    parser.add_argument('--active-only', action='store_true', help='Sync only active assets (held or favorites)')
 
     args = parser.parse_args()
 
@@ -665,7 +716,7 @@ def main():
             logger.info(f"Total records converted to PLN: {total_converted}")
             # Continue with normal sync after conversion
         
-        service.sync_all_assets(full_sync=args.full, ticker=args.ticker)
+        service.sync_all_assets(full_sync=args.full, ticker=args.ticker, active_only=args.active_only)
     except Exception as e:
         logger.error(f"Fatal error: {str(e)}")
         raise
