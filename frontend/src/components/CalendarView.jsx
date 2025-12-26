@@ -1,7 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import TickerSelect from './TickerSelect';
+import { useTheme } from '../context/ThemeContext';
 
 export default function CalendarView({ days, onBack, onTickerSelect, showNotification }) {
+    const { theme } = useTheme();
     const [calendarStats, setCalendarStats] = useState([]);
     const [selectedDate, setSelectedDate] = useState(null);
     const [newsForDate, setNewsForDate] = useState([]);
@@ -89,54 +91,55 @@ export default function CalendarView({ days, onBack, onTickerSelect, showNotific
     };
 
     const getDayColor = (stats) => {
-        if (!stats || stats.news_count === 0) return 'bg-gray-50';
+        const isDark = theme === 'dark';
+        if (!stats || stats.news_count === 0) return isDark ? 'bg-gray-800' : 'bg-gray-50';
 
         const avgImpact = stats.avg_impact;
         const count = stats.news_count;
 
         if (avgImpact > 0.1) {
-            if (count > 5) return 'bg-green-500 text-white';
-            if (count > 2) return 'bg-green-400 text-white';
-            return 'bg-green-300';
+            if (count > 5) return 'bg-green-600 text-white';
+            if (count > 2) return 'bg-green-500 text-white';
+            return isDark ? 'bg-green-700/50 text-green-100' : 'bg-green-300';
         } else if (avgImpact < -0.1) {
-            if (count > 5) return 'bg-red-500 text-white';
-            if (count > 2) return 'bg-red-400 text-white';
-            return 'bg-red-300';
+            if (count > 5) return 'bg-red-600 text-white';
+            if (count > 2) return 'bg-red-500 text-white';
+            return isDark ? 'bg-red-700/50 text-red-100' : 'bg-red-300';
         } else {
-            if (count > 5) return 'bg-yellow-500';
-            if (count > 2) return 'bg-yellow-400';
-            return 'bg-yellow-300';
+            if (count > 5) return isDark ? 'bg-yellow-600 text-white' : 'bg-yellow-500 text-white';
+            if (count > 2) return isDark ? 'bg-yellow-700/50 text-yellow-100' : 'bg-yellow-400';
+            return isDark ? 'bg-yellow-800/30 text-yellow-200' : 'bg-yellow-300';
         }
     };
 
     const getImpactColor = (impact) => {
         const val = Math.abs(impact);
-        if (val < 0.05) return 'bg-gray-400';
-        if (impact > 0.5) return 'bg-green-600';
-        if (impact > 0.2) return 'bg-green-500';
-        if (impact > 0.05) return 'bg-green-400';
-        if (impact > -0.05) return 'bg-gray-400';
-        if (impact > -0.2) return 'bg-orange-400';
-        if (impact > -0.5) return 'bg-orange-500';
-        return 'bg-red-600';
+        if (val < 0.05) return 'bg-gray-400 dark:bg-gray-600';
+        if (impact > 0.5) return 'bg-green-600 dark:bg-green-500';
+        if (impact > 0.2) return 'bg-green-500 dark:bg-green-400';
+        if (impact > 0.05) return 'bg-green-400 dark:bg-green-300';
+        if (impact > -0.05) return 'bg-gray-400 dark:bg-gray-600';
+        if (impact > -0.2) return 'bg-orange-400 dark:bg-orange-300';
+        if (impact > -0.5) return 'bg-orange-500 dark:bg-orange-400';
+        return 'bg-red-600 dark:bg-red-500';
     };
 
     const getSentimentColor = (sentiment) => {
         const val = Math.abs(sentiment);
-        if (val < 0.05) return 'text-gray-500';
-        if (sentiment > 0.3) return 'text-green-600';
-        if (sentiment > 0) return 'text-green-400';
-        if (sentiment > -0.3) return 'text-yellow-500';
-        return 'text-red-500';
+        if (val < 0.05) return 'text-gray-500 dark:text-gray-400';
+        if (sentiment > 0.3) return 'text-green-600 dark:text-green-400';
+        if (sentiment > 0) return 'text-green-400 dark:text-green-300';
+        if (sentiment > -0.3) return 'text-yellow-500 dark:text-yellow-400';
+        return 'text-red-500 dark:text-red-400';
     };
 
     const getSentimentBg = (sentiment) => {
         const val = Math.abs(sentiment);
-        if (val < 0.05) return 'bg-gray-100';
-        if (sentiment > 0.3) return 'bg-green-100';
-        if (sentiment > 0) return 'bg-green-50';
-        if (sentiment > -0.3) return 'bg-yellow-50';
-        return 'bg-red-50';
+        if (val < 0.05) return 'bg-gray-100 dark:bg-gray-800';
+        if (sentiment > 0.3) return 'bg-green-100 dark:bg-green-900/30';
+        if (sentiment > 0) return 'bg-green-50 dark:bg-green-900/10';
+        if (sentiment > -0.3) return 'bg-yellow-50 dark:bg-yellow-900/10';
+        return 'bg-red-50 dark:bg-red-900/10';
     };
 
     const generateCalendarDays = () => {
@@ -226,40 +229,40 @@ export default function CalendarView({ days, onBack, onTickerSelect, showNotific
 
     return (
         <div className="space-y-4">
-            <div className="bg-white rounded-lg shadow p-4">
+            <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-4">
                 <div className="flex items-center justify-between mb-4">
-                    <h2 className="text-xl font-bold text-gray-900">
+                    <h2 className="text-xl font-bold text-gray-900 dark:text-white">
                         {monthNames[currentMonth.getMonth()]} {currentMonth.getFullYear()}
                     </h2>
                     <div className="flex items-center gap-2">
                         <button
                             onClick={() => setCurrentMonth(new Date(currentMonth.getFullYear(), currentMonth.getMonth() - 1))}
-                            className="px-3 py-1 bg-gray-200 hover:bg-gray-300 rounded-lg"
+                            className="px-3 py-1 bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 rounded-lg dark:text-gray-200 transition-colors"
                         >
                             ←
                         </button>
                         <button
                             onClick={() => setCurrentMonth(new Date())}
-                            className="px-3 py-1 bg-blue-500 hover:bg-blue-600 text-white rounded-lg text-sm"
+                            className="px-3 py-1 bg-blue-500 hover:bg-blue-600 text-white rounded-lg text-sm transition-colors"
                         >
                             Dziś
                         </button>
                         <button
                             onClick={() => setCurrentMonth(new Date(currentMonth.getFullYear(), currentMonth.getMonth() + 1))}
-                            className="px-3 py-1 bg-gray-200 hover:bg-gray-300 rounded-lg"
+                            className="px-3 py-1 bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 rounded-lg dark:text-gray-200 transition-colors"
                         >
                             →
                         </button>
                     </div>
                 </div>
 
-                <div className="mb-4 flex items-center gap-4 text-xs text-gray-600 flex-wrap">
+                <div className="mb-4 flex items-center gap-4 text-xs text-gray-600 dark:text-gray-400 flex-wrap border-b dark:border-gray-700 pb-4">
                     <span className="flex items-center gap-2">
                         <span className="w-4 h-4 rounded bg-green-500"></span>
                         Pozytywne (wiele newsów)
                     </span>
                     <span className="flex items-center gap-2">
-                        <span className="w-4 h-4 rounded bg-green-300"></span>
+                        <span className="w-4 h-4 rounded bg-green-300 dark:bg-green-700/50"></span>
                         Pozytywne (kilka)
                     </span>
                     <span className="flex items-center gap-2">
@@ -267,7 +270,7 @@ export default function CalendarView({ days, onBack, onTickerSelect, showNotific
                         Mieszane/Neutralne
                     </span>
                     <span className="flex items-center gap-2">
-                        <span className="w-4 h-4 rounded bg-red-300"></span>
+                        <span className="w-4 h-4 rounded bg-red-300 dark:bg-red-700/50"></span>
                         Negatywne (kilka)
                     </span>
                     <span className="flex items-center gap-2">
@@ -278,7 +281,7 @@ export default function CalendarView({ days, onBack, onTickerSelect, showNotific
 
                 <div className="grid grid-cols-7 gap-2">
                     {['Pn', 'Wt', 'Śr', 'Cz', 'Pt', 'Sb', 'Nd'].map(day => (
-                        <div key={day} className="text-center font-bold text-sm text-gray-600 py-2">
+                        <div key={day} className="text-center font-bold text-sm text-gray-600 dark:text-gray-400 py-2">
                             {day}
                         </div>
                     ))}
@@ -305,11 +308,11 @@ export default function CalendarView({ days, onBack, onTickerSelect, showNotific
                           ${isSelected ? 'ring-2 ring-blue-600' : ''}
                         `}
                             >
-                                <div className={`font-bold text-sm ${stats && (stats.news_count > 5 || Math.abs(stats.avg_impact) > 0.1) ? 'text-white' : 'text-gray-800'}`}>
+                                <div className={`font-bold text-sm ${stats && (stats.news_count > 5 || Math.abs(stats.avg_impact) > 0.1) ? 'text-white' : 'text-gray-800 dark:text-gray-200'}`}>
                                     {date.getDate()}
                                 </div>
                                 {stats && stats.news_count > 0 && (
-                                    <div className={`text-xs font-bold mt-1 ${stats && (stats.news_count > 5 || Math.abs(stats.avg_impact) > 0.1) ? 'text-white' : 'text-gray-700'}`}>
+                                    <div className={`text-xs font-bold mt-1 ${stats && (stats.news_count > 5 || Math.abs(stats.avg_impact) > 0.1) ? 'text-white' : 'text-gray-700 dark:text-gray-400'}`}>
                                         {stats.news_count} news
                                     </div>
                                 )}
@@ -320,19 +323,19 @@ export default function CalendarView({ days, onBack, onTickerSelect, showNotific
             </div>
 
             {selectedDate && (
-                <div className="bg-white rounded-lg shadow p-4">
-                    <h3 className="text-lg font-bold text-gray-900 mb-3">
+                <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-4">
+                    <h3 className="text-lg font-bold text-gray-900 dark:text-white mb-3">
                         Newsy z {selectedDate} ({filteredNews.length})
                     </h3>
 
                     {(dayTickers.length > 0 || hasUnassignedNews) && (
-                        <div className="flex items-center gap-2 mb-4 flex-wrap p-2 bg-gray-50 rounded-lg">
-                            <span className="text-sm font-semibold text-gray-700">Filtruj:</span>
+                        <div className="flex items-center gap-2 mb-4 flex-wrap p-2 bg-gray-50 dark:bg-gray-900/50 rounded-lg">
+                            <span className="text-sm font-semibold text-gray-700 dark:text-gray-300">Filtruj:</span>
                             <div className="flex items-center gap-1">
-                                <button onClick={selectAllDayTickers} className="px-2 py-0.5 text-xs bg-gray-600 text-white rounded hover:bg-gray-700">Wszystkie</button>
-                                <button onClick={deselectAllDayTickers} className="px-2 py-0.5 text-xs bg-gray-600 text-white rounded hover:bg-gray-700">Żadne</button>
+                                <button onClick={selectAllDayTickers} className="px-2 py-0.5 text-xs bg-gray-600 dark:bg-gray-700 text-white rounded hover:bg-gray-700 dark:hover:bg-gray-600 transition-colors">Wszystkie</button>
+                                <button onClick={deselectAllDayTickers} className="px-2 py-0.5 text-xs bg-gray-600 dark:bg-gray-700 text-white rounded hover:bg-gray-700 dark:hover:bg-gray-600 transition-colors">Żadne</button>
                             </div>
-                            <div className="border-l border-gray-300 h-5 mx-1"></div>
+                            <div className="border-l border-gray-300 dark:border-gray-700 h-5 mx-1"></div>
                             {dayTickers.map(ticker => {
                                 const isActive = activeTickerFilters.includes(ticker);
                                 const impact = dayTickerStats[ticker] || 0;
@@ -341,15 +344,15 @@ export default function CalendarView({ days, onBack, onTickerSelect, showNotific
                                 if (impact > 0.2) {
                                     bgClass = isActive 
                                         ? 'bg-green-600 text-white shadow-md hover:bg-green-700' 
-                                        : 'bg-green-100 text-green-800 hover:bg-green-200 border border-green-300';
+                                        : 'bg-green-100 dark:bg-green-900/20 text-green-800 dark:text-green-400 hover:bg-green-200 dark:hover:bg-green-900/40 border border-green-300 dark:border-green-800';
                                 } else if (impact < -0.2) {
                                     bgClass = isActive 
                                         ? 'bg-red-600 text-white shadow-md hover:bg-red-700' 
-                                        : 'bg-red-100 text-red-800 hover:bg-red-200 border border-red-300';
+                                        : 'bg-red-100 dark:bg-red-900/20 text-red-800 dark:text-red-400 hover:bg-red-200 dark:hover:bg-red-900/40 border border-red-300 dark:border-red-800';
                                 } else {
                                     bgClass = isActive 
                                         ? 'bg-gray-600 text-white shadow-md hover:bg-gray-700' 
-                                        : 'bg-gray-100 text-gray-800 hover:bg-gray-200 border border-gray-300';
+                                        : 'bg-gray-100 dark:bg-gray-800 text-gray-800 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700 border border-gray-300 dark:border-gray-700';
                                 }
 
                                 return (
@@ -367,7 +370,7 @@ export default function CalendarView({ days, onBack, onTickerSelect, showNotific
                                     onClick={() => setShowUnassigned(prev => !prev)}
                                     className={`px-3 py-1 text-xs font-bold rounded-full transition-all duration-200 ${showUnassigned
                                             ? 'bg-blue-600 text-white shadow'
-                                            : 'bg-gray-200 text-gray-800 hover:bg-gray-300'
+                                            : 'bg-gray-200 dark:bg-gray-700 text-gray-800 dark:text-gray-300 hover:bg-gray-300 dark:hover:bg-gray-600'
                                         }`}
                                 >
                                     NIEPRZYPISANE
@@ -381,11 +384,11 @@ export default function CalendarView({ days, onBack, onTickerSelect, showNotific
                             <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500"></div>
                         </div>
                     ) : filteredNews.length === 0 ? (
-                        <p className="text-gray-500 text-center py-8">Brak newsów spełniających kryteria</p>
+                        <p className="text-gray-500 dark:text-gray-400 text-center py-8">Brak newsów spełniających kryteria</p>
                     ) : (
                         <div className="space-y-3">
                             {filteredNews.map((news, idx) => (
-                                <div key={idx} className="border border-gray-200 rounded-lg p-4 hover:shadow-md transition-shadow relative">
+                                <div key={idx} className="border border-gray-200 dark:border-gray-700 rounded-lg p-4 hover:shadow-md transition-shadow relative bg-white dark:bg-gray-800">
                                     <button
                                         onClick={() => markAsDuplicate(news.news_id)}
                                         className="absolute top-2 right-2 text-gray-400 hover:text-red-500"
@@ -401,15 +404,15 @@ export default function CalendarView({ days, onBack, onTickerSelect, showNotific
                                         
                                         <div className="flex-1">
                                             <div className="flex items-center justify-between mb-1">
-                                                <h4 className="font-semibold text-sm text-gray-900">{news.title}</h4>
+                                                <h4 className="font-semibold text-sm text-gray-900 dark:text-white">{news.title}</h4>
                                             </div>
                                             
-                                            <div className="flex items-center gap-2 text-xs text-gray-500 mb-2">
+                                            <div className="flex items-center gap-2 text-xs text-gray-500 dark:text-gray-400 mb-2">
                                                 <span>{news.source}</span>
                                                 <span>•</span>
                                                 <span>{news.published_at || news.date}</span>
                                                 {news.url && (
-                                                    <><span>•</span><a href={news.url} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">Link</a></>
+                                                    <><span>•</span><a href={news.url} target="_blank" rel="noopener noreferrer" className="text-blue-600 dark:text-blue-400 hover:underline">Link</a></>
                                                 )}
                                             </div>
 
@@ -419,7 +422,7 @@ export default function CalendarView({ days, onBack, onTickerSelect, showNotific
                                                         <button
                                                             key={i}
                                                             onClick={() => onTickerSelect && onTickerSelect(t.ticker)}
-                                                            className="px-2 py-0.5 rounded text-xs font-bold cursor-pointer hover:opacity-80 transition-opacity bg-blue-100 text-blue-800 border border-blue-200"
+                                                            className="px-2 py-0.5 rounded text-xs font-bold cursor-pointer hover:opacity-80 transition-opacity bg-blue-100 dark:bg-blue-900/30 text-blue-800 dark:text-blue-300 border border-blue-200 dark:border-blue-800"
                                                             title={`Pokaż analizę dla ${t.ticker}`}
                                                         >
                                                             {t.ticker} ({t.impact > 0 ? '+' : ''}{t.impact.toFixed(2)})
@@ -438,21 +441,21 @@ export default function CalendarView({ days, onBack, onTickerSelect, showNotific
 
                                             <div className="flex items-center gap-3 mb-2">
                                                 <div className="flex items-center gap-1.5">
-                                                    <span className="text-xs text-gray-600">Impact:</span>
+                                                    <span className="text-xs text-gray-600 dark:text-gray-400">Impact:</span>
                                                     <span className={`font-bold text-sm ${getSentimentColor(news.impact)}`}>
                                                         {news.impact > 0 ? '+' : ''}{Number(news.impact).toFixed(2)}
                                                     </span>
                                                 </div>
                                                 <div className="flex items-center gap-1.5">
-                                                    <span className="text-xs text-gray-600">Confidence:</span>
-                                                    <span className="font-bold text-sm text-blue-600">
+                                                    <span className="text-xs text-gray-600 dark:text-gray-400">Confidence:</span>
+                                                    <span className="font-bold text-sm text-blue-600 dark:text-blue-400">
                                                         {(Number(news.confidence) * 100).toFixed(0)}%
                                                     </span>
                                                 </div>
                                             </div>
 
                                             {news.summary && (
-                                                <div className="text-xs text-gray-700 leading-relaxed" dangerouslySetInnerHTML={{ __html: news.summary }} />
+                                                <div className="text-xs text-gray-700 dark:text-gray-300 leading-relaxed" dangerouslySetInnerHTML={{ __html: news.summary }} />
                                             )}
                                         </div>
                                     </div>

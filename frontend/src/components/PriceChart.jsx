@@ -1,7 +1,9 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { createChart, ColorType } from 'lightweight-charts';
+import { useTheme } from '../context/ThemeContext';
 
 export default function PriceChart({ ticker, priceHistory, brokerageAnalyses, analyses, onNewsClick, showNews: propShowNews = true, onToggleNews, showVolume: propShowVolume = false, onToggleVolume, showTransactions: propShowTransactions = true, onToggleTransactions }) {
+    const { theme } = useTheme();
     const chartContainerRef = useRef(null);
     const chartRef = useRef(null);
     const mainSeriesRef = useRef(null);
@@ -62,33 +64,36 @@ export default function PriceChart({ ticker, priceHistory, brokerageAnalyses, an
     useEffect(() => {
         if (!chartContainerRef.current || !priceHistory || priceHistory.length === 0) return;
 
+        const isDark = theme === 'dark';
+        chartContainerRef.current.innerHTML = ''; // Clear container
+
         const chart = createChart(chartContainerRef.current, {
             layout: {
-                background: { type: ColorType.Solid, color: 'white' },
-                textColor: 'black',
+                background: { type: ColorType.Solid, color: isDark ? '#111827' : 'white' },
+                textColor: isDark ? '#f3f4f6' : 'black',
             },
             width: chartContainerRef.current.clientWidth,
             height: 400,
             grid: {
-                vertLines: { color: '#f0f0f0' },
-                horzLines: { color: '#f0f0f0' },
+                vertLines: { color: isDark ? '#374151' : '#f0f0f0' },
+                horzLines: { color: isDark ? '#374151' : '#f0f0f0' },
             },
             rightPriceScale: {
-                borderColor: '#d1d4dc',
+                borderColor: isDark ? '#4b5563' : '#d1d4dc',
                 scaleMargins: {
                     top: 0.1,
                     bottom: showVolume ? 0.08 : 0.02,
                 },
             },
             timeScale: {
-                borderColor: '#d1d4dc',
+                borderColor: isDark ? '#4b5563' : '#d1d4dc',
             },
         });
         chartRef.current = chart;
 
         if (showVolume) {
             const volumeSeries = chart.addHistogramSeries({
-                color: '#26a69a',
+                color: isDark ? '#26a69a88' : '#26a69a',
                 priceFormat: { type: 'volume' },
                 priceScaleId: '',
                 scaleMargins: { top: 0.92, bottom: 0 },
@@ -120,7 +125,7 @@ export default function PriceChart({ ticker, priceHistory, brokerageAnalyses, an
             }));
             mainSeries.setData(candleData);
         } else {
-            mainSeries = chart.addLineSeries({ color: '#2962FF', lineWidth: 2 });
+            mainSeries = chart.addLineSeries({ color: isDark ? '#3b82f6' : '#2962FF', lineWidth: 2 });
             const lineData = priceHistory.map(d => ({ time: d.date, value: d.close ?? d.price }));
             mainSeries.setData(lineData);
         }
@@ -131,7 +136,7 @@ export default function PriceChart({ ticker, priceHistory, brokerageAnalyses, an
         if (showNews && analyses && analyses.length > 0) {
             const markers = [];
             analyses.forEach(news => {
-                let color = '#9ca3af';
+                let color = isDark ? '#9ca3af' : '#9ca3af';
                 let shape = 'circle';
                 if (news.impact > 0.2) { color = '#10b981'; shape = 'arrowUp'; }
                 else if (news.impact < -0.2) { color = '#ef5350'; shape = 'arrowDown'; }
@@ -222,7 +227,7 @@ export default function PriceChart({ ticker, priceHistory, brokerageAnalyses, an
                 el.style.height = `${markerSize}px`;
                 el.style.borderRadius = '50%';
                 el.style.background = isBuy ? '#10b981' : '#ef4444';
-                el.style.boxShadow = `0 0 0 2px rgba(255,255,255,0.9), 0 2px 6px rgba(0,0,0,0.3)`;
+                el.style.boxShadow = isDark ? `0 0 0 2px rgba(31,41,55,0.9), 0 2px 6px rgba(0,0,0,0.5)` : `0 0 0 2px rgba(255,255,255,0.9), 0 2px 6px rgba(0,0,0,0.3)`;
                 el.style.pointerEvents = 'auto';
                 el.style.cursor = 'pointer';
                 el.style.transition = 'transform 0.2s ease';
@@ -283,7 +288,7 @@ export default function PriceChart({ ticker, priceHistory, brokerageAnalyses, an
             chartRef.current = null;
             mainSeriesRef.current = null;
         };
-    }, [priceHistory, chartType, showVolume, showNews, showTransactions, analyses, brokerageAnalyses, transactions]);
+    }, [priceHistory, chartType, showVolume, showNews, showTransactions, analyses, brokerageAnalyses, transactions, theme]);
 
     // update markers on the existing main series when user toggles showNews (so toggle is immediate)
     useEffect(() => {
@@ -325,8 +330,8 @@ export default function PriceChart({ ticker, priceHistory, brokerageAnalyses, an
 
     if (!priceHistory || priceHistory.length === 0) {
         return (
-            <div className="bg-white rounded-lg shadow-lg p-6 mb-6">
-                <div className="text-center text-gray-500 py-8">
+            <div className="bg-white dark:bg-gray-800 rounded-lg shadow-lg p-6 mb-6">
+                <div className="text-center text-gray-500 dark:text-gray-400 py-8">
                     <p>Brak danych o cenach dla {ticker}</p>
                 </div>
             </div>
@@ -387,17 +392,17 @@ export default function PriceChart({ ticker, priceHistory, brokerageAnalyses, an
     const profitLossData = calculateProfitLoss();
 
     return (
-        <div className="bg-white rounded-lg shadow-lg p-6">
+        <div className="bg-white dark:bg-gray-800 rounded-lg shadow-lg p-6">
             <div className="flex items-center justify-between mb-4">
                 <div>
-                    <h3 className="text-xl font-bold text-gray-900">Wykres kursu {ticker}</h3>
-                    <p className="text-sm text-gray-600">Ostatnie {priceHistory.length} dni</p>
+                    <h3 className="text-xl font-bold text-gray-900 dark:text-white">Wykres kursu {ticker}</h3>
+                    <p className="text-sm text-gray-600 dark:text-gray-400">Ostatnie {priceHistory.length} dni</p>
                 </div>
                 <div className="text-right">
-                    <div className="text-2xl font-bold text-gray-900">
+                    <div className="text-2xl font-bold text-gray-900 dark:text-white">
                         {latestPrice?.toFixed(2)} PLN
                     </div>
-                    <div className={`text-sm font-semibold ${priceChange >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                    <div className={`text-sm font-semibold ${priceChange >= 0 ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}`}>
                         {priceChange >= 0 ? '+' : ''}{priceChange.toFixed(2)}%
                     </div>
                 </div>
@@ -406,50 +411,50 @@ export default function PriceChart({ ticker, priceHistory, brokerageAnalyses, an
             <div className="flex gap-2 mb-2 justify-end text-xs">
                <button 
                    onClick={() => setChartType('candlestick')} 
-                   className={`px-3 py-1 rounded ${chartType==='candlestick' ? 'bg-blue-100 text-blue-700 font-bold' : 'bg-gray-100 text-gray-600'}`}
+                   className={`px-3 py-1 rounded transition-colors ${chartType==='candlestick' ? 'bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 font-bold' : 'bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-400'}`}
                >
                    Świece
                </button>
                <button 
                    onClick={() => setChartType('line')} 
-                   className={`px-3 py-1 rounded ${chartType==='line' ? 'bg-blue-100 text-blue-700 font-bold' : 'bg-gray-100 text-gray-600'}`}
+                   className={`px-3 py-1 rounded transition-colors ${chartType==='line' ? 'bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 font-bold' : 'bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-400'}`}
                >
                    Linia
                </button>
-               <label className="flex items-center gap-1 cursor-pointer bg-gray-100 px-2 py-1 rounded hover:bg-gray-200 ml-2">
+               <label className="flex items-center gap-1 cursor-pointer bg-gray-100 dark:bg-gray-700 px-2 py-1 rounded hover:bg-gray-200 dark:hover:bg-gray-600 ml-2 transition-colors">
                    <input 
                        type="checkbox" 
                        checked={showVolume} 
                        onChange={(e) => { const v = e.target.checked; setShowVolume(v); try { onToggleVolume && onToggleVolume(v); } catch (err) {} }} 
                        className="cursor-pointer w-3 h-3 accent-blue-600"
                    />
-                   <span className="text-gray-600 font-medium">Wolumen</span>
+                   <span className="text-gray-600 dark:text-gray-400 font-medium">Wolumen</span>
                </label>
-               <label className="flex items-center gap-1 cursor-pointer bg-gray-100 px-2 py-1 rounded hover:bg-gray-200 ml-2">
+               <label className="flex items-center gap-1 cursor-pointer bg-gray-100 dark:bg-gray-700 px-2 py-1 rounded hover:bg-gray-200 dark:hover:bg-gray-600 ml-2 transition-colors">
                    <input 
                        type="checkbox" 
                        checked={showNews} 
                        onChange={(e) => { const v = e.target.checked; setShowNews(v); try { onToggleNews && onToggleNews(v); } catch (err) {} }} 
                        className="cursor-pointer w-3 h-3 accent-blue-600"
                    />
-                   <span className="text-gray-600 font-medium">Newsy</span>
+                   <span className="text-gray-600 dark:text-gray-400 font-medium">Newsy</span>
                </label>
-               <label className="flex items-center gap-1 cursor-pointer bg-gray-100 px-2 py-1 rounded hover:bg-gray-200 ml-2">
+               <label className="flex items-center gap-1 cursor-pointer bg-gray-100 dark:bg-gray-700 px-2 py-1 rounded hover:bg-gray-200 dark:hover:bg-gray-600 ml-2 transition-colors">
                    <input
                        type="checkbox"
                        checked={showTransactions}
                        onChange={(e) => { const v = e.target.checked; setShowTransactions(v); try { onToggleTransactions && onToggleTransactions(v); } catch (err) {} }}
                        className="cursor-pointer w-3 h-3 accent-blue-600"
                    />
-                   <span className="text-gray-600 font-medium">Transakcje</span>
+                   <span className="text-gray-600 dark:text-gray-400 font-medium">Transakcje</span>
                </label>
             </div>
 
-            <div ref={chartContainerRef} className="w-full h-[400px]" />
+            <div ref={chartContainerRef} key={`chart-${theme}`} className="w-full h-[400px]" />
 
             {groupedTransactions.length > 0 && (
-                <div className="mt-3 p-3 bg-gray-50 rounded-lg border border-gray-200">
-                    <div className="text-sm font-semibold text-gray-700 mb-2">
+                <div className="mt-3 p-3 bg-gray-50 dark:bg-gray-900/50 rounded-lg border border-gray-200 dark:border-gray-700">
+                    <div className="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2">
                         Transakcje na wykresie: {groupedTransactions.length} (zgrupowane)
                     </div>
                     <div className="grid grid-cols-2 gap-2 max-h-32 overflow-y-auto">
@@ -461,19 +466,19 @@ export default function PriceChart({ ticker, priceHistory, brokerageAnalyses, an
                             return (
                                 <div key={`group_${t.transaction_date}_${t.transaction_type}_${index}`} className={`p-2 rounded text-xs ${
                                     isBuy
-                                        ? 'bg-green-50 border border-green-200'
-                                        : 'bg-red-50 border border-red-200'
+                                        ? 'bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800'
+                                        : 'bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800'
                                 }`}>
-                                    <div className="font-bold">
+                                    <div className={`font-bold ${isBuy ? 'text-green-700 dark:text-green-400' : 'text-red-700 dark:text-red-400'}`}>
                                         {isBuy ? 'KUPNO' : 'SPRZEDAŻ'} {qty} szt.
                                     </div>
-                                    <div className="text-gray-600">
+                                    <div className="text-gray-600 dark:text-gray-400">
                                         {t.transaction_date}
                                     </div>
-                                    <div className="text-gray-800 font-semibold">
+                                    <div className="text-gray-800 dark:text-gray-200 font-semibold">
                                         {avgPrice.toFixed(2)} PLN
                                     </div>
-                                    <div className="text-xs text-gray-500 mt-1">
+                                    <div className="text-xs text-gray-500 dark:text-gray-500 mt-1">
                                         (średnia z {t.transactions.length} trans.)
                                     </div>
                                 </div>
@@ -484,49 +489,49 @@ export default function PriceChart({ ticker, priceHistory, brokerageAnalyses, an
             )}
 
             {profitLossData && (
-                <div className="mt-3 p-4 bg-blue-50 rounded-lg border border-blue-200">
-                    <div className="text-sm font-semibold text-gray-700 mb-2">
+                <div className="mt-3 p-4 bg-blue-50 dark:bg-blue-900/20 rounded-lg border border-blue-200 dark:border-blue-800">
+                    <div className="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2">
                         Strata/Zysk dla {ticker}
                     </div>
                     <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
-                        <div className="p-2 bg-white rounded border">
-                            <div className="text-xs text-gray-500">Pozostało</div>
-                            <div className="text-lg font-bold text-gray-800">
+                        <div className="p-2 bg-white dark:bg-gray-800 rounded border dark:border-gray-700">
+                            <div className="text-xs text-gray-500 dark:text-gray-400">Pozostało</div>
+                            <div className="text-lg font-bold text-gray-800 dark:text-gray-100">
                                 {profitLossData.netQuantity} szt.
                             </div>
                         </div>
-                        <div className="p-2 bg-white rounded border">
-                            <div className="text-xs text-gray-500">Średnia cena zakupu</div>
-                            <div className="text-lg font-bold text-gray-800">
+                        <div className="p-2 bg-white dark:bg-gray-800 rounded border dark:border-gray-700">
+                            <div className="text-xs text-gray-500 dark:text-gray-400">Średnia cena zakupu</div>
+                            <div className="text-lg font-bold text-gray-800 dark:text-gray-100">
                                 {profitLossData.averageBuyPrice.toFixed(2)} PLN
                             </div>
                         </div>
-                        <div className="p-2 bg-white rounded border">
-                            <div className="text-xs text-gray-500">Zrealizowany P/L</div>
-                            <div className={`text-lg font-bold ${profitLossData.realizedPL >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                        <div className="p-2 bg-white dark:bg-gray-800 rounded border dark:border-gray-700">
+                            <div className="text-xs text-gray-500 dark:text-gray-400">Zrealizowany P/L</div>
+                            <div className={`text-lg font-bold ${profitLossData.realizedPL >= 0 ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}`}>
                                 {profitLossData.realizedPL.toFixed(2)} PLN
                             </div>
                         </div>
-                        <div className="p-2 bg-white rounded border">
-                            <div className="text-xs text-gray-500">Niezrealizowany P/L</div>
-                            <div className={`text-lg font-bold ${profitLossData.unrealizedPL >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                        <div className="p-2 bg-white dark:bg-gray-800 rounded border dark:border-gray-700">
+                            <div className="text-xs text-gray-500 dark:text-gray-400">Niezrealizowany P/L</div>
+                            <div className={`text-lg font-bold ${profitLossData.unrealizedPL >= 0 ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}`}>
                                 {profitLossData.unrealizedPL.toFixed(2)} PLN
                             </div>
                         </div>
-                        <div className="p-2 bg-white rounded border">
-                            <div className="text-xs text-gray-500">Całkowity P/L</div>
-                            <div className={`text-lg font-bold ${profitLossData.totalPL >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                        <div className="p-2 bg-white dark:bg-gray-800 rounded border dark:border-gray-700">
+                            <div className="text-xs text-gray-500 dark:text-gray-400">Całkowity P/L</div>
+                            <div className={`text-lg font-bold ${profitLossData.totalPL >= 0 ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}`}>
                                 {profitLossData.totalPL.toFixed(2)} PLN
                             </div>
                         </div>
                     </div>
-                    <div className="mt-2 text-xs text-gray-600">
+                    <div className="mt-2 text-xs text-gray-600 dark:text-gray-400">
                         Obliczono na podstawie {transactions.length} transakcji i aktualnej ceny {latestPrice?.toFixed(2)} PLN
                     </div>
                 </div>
             )}
 
-            <div className="mt-4 flex items-center gap-4 text-xs text-gray-600">
+            <div className="mt-4 flex items-center gap-4 text-xs text-gray-600 dark:text-gray-400">
                 <span className="flex items-center gap-2">
                     <span className="w-3 h-3 rounded-full bg-green-500"></span>
                     {'Pozytywny (impact > 0.2)'}
@@ -543,17 +548,17 @@ export default function PriceChart({ ticker, priceHistory, brokerageAnalyses, an
 
 
             {latestBrokerage && (
-                <div className="mt-4 p-3 bg-green-50 rounded-lg">
+                <div className="mt-4 p-3 bg-green-50 dark:bg-green-900/20 rounded-lg">
                     <div className="flex items-center justify-between text-sm">
-                        <span className="text-gray-700">
+                        <span className="text-gray-700 dark:text-gray-300">
                             Cena docelowa wg <strong>{latestBrokerage.brokerage_house}</strong>:
                         </span>
                         <div className="flex items-center gap-4">
-                            <span className="font-bold text-green-700">
+                            <span className="font-bold text-green-700 dark:text-green-400">
                                 {latestBrokerage.price_new?.toFixed(2)} PLN
                             </span>
                             {latestBrokerage.upside_percent !== null && (
-                                <span className={`font-semibold ${latestBrokerage.upside_percent >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                                <span className={`font-semibold ${latestBrokerage.upside_percent >= 0 ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}`}>
                                     ({latestBrokerage.upside_percent >= 0 ? '+' : ''}{latestBrokerage.upside_percent.toFixed(1)}%)
                                 </span>
                             )}
