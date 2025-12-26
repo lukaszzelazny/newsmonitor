@@ -1,7 +1,7 @@
 from datetime import datetime
 from flask import Blueprint, jsonify, request
 from backend.database import Database, Portfolio, Asset, Transaction, TransactionType
-from backend.portfolio.analysis import calculate_portfolio_overview, calculate_roi_over_time, calculate_portfolio_value_over_time, calculate_monthly_profit
+from backend.portfolio.analysis import calculate_portfolio_overview, calculate_roi_over_time, calculate_portfolio_value_over_time, calculate_monthly_profit, calculate_dividend_stats
 from backend.utils import clean_nan_in_data
 
 portfolio_bp = Blueprint('portfolio', __name__)
@@ -148,6 +148,32 @@ def portfolio_monthly_profit():
         return jsonify(clean_nan_in_data(stats))
     except Exception as e:
         print(f"Error in /api/portfolio/monthly_profit: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+    finally:
+        session.close()
+
+
+@portfolio_bp.route('/api/portfolio/dividend_stats')
+def portfolio_dividend_stats():
+    """
+    Zwraca statystyki dywidend.
+    """
+    db = Database()
+    session = db.Session()
+    try:
+        name = request.args.get('name', default=None, type=str)
+        excluded = _get_excluded_tickers(request)
+        
+        portfolio = _get_portfolio(session, name)
+        if not portfolio:
+            return jsonify({})
+
+        stats = calculate_dividend_stats(session, portfolio.id, excluded_tickers=excluded) or {}
+        return jsonify(clean_nan_in_data(stats))
+    except Exception as e:
+        print(f"Error in /api/portfolio/dividend_stats: {e}")
         import traceback
         traceback.print_exc()
         return jsonify({'error': str(e)}), 500
@@ -312,14 +338,36 @@ def add_transaction():
         sale_value_pln = None
         commission_pln = commission * fx_rate
         
-        tx_type = TransactionType.BUY if tx_type_str.upper() == 'BUY' else TransactionType.SELL
+        tx_type_str = tx_type_str.upper()
+        if tx_type_str == 'BUY':
+            tx_type = TransactionType.BUY
+        elif tx_type_str == 'SELL':
+            tx_type = TransactionType.SELL
+        elif tx_type_str == 'DIVIDEND':
+            tx_type = TransactionType.DIVIDEND
+        else:
+            return jsonify({'error': 'Invalid transaction type'}), 400
         
         if tx_type == TransactionType.BUY:
             # (Price * Qty + Comm) * FX
             purchase_value_pln = (price * quantity + commission) * fx_rate
-        else:
+        elif tx_type == TransactionType.SELL:
             # (Price * Qty - Comm) * FX
             sale_value_pln = (price * quantity - commission) * fx_rate
+        elif tx_type == TransactionType.DIVIDEND:
+            # Dividend: Price is total amount. Quantity is usually 0 or 1.
+            # Treat as Cash Inflow (like Sell) but separate type.
+            # If quantity is 0, we can use price as amount.
+            # Formula: Amount * FX.
+            # We store it in sale_value_pln for convenience or handle separately.
+            # Let's store in sale_value_pln so it acts as cash inflow in generic logic,
+            # but we can distinguish by type.
+            # Frontend sends "Price" as Total Amount. Quantity as 0.
+            # commission is subtracted from amount? Or separate?
+            # Usually dividend is Net or Gross. If Net, commission is 0.
+            # If Gross, commission is tax?
+            # Let's assume Price is the amount received.
+            sale_value_pln = (price - commission) * fx_rate
 
         transaction = Transaction(
             portfolio_id=portfolio.id,

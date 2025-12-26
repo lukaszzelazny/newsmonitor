@@ -356,6 +356,8 @@ def calculate_roi_over_time(session: Session, portfolio_id: int, excluded_ticker
                 daily_buys_val += val
             elif t.transaction_type == TransactionType.SELL:
                 daily_sells_val += val
+            elif t.transaction_type == TransactionType.DIVIDEND:
+                daily_sells_val += val # Treat dividend as cash inflow (like sell)
                 
         # Update Holdings and Cost Basis
         for t in day_transactions:
@@ -388,6 +390,10 @@ def calculate_roi_over_time(session: Session, portfolio_id: int, excluded_ticker
                         reduction = cost_basis_by_ticker[ticker] * ratio
                         cost_basis_by_ticker[ticker] -= reduction
             
+            elif t.transaction_type == TransactionType.DIVIDEND:
+                # Dividends do not affect holdings or cost basis (usually)
+                pass
+
             # Reset if closed
             if abs(holdings[ticker]) < 0.0001:
                 holdings[ticker] = 0.0
@@ -533,6 +539,7 @@ def calculate_portfolio_overview(session: Session, portfolio_id: int, roi_series
 
     total_buys = sum(get_tx_value_pln(t) for t in transactions if t.transaction_type == TransactionType.BUY)
     total_sells = sum(get_tx_value_pln(t) for t in transactions if t.transaction_type == TransactionType.SELL)
+    total_dividends_manual = sum(get_tx_value_pln(t) for t in transactions if t.transaction_type == TransactionType.DIVIDEND)
     net_invested = total_buys - total_sells
 
     # Calculate per-asset avg price (Original Currency) and Cost Basis (PLN)
@@ -801,10 +808,11 @@ def calculate_portfolio_overview(session: Session, portfolio_id: int, roi_series
     
     # Zysk łącznie (Total PnL) = Bieżąca Wartość + Sprzedaż - Kupno + Dywidendy
     # Zawiera Zysk Zrealizowany i Niezrealizowany.
-    total_profit = (current_value + total_sells - total_buys) + float(dividends_total_pln or 0.0)
+    total_dividends_all = float(dividends_total_pln or 0.0) + total_dividends_manual
+    total_profit = (current_value + total_sells - total_buys) + total_dividends_all
     
     # realized pozostawiamy tylko jako wartość pochodną (nieeksponowaną)
-    realized_profit = total_profit - current_profit - float(dividends_total_pln or 0.0)
+    realized_profit = total_profit - current_profit - total_dividends_all
 
     return {
         'value': float(current_value),
@@ -814,7 +822,7 @@ def calculate_portfolio_overview(session: Session, portfolio_id: int, roi_series
         'roi_pct': float(roi_pct),
         'current_profit': float(current_profit),
         'annualized_return_pct': float(annualized_return_pct),
-        'dividends_total': float(dividends_total_pln),
+        'dividends_total': float(total_dividends_all),
         'assets': assets_list
     }
 
@@ -1078,6 +1086,15 @@ def calculate_monthly_profit(session: Session, portfolio_id: int, excluded_ticke
     
     # Group dividends by month
     dividends_by_month = defaultdict(float)
+    
+    # Manual Dividends
+    for t in transactions:
+        if t.transaction_type == TransactionType.DIVIDEND:
+            val = get_tx_value_pln(t)
+            m_str = pd.Timestamp(t.transaction_date).strftime('%Y-%m')
+            dividends_by_month[m_str] += val
+
+    # Automatic Dividends (YF)
     if transactions and div_map:
         try:
             tx_by_ticker = {}
@@ -1148,3 +1165,108 @@ def calculate_monthly_profit(session: Session, portfolio_id: int, excluded_ticke
         prev_total_pnl = pnl_t
         
     return monthly_stats
+
+
+def calculate_dividend_stats(session: Session, portfolio_id: int, excluded_tickers=None):
+    if excluded_tickers is None:
+        excluded_tickers = set()
+
+    # 1. Get transactions (filtered)
+    all_transactions = session.query(Transaction).filter_by(portfolio_id=portfolio_id).all()
+    transactions = [t for t in all_transactions if t.asset.ticker not in excluded_tickers]
+    
+    if not transactions:
+        return {'chart_data': [], 'table_data': []}
+
+    # Helper to get transaction value in PLN (Manual Dividends)
+    def get_tx_value_pln(t):
+        # For dividend, we store value in sale_value_pln (treated as inflow)
+        # But we verify type to be safe
+        if t.transaction_type == TransactionType.DIVIDEND:
+             if t.sale_value_pln is not None:
+                 return float(t.sale_value_pln)
+             # Fallback if stored differently (e.g. price)
+             return float(t.price)
+        return 0.0
+
+    dividends_by_month = defaultdict(float)
+    dividends_by_ticker_month = defaultdict(lambda: defaultdict(float))
+    
+    # 2. Manual Dividends
+    for t in transactions:
+        if t.transaction_type == TransactionType.DIVIDEND:
+            val = get_tx_value_pln(t)
+            m_str = pd.Timestamp(t.transaction_date).strftime('%Y-%m')
+            dividends_by_month[m_str] += val
+            dividends_by_ticker_month[t.asset.ticker][m_str] += val
+            dividends_by_ticker_month[t.asset.ticker]['total'] += val
+
+    # 3. Automatic Dividends (YF)
+    transactions_sorted = sorted(transactions, key=lambda t: t.transaction_date)
+    start_date = transactions_sorted[0].transaction_date
+    end_date = pd.Timestamp.today().date()
+    
+    try:
+        all_tickers = sorted({t.asset.ticker for t in transactions})
+        div_map = get_dividends_for_tickers(all_tickers, start_date, end_date)
+        
+        # Build transactions by ticker for quick qty lookup
+        tx_by_ticker = {}
+        for t in transactions:
+            tx_by_ticker.setdefault(t.asset.ticker, []).append(t)
+        # Sort transactions per ticker by date (already sorted generally, but ensure per ticker)
+        for tkr in tx_by_ticker:
+            tx_by_ticker[tkr].sort(key=lambda tr: tr.transaction_date)
+
+        for tkr, series in (div_map or {}).items():
+            tx_list = tx_by_ticker.get(tkr, [])
+            if not tx_list or series is None or series.empty:
+                continue
+            for dt, div_ps in series.items():
+                # Quantity held on dt (inclusive)
+                qty = 0.0
+                for tr in tx_list:
+                    if tr.transaction_date <= pd.Timestamp(dt).date():
+                        if tr.transaction_type == TransactionType.BUY:
+                            qty += float(tr.quantity)
+                        elif tr.transaction_type == TransactionType.SELL:
+                            qty -= float(tr.quantity)
+                
+                # Check if holding > 0
+                if qty > 0 and div_ps and float(div_ps) != 0.0:
+                    amount = qty * float(div_ps)
+                    m_str = pd.Timestamp(dt).strftime('%Y-%m')
+                    
+                    dividends_by_month[m_str] += amount
+                    dividends_by_ticker_month[tkr][m_str] += amount
+                    dividends_by_ticker_month[tkr]['total'] += amount
+    except Exception as e:
+        print(f"Error calculating auto dividends: {e}")
+
+    # 4. Format Output
+    
+    # Chart Data: Sorted by month
+    sorted_months = sorted(dividends_by_month.keys())
+    chart_data = [{'month': m, 'value': dividends_by_month[m]} for m in sorted_months]
+    
+    # Table Data: Ticker rows
+    # We need a list of all unique months encountered for columns?
+    # Or just return the map and let frontend handle?
+    # Frontend needs rows.
+    # Let's return list of row objects.
+    
+    table_data = []
+    for tkr, data in dividends_by_ticker_month.items():
+        row = {'ticker': tkr, 'total': data['total'], 'months': {}}
+        for m, val in data.items():
+            if m != 'total':
+                row['months'][m] = val
+        table_data.append(row)
+        
+    table_data.sort(key=lambda x: x['total'], reverse=True)
+    
+    return {
+        'chart_data': chart_data,
+        'table_data': table_data,
+        'all_months': sorted_months
+    }

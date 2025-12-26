@@ -28,19 +28,26 @@ export default function AddTransactionModal({ isOpen, onClose, onAdded }) {
         setError(null);
 
         try {
-            let qty = parseFloat(formData.quantity);
             let price = parseFloat(formData.price);
-            
-            if (isNaN(qty) || isNaN(price)) throw new Error('Niepoprawna ilość lub cena');
-            
-            // Konwersja z gramów na uncje (dla złota/srebra)
-            if (unit === 'grams') {
-                const OZ_IN_GRAMS = 31.1034768;
-                // Ilość: g -> oz (dzielimy)
-                qty = qty / OZ_IN_GRAMS;
-                // Cena: PLN/g -> PLN/oz (mnożymy)
-                price = price * OZ_IN_GRAMS;
+            let qty = 0;
+
+            if (formData.type !== 'DIVIDEND') {
+                qty = parseFloat(formData.quantity);
+                if (isNaN(qty)) throw new Error('Niepoprawna ilość');
+                
+                // Konwersja z gramów na uncje (dla złota/srebra)
+                if (unit === 'grams') {
+                    const OZ_IN_GRAMS = 31.1034768;
+                    // Ilość: g -> oz (dzielimy)
+                    qty = qty / OZ_IN_GRAMS;
+                    // Cena: PLN/g -> PLN/oz (mnożymy)
+                    price = price * OZ_IN_GRAMS;
+                }
+            } else {
+                qty = 0; // Dividend has 0 quantity
             }
+
+            if (isNaN(price)) throw new Error('Niepoprawna cena/kwota');
 
             const payload = {
                 ...formData,
@@ -125,6 +132,7 @@ export default function AddTransactionModal({ isOpen, onClose, onAdded }) {
                             >
                                 <option value="BUY">Kupno</option>
                                 <option value="SELL">Sprzedaż</option>
+                                <option value="DIVIDEND">Dywidenda</option>
                             </select>
                         </div>
                         <div className="w-1/2">
@@ -142,37 +150,43 @@ export default function AddTransactionModal({ isOpen, onClose, onAdded }) {
                         </div>
                     </div>
                     
-                    <div className="flex gap-2">
-                        <div className="flex-grow">
-                            <label className="block text-sm font-medium text-gray-700">Ilość</label>
-                            <input 
-                                type="number" 
-                                step="any"
-                                name="quantity" 
-                                value={formData.quantity} 
-                                onChange={handleChange}
-                                className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2 focus:ring-blue-500 focus:border-blue-500"
-                                required
-                            />
-                        </div>
-                        <div className="w-24">
-                            <label className="block text-sm font-medium text-gray-700">Jednostka</label>
-                            <select 
-                                value={unit}
-                                onChange={(e) => setUnit(e.target.value)}
-                                className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2 focus:ring-blue-500 focus:border-blue-500 text-sm"
-                            >
-                                <option value="default">Domyślna</option>
-                                <option value="grams">Gramy</option>
-                            </select>
-                        </div>
-                    </div>
-                    {unit === 'grams' && (
-                        <p className="text-xs text-blue-600">Zostanie przeliczone na uncje (dzielone przez 31.1035)</p>
+                    {formData.type !== 'DIVIDEND' && (
+                        <>
+                            <div className="flex gap-2">
+                                <div className="flex-grow">
+                                    <label className="block text-sm font-medium text-gray-700">Ilość</label>
+                                    <input 
+                                        type="number" 
+                                        step="any"
+                                        name="quantity" 
+                                        value={formData.quantity} 
+                                        onChange={handleChange}
+                                        className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2 focus:ring-blue-500 focus:border-blue-500"
+                                        required
+                                    />
+                                </div>
+                                <div className="w-24">
+                                    <label className="block text-sm font-medium text-gray-700">Jednostka</label>
+                                    <select 
+                                        value={unit}
+                                        onChange={(e) => setUnit(e.target.value)}
+                                        className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2 focus:ring-blue-500 focus:border-blue-500 text-sm"
+                                    >
+                                        <option value="default">Domyślna</option>
+                                        <option value="grams">Gramy</option>
+                                    </select>
+                                </div>
+                            </div>
+                            {unit === 'grams' && (
+                                <p className="text-xs text-blue-600">Zostanie przeliczone na uncje (dzielone przez 31.1035)</p>
+                            )}
+                        </>
                     )}
                     
                     <div>
-                        <label className="block text-sm font-medium text-gray-700">Cena za jednostkę ({unit === 'grams' ? 'za gram' : 'domyślna'})</label>
+                        <label className="block text-sm font-medium text-gray-700">
+                            {formData.type === 'DIVIDEND' ? 'Kwota Dywidendy (Netto)' : `Cena za jednostkę (${unit === 'grams' ? 'za gram' : 'domyślna'})`}
+                        </label>
                         <input 
                             type="number" 
                             step="any"

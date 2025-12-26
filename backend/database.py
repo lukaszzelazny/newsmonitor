@@ -358,6 +358,7 @@ class Asset(Base):
 class TransactionType(enum.Enum):
     BUY = "buy"
     SELL = "sell"
+    DIVIDEND = "dividend"
 
 
 class Transaction(Base):

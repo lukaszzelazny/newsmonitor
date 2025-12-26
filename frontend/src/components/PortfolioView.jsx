@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { createChart, ColorType } from 'lightweight-charts';
 import AddTransactionModal from './AddTransactionModal';
+import DividendDashboard from './DividendDashboard';
 
 export default function PortfolioView({ days }) {
     const [overview, setOverview] = useState(null);
@@ -433,6 +434,8 @@ export default function PortfolioView({ days }) {
                 <div ref={chartContainerRef} className="w-full h-[300px]" />
             </div>
 
+            <DividendDashboard excludedTickers={excludedTickers} />
+
             {overview.assets && overview.assets.length > 0 && (
                 <div className="bg-white rounded-lg shadow-lg overflow-hidden">
                     <div className="px-6 py-4 border-b border-gray-200">
@@ -509,7 +512,7 @@ export default function PortfolioView({ days }) {
                     {/* Pie Chart Section */}
                     <div className="px-6 py-4 border-t border-gray-200">
                         <h3 className="text-lg font-bold text-gray-900 mb-4">Struktura portfela</h3>
-                        <PortfolioPieChart assets={sortedAssets} />
+                        <PortfolioPieChart assets={sortedAssets.filter(a => !a.excluded)} />
                     </div>
                 </div>
             )}
