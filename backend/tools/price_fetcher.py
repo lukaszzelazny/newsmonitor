@@ -220,6 +220,8 @@ def get_yf_symbol(ticker_symbol: str) -> str:
     crypto_map = {
         "BITCOIN": "BTC-USD",
         "ETHEREUM": "ETH-USD",
+        "XAUUSD=X": "GC=F", # XAUUSD=X broken in yfinance, use Futures
+        "XAUUSD": "GC=F",
     }
     t = ticker_symbol.upper()
     if t in crypto_map:
@@ -1207,6 +1209,40 @@ def get_ohlc_history_df(ticker_symbol: str, days: int = 365) -> pd.DataFrame:
         return df if df is not None else pd.DataFrame()
     except Exception:
         return pd.DataFrame()
+
+
+def get_fx_rate_for_date(currency: str, date_obj) -> float:
+    """
+    Fetches the FX rate (Currency -> PLN) for a specific date.
+    Returns 1.0 if currency is PLN or failed to fetch.
+    """
+    if currency == 'PLN':
+        return 1.0
+        
+    fx_ticker = fx_symbol_to_pln(currency)
+    if not fx_ticker:
+        return 1.0
+        
+    # Try fetching history for that date
+    try:
+        # Fetch a small window around the date to ensure we get a close price
+        start = pd.Timestamp(date_obj) - pd.Timedelta(days=5)
+        end = pd.Timestamp(date_obj) + pd.Timedelta(days=1)
+        
+        # We can use _fetch_fx_series but it returns a dict of series
+        series_map = _fetch_fx_series([currency], start, end)
+        if fx_ticker in series_map:
+            series = series_map[fx_ticker]
+            # Get the rate on or before the date
+            if not series.empty:
+                # Series index is Timestamp
+                idx = series.index[series.index <= pd.Timestamp(date_obj)]
+                if not idx.empty:
+                    return float(series.loc[idx.max()])
+    except Exception as e:
+        print(f"Error fetching FX rate for {currency} on {date_obj}: {e}")
+        
+    return 1.0
 
 
 def get_dividends_for_tickers(tickers, start_date, end_date):

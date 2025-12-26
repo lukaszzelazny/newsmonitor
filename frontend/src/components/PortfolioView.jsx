@@ -1,8 +1,11 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { createChart, ColorType } from 'lightweight-charts';
+import AddTransactionModal from './AddTransactionModal';
 
 export default function PortfolioView({ days }) {
     const [overview, setOverview] = useState(null);
+    const [isAddModalOpen, setIsAddModalOpen] = useState(false);
+    const [excludedTickers, setExcludedTickers] = useState(new Set());
     const [fullRoiSeries, setFullRoiSeries] = useState([]);
     const [roiSeries, setRoiSeries] = useState([]);
     const [monthlyProfits, setMonthlyProfits] = useState([]);
@@ -36,37 +39,53 @@ export default function PortfolioView({ days }) {
         }));
     }, [monthlyProfits]);
 
+    const fetchData = useCallback(async () => {
+        setLoading(true);
+        setError(null);
+        try {
+            const excludedStr = Array.from(excludedTickers).join(',');
+            const query = excludedStr ? `?excluded_tickers=${excludedStr}` : '';
+
+            const [ovrRes, roiRes, monthlyRes, histRes] = await Promise.all([
+                fetch(`/api/portfolio/overview${query}`),
+                fetch(`/api/portfolio/roi${query}`),
+                fetch(`/api/portfolio/monthly_profit${query}`),
+                fetch('/api/portfolio/all_assets_summary')
+            ]);
+            const ovr = await ovrRes.json();
+            const roi = await roiRes.json();
+            const monthly = await monthlyRes.json();
+            const hist = await histRes.json();
+            
+            setOverview(ovr);
+            setMonthlyProfits(Array.isArray(monthly) ? monthly : []);
+            const series = Array.isArray(roi) ? roi : [];
+            setFullRoiSeries(series);
+            setHistoricalAssets(Array.isArray(hist) ? hist : []);
+            filterData(series, 'ALL');
+        } catch (e) {
+            console.error('Error fetching portfolio data:', e);
+            setError('Błąd pobierania danych portfela');
+        } finally {
+            setLoading(false);
+        }
+    }, [excludedTickers]);
+
     useEffect(() => {
-        const fetchData = async () => {
-            setLoading(true);
-            setError(null);
-            try {
-                const [ovrRes, roiRes, monthlyRes, histRes] = await Promise.all([
-                    fetch('/api/portfolio/overview'),
-                    fetch('/api/portfolio/roi'),
-                    fetch('/api/portfolio/monthly_profit'),
-                    fetch('/api/portfolio/all_assets_summary')
-                ]);
-                const ovr = await ovrRes.json();
-                const roi = await roiRes.json();
-                const monthly = await monthlyRes.json();
-                const hist = await histRes.json();
-                
-                setOverview(ovr);
-                setMonthlyProfits(Array.isArray(monthly) ? monthly : []);
-                const series = Array.isArray(roi) ? roi : [];
-                setFullRoiSeries(series);
-                setHistoricalAssets(Array.isArray(hist) ? hist : []);
-                filterData(series, 'ALL');
-            } catch (e) {
-                console.error('Error fetching portfolio data:', e);
-                setError('Błąd pobierania danych portfela');
-            } finally {
-                setLoading(false);
-            }
-        };
         fetchData();
-    }, []);
+    }, [fetchData]);
+
+    const toggleExclusion = (ticker) => {
+        setExcludedTickers(prev => {
+            const next = new Set(prev);
+            if (next.has(ticker)) {
+                next.delete(ticker);
+            } else {
+                next.add(ticker);
+            }
+            return next;
+        });
+    };
 
     const filterData = (data, range) => {
         if (!data || data.length === 0) {
@@ -340,6 +359,22 @@ export default function PortfolioView({ days }) {
 
     return (
         <div className="space-y-4">
+            <AddTransactionModal 
+                isOpen={isAddModalOpen} 
+                onClose={() => setIsAddModalOpen(false)} 
+                onAdded={fetchData} 
+            />
+            
+            <div className="flex justify-between items-center">
+                <h2 className="text-xl font-bold text-gray-800">Moje Portfolio</h2>
+                <button 
+                    onClick={() => setIsAddModalOpen(true)}
+                    className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 shadow flex items-center gap-2"
+                >
+                    <span>+</span> Dodaj Transakcję
+                </button>
+            </div>
+
             <div className="grid grid-cols-6 gap-3">
                 <div className="bg-white rounded-lg shadow p-4">
                     <div className="text-xs text-gray-600">Wartość portfela</div>
@@ -407,6 +442,9 @@ export default function PortfolioView({ days }) {
                         <table className="min-w-full divide-y divide-gray-200 text-xs">
                             <thead className="bg-gray-50 select-none">
                                 <tr>
+                                    <th className="px-3 py-2 text-center font-medium text-gray-500 uppercase tracking-wider">
+                                        Uwzgl.
+                                    </th>
                                     <th onClick={() => handleSort('ticker')} className="px-3 py-2 text-left font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100">
                                         Ticker <SortIcon column="ticker" />
                                     </th>
@@ -438,7 +476,15 @@ export default function PortfolioView({ days }) {
                             </thead>
                             <tbody className="bg-white divide-y divide-gray-200">
                                 {sortedAssets.map((asset, idx) => (
-                                    <tr key={asset.ticker} className="hover:bg-gray-50">
+                                    <tr key={asset.ticker} className={`hover:bg-gray-50 ${asset.excluded ? 'bg-gray-100 opacity-60' : ''}`}>
+                                        <td className="px-3 py-2 text-center">
+                                            <input 
+                                                type="checkbox" 
+                                                checked={!excludedTickers.has(asset.ticker)} 
+                                                onChange={() => toggleExclusion(asset.ticker)}
+                                                className="h-4 w-4 text-blue-600 rounded cursor-pointer"
+                                            />
+                                        </td>
                                         <td className="px-3 py-2 whitespace-nowrap font-bold text-gray-900">{asset.ticker}</td>
                                         <td className={`px-3 py-2 whitespace-nowrap text-right font-semibold ${asset.daily_change >= 0 ? 'text-green-600' : 'text-red-600'}`}>
                                             {asset.daily_change >= 0 ? '+' : ''}{fmt(asset.daily_change, 2)}%

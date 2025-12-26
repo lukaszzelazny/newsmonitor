@@ -200,16 +200,19 @@ def calculate_group_return(session: Session) -> dict:
     }
 
 
-def calculate_roi_over_time(session: Session, portfolio_id: int):
-    asset_id = 11
+def calculate_roi_over_time(session: Session, portfolio_id: int, excluded_tickers=None):
+    if excluded_tickers is None:
+        excluded_tickers = set()
     """
     Oblicza stopę zwrotu portfela w czasie.
     Używa Simple Cumulative Return (PnL / Total Invested).
     """
     # Pobierz wszystkie transakcje dla portfela
-    transactions = session.query(Transaction).filter_by(
+    all_transactions = session.query(Transaction).filter_by(
         portfolio_id=portfolio_id
     ).order_by(Transaction.transaction_date).all()
+
+    transactions = [t for t in all_transactions if t.asset.ticker not in excluded_tickers]
 
     if not transactions:
         return []
@@ -474,7 +477,9 @@ def calculate_roi_over_time(session: Session, portfolio_id: int):
 
     return roi_data
 
-def calculate_portfolio_overview(session: Session, portfolio_id: int, roi_series=None, div_map=None) -> dict:
+def calculate_portfolio_overview(session: Session, portfolio_id: int, roi_series=None, div_map=None, excluded_tickers=None) -> dict:
+    if excluded_tickers is None:
+        excluded_tickers = set()
     """
     Calculates extended portfolio summary:
     - current value (PLN)
@@ -486,12 +491,11 @@ def calculate_portfolio_overview(session: Session, portfolio_id: int, roi_series
     - assets details (list of holdings with metrics)
     """
     # Load transactions
-    transactions = session.query(Transaction).filter_by(
+    all_transactions = session.query(Transaction).filter_by(
          portfolio_id=portfolio_id
      ).order_by(Transaction.transaction_date).all()
 
-
-    if not transactions:
+    if not all_transactions:
         return {
             'value': 0.0,
             'daily_change_value': 0.0,
@@ -503,7 +507,13 @@ def calculate_portfolio_overview(session: Session, portfolio_id: int, roi_series
             'assets': []
         }
 
-    start_date = transactions[0].transaction_date
+    transactions = [t for t in all_transactions if t.asset.ticker not in excluded_tickers]
+    
+    if transactions:
+        start_date = transactions[0].transaction_date
+    else:
+        start_date = all_transactions[0].transaction_date
+
     end_date = pd.Timestamp.today().date()
 
     # Helper to get transaction value in PLN using purchase_value_pln/sale_value_pln if available
@@ -529,7 +539,7 @@ def calculate_portfolio_overview(session: Session, portfolio_id: int, roi_series
     # Handles both Long and Short positions correctly.
     asset_metrics = {} # ticker -> {qty, avg_price_org, cost_basis_pln}
 
-    for t in transactions:
+    for t in all_transactions:
         tkr = t.asset.ticker
         if tkr not in asset_metrics:
             asset_metrics[tkr] = {'qty': 0.0, 'avg_price_org': 0.0, 'cost_basis_pln': 0.0}
@@ -647,6 +657,7 @@ def calculate_portfolio_overview(session: Session, portfolio_id: int, roi_series
 
         for tkr, metrics in holdings.items():
             qty = metrics['qty']
+            is_excluded = tkr in excluded_tickers
             last_p, prev_p, last_d = last_and_prev_price(tkr)
 
             # Determine Current Price
@@ -682,7 +693,9 @@ def calculate_portfolio_overview(session: Session, portfolio_id: int, roi_series
                 price_pln = 0.0
 
             asset_val_pln = qty * price_pln
-            current_value += asset_val_pln
+            
+            if not is_excluded:
+                current_value += asset_val_pln
 
             # Daily change calculation
             daily_chg_pct = 0.0
@@ -700,7 +713,8 @@ def calculate_portfolio_overview(session: Session, portfolio_id: int, roi_series
             
             if prev_price_pln > 0 and price_pln > 0:
                 prev_val_pln = qty * prev_price_pln
-                prev_value += prev_val_pln
+                if not is_excluded:
+                    prev_value += prev_val_pln
                 daily_chg_pct = (price_pln - prev_price_pln) / prev_price_pln * 100.0
 
             price_org = price_pln
@@ -721,7 +735,8 @@ def calculate_portfolio_overview(session: Session, portfolio_id: int, roi_series
                 'daily_change': float(daily_chg_pct),
                 'profit_pln': float(profit_pln),
                 'return_pct': float(return_pct),
-                'share_pct': 0.0 # to be calculated after total value
+                'share_pct': 0.0, # to be calculated after total value
+                'excluded': is_excluded
             })
 
     # Calculate share pct
@@ -782,7 +797,7 @@ def calculate_portfolio_overview(session: Session, portfolio_id: int, roi_series
 
     # Profits
     # Bieżący zysk (unrealized): suma zysków pozycji w assets_list (spójne z tabelą)
-    current_profit = sum(a['profit_pln'] for a in assets_list) if assets_list else 0.0
+    current_profit = sum(a['profit_pln'] for a in assets_list if not a.get('excluded')) if assets_list else 0.0
     
     # Zysk łącznie (Total PnL) = Bieżąca Wartość + Sprzedaż - Kupno + Dywidendy
     # Zawiera Zysk Zrealizowany i Niezrealizowany.
@@ -996,7 +1011,9 @@ def calculate_all_assets_summary(session: Session, portfolio_id: int):
     return assets_summary
 
 
-def calculate_monthly_profit(session: Session, portfolio_id: int):
+def calculate_monthly_profit(session: Session, portfolio_id: int, excluded_tickers=None):
+    if excluded_tickers is None:
+        excluded_tickers = set()
     """
     Calculates monthly total profit (PnL) for the portfolio.
     
@@ -1004,13 +1021,15 @@ def calculate_monthly_profit(session: Session, portfolio_id: int):
         List of dicts: [{'month': 'YYYY-MM', 'profit': float}, ...]
     """
     # 1. Get daily series of Value and Invested
-    roi_data = calculate_roi_over_time(session, portfolio_id)
+    roi_data = calculate_roi_over_time(session, portfolio_id, excluded_tickers=excluded_tickers)
     if not roi_data:
         return []
 
     # Pre-fetch dividends to avoid double call
     # Need transactions to know holdings and date range
-    transactions = session.query(Transaction).filter_by(portfolio_id=portfolio_id).all()
+    all_transactions = session.query(Transaction).filter_by(portfolio_id=portfolio_id).all()
+    transactions = [t for t in all_transactions if t.asset.ticker not in excluded_tickers]
+    
     div_map = None
     if transactions:
         start_date = transactions[0].transaction_date
@@ -1024,7 +1043,8 @@ def calculate_monthly_profit(session: Session, portfolio_id: int):
     # Force alignment with Current Overview (Live Prices)
     # This ensures Sum(Monthly) == Total Profit in Header
     # Pass roi_data and div_map to avoid re-calculation/re-fetching
-    overview = calculate_portfolio_overview(session, portfolio_id, roi_series=roi_data, div_map=div_map)
+    # Pass excluded_tickers to overview as well
+    overview = calculate_portfolio_overview(session, portfolio_id, roi_series=roi_data, div_map=div_map, excluded_tickers=excluded_tickers)
     current_val = overview['value']
     # Net Invested in Overview = total_buys - total_sells
     # In roi_data, invested = cumulative inflows.
