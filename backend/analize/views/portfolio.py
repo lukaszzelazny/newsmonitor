@@ -38,7 +38,8 @@ def get_config():
     excluded_str = os.getenv('DEFAULT_EXCLUDED_TICKERS', '')
     excluded = [t.strip() for t in excluded_str.split(',') if t.strip()]
     return jsonify({
-        'default_excluded_tickers': excluded
+        'default_excluded_tickers': excluded,
+        'default_theme': os.getenv('DEFAULT_THEME', 'dark')
     })
 
 

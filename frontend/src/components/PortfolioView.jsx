@@ -159,8 +159,8 @@ export default function PortfolioView({ days }) {
             const isDark = theme === 'dark';
             const chart = createChart(chartContainerRef.current, {
             layout: {
-                background: { type: ColorType.Solid, color: isDark ? '#111827' : 'white' },
-                textColor: isDark ? '#f3f4f6' : 'black',
+                background: { type: ColorType.Solid, color: isDark ? '#1f2937' : 'white' },
+                textColor: isDark ? '#f3f4f6' : '#1f2937',
             },
             width: chartContainerRef.current.clientWidth,
             height: 300,
