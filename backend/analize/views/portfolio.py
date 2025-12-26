@@ -1,5 +1,6 @@
 from datetime import datetime
 from flask import Blueprint, jsonify, request
+import os
 from backend.database import Database, Portfolio, Asset, Transaction, TransactionType
 from backend.portfolio.analysis import calculate_portfolio_overview, calculate_roi_over_time, calculate_portfolio_value_over_time, calculate_monthly_profit, calculate_dividend_stats
 from backend.utils import clean_nan_in_data
@@ -30,6 +31,15 @@ def _get_excluded_tickers(req):
     if not excluded:
         return set()
     return set(t.strip() for t in excluded.split(',') if t.strip())
+
+
+@portfolio_bp.route('/api/config')
+def get_config():
+    excluded_str = os.getenv('DEFAULT_EXCLUDED_TICKERS', '')
+    excluded = [t.strip() for t in excluded_str.split(',') if t.strip()]
+    return jsonify({
+        'default_excluded_tickers': excluded
+    })
 
 
 @portfolio_bp.route('/api/portfolio/overview')

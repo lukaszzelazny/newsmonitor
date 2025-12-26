@@ -18,10 +18,29 @@ export default function PortfolioView({ days }) {
     const [timeRange, setTimeRange] = useState('ALL');
     const [sortConfig, setSortConfig] = useState({ key: 'value', direction: 'desc' });
     const [historySortConfig, setHistorySortConfig] = useState({ key: 'ticker', direction: 'asc' });
+    const [configLoaded, setConfigLoaded] = useState(false);
     const chartContainerRef = useRef(null);
     const chartRef = useRef(null);
 
     const fmt = (n, digits = 2) => (n === null || n === undefined ? '-' : Number(n).toFixed(digits));
+
+    // Load config on mount
+    useEffect(() => {
+        const loadConfig = async () => {
+            try {
+                const res = await fetch('/api/config');
+                const data = await res.json();
+                if (data.default_excluded_tickers && data.default_excluded_tickers.length > 0) {
+                    setExcludedTickers(new Set(data.default_excluded_tickers));
+                }
+            } catch (e) {
+                console.error("Failed to load config:", e);
+            } finally {
+                setConfigLoaded(true);
+            }
+        };
+        loadConfig();
+    }, []);
 
     const monthlyTableData = React.useMemo(() => {
         if (!monthlyProfits.length) return [];
@@ -41,6 +60,8 @@ export default function PortfolioView({ days }) {
     }, [monthlyProfits]);
 
     const fetchData = useCallback(async () => {
+        if (!configLoaded) return;
+
         setLoading(true);
         setError(null);
         try {
@@ -70,7 +91,7 @@ export default function PortfolioView({ days }) {
         } finally {
             setLoading(false);
         }
-    }, [excludedTickers]);
+    }, [excludedTickers, configLoaded]);
 
     useEffect(() => {
         fetchData();

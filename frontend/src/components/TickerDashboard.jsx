@@ -5,8 +5,10 @@ import TickerSelect from './TickerSelect';
 import CalendarView from './CalendarView';
 import CalendarRejectedView from './CalendarRejectedView';
 import PortfolioView from './PortfolioView';
+import { useTheme } from '../context/ThemeContext';
 
 export default function TickerDashboard() {
+    const { theme, toggleTheme } = useTheme();
     const [tickers, setTickers] = useState([]);
     const [selectedTicker, setSelectedTicker] = useState(null);
     const [analyses, setAnalyses] = useState([]);
@@ -191,67 +193,67 @@ export default function TickerDashboard() {
 
     const getSentimentColor = (sentiment) => {
         const val = Math.abs(sentiment);
-        if (val < 0.05) return 'text-gray-500';
-        if (sentiment > 0.3) return 'text-green-600';
-        if (sentiment > 0) return 'text-green-400';
-        if (sentiment > -0.3) return 'text-yellow-500';
-        return 'text-red-500';
+        if (val < 0.05) return 'text-gray-500 dark:text-gray-400';
+        if (sentiment > 0.3) return 'text-green-600 dark:text-green-400';
+        if (sentiment > 0) return 'text-green-400 dark:text-green-300';
+        if (sentiment > -0.3) return 'text-yellow-500 dark:text-yellow-400';
+        return 'text-red-500 dark:text-red-400';
     };
 
     const getSentimentBg = (sentiment) => {
         const val = Math.abs(sentiment);
-        if (val < 0.05) return 'bg-gray-100';
-        if (sentiment > 0.3) return 'bg-green-100';
-        if (sentiment > 0) return 'bg-green-50';
-        if (sentiment > -0.3) return 'bg-yellow-50';
-        return 'bg-red-50';
+        if (val < 0.05) return 'bg-gray-100 dark:bg-gray-800';
+        if (sentiment > 0.3) return 'bg-green-100 dark:bg-green-900/30';
+        if (sentiment > 0) return 'bg-green-50 dark:bg-green-900/10';
+        if (sentiment > -0.3) return 'bg-yellow-50 dark:bg-yellow-900/10';
+        return 'bg-red-50 dark:bg-red-900/10';
     };
 
     const getRecommendationColor = (recommendation) => {
-        if (!recommendation) return 'text-gray-600';
+        if (!recommendation) return 'text-gray-600 dark:text-gray-400';
         const rec = recommendation.toLowerCase();
         if (rec.includes('kupuj') || rec.includes('buy') || rec.includes('accumulate')) {
-            return 'text-green-600 font-bold';
+            return 'text-green-600 dark:text-green-400 font-bold';
         }
         if (rec.includes('trzymaj') || rec.includes('hold') || rec.includes('neutral')) {
-            return 'text-yellow-600 font-bold';
+            return 'text-yellow-600 dark:text-yellow-400 font-bold';
         }
         if (rec.includes('sprzedaj') || rec.includes('sell') || rec.includes('reduce')) {
-            return 'text-red-600 font-bold';
+            return 'text-red-600 dark:text-red-400 font-bold';
         }
-        return 'text-gray-600';
+        return 'text-gray-600 dark:text-gray-400';
     };
 
     const getUpsideColor = (upside) => {
-        if (upside === null || upside === undefined) return 'text-gray-600';
-        if (upside > 30) return 'text-green-700 font-bold';
-        if (upside > 15) return 'text-green-600 font-semibold';
-        if (upside > 5) return 'text-green-500';
-        if (upside > -5) return 'text-gray-600';
-        if (upside > -15) return 'text-red-500';
-        if (upside > -30) return 'text-red-600 font-semibold';
-        return 'text-red-700 font-bold';
+        if (upside === null || upside === undefined) return 'text-gray-600 dark:text-gray-400';
+        if (upside > 30) return 'text-green-700 dark:text-green-400 font-bold';
+        if (upside > 15) return 'text-green-600 dark:text-green-500 font-semibold';
+        if (upside > 5) return 'text-green-500 dark:text-green-400';
+        if (upside > -5) return 'text-gray-600 dark:text-gray-400';
+        if (upside > -15) return 'text-red-500 dark:text-red-400';
+        if (upside > -30) return 'text-red-600 dark:text-red-500 font-semibold';
+        return 'text-red-700 dark:text-red-600 font-bold';
     };
 
     const getUpsideBg = (upside) => {
-        if (upside === null || upside === undefined) return 'bg-gray-50';
-        if (upside > 20) return 'bg-green-100';
-        if (upside > 10) return 'bg-green-50';
-        if (upside > -10) return 'bg-gray-50';
-        if (upside > -20) return 'bg-red-50';
-        return 'bg-red-100';
+        if (upside === null || upside === undefined) return 'bg-gray-50 dark:bg-gray-800';
+        if (upside > 20) return 'bg-green-100 dark:bg-green-900/30';
+        if (upside > 10) return 'bg-green-50 dark:bg-green-900/10';
+        if (upside > -10) return 'bg-gray-50 dark:bg-gray-800';
+        if (upside > -20) return 'bg-red-50 dark:bg-red-900/10';
+        return 'bg-red-100 dark:bg-red-900/30';
     };
 
     const getImpactColor = (impact) => {
         const val = Math.abs(impact);
-        if (val < 0.05) return 'bg-gray-400';
-        if (impact > 0.5) return 'bg-green-600';
-        if (impact > 0.2) return 'bg-green-500';
-        if (impact > 0.05) return 'bg-green-400';
-        if (impact > -0.05) return 'bg-gray-400';
-        if (impact > -0.2) return 'bg-orange-400';
-        if (impact > -0.5) return 'bg-orange-500';
-        return 'bg-red-600';
+        if (val < 0.05) return 'bg-gray-400 dark:bg-gray-500';
+        if (impact > 0.5) return 'bg-green-600 dark:bg-green-500';
+        if (impact > 0.2) return 'bg-green-500 dark:bg-green-400';
+        if (impact > 0.05) return 'bg-green-400 dark:bg-green-300';
+        if (impact > -0.05) return 'bg-gray-400 dark:bg-gray-500';
+        if (impact > -0.2) return 'bg-orange-400 dark:bg-orange-300';
+        if (impact > -0.5) return 'bg-orange-500 dark:bg-orange-400';
+        return 'bg-red-600 dark:bg-red-500';
     };
 
     const tickerStats = selectedTicker ? {
@@ -264,19 +266,26 @@ export default function TickerDashboard() {
     } : null;
 
     return (
-        <div className="min-h-screen bg-gray-50 p-4">
+        <div className="min-h-screen bg-gray-50 dark:bg-gray-900 p-4 transition-colors duration-200">
             <div className="max-w-7xl mx-auto">
                     <div className="flex items-center justify-between mb-4">
-                        <h1 className="text-2xl font-bold text-gray-900">
+                        <h1 className="text-2xl font-bold text-gray-900 dark:text-white">
                             Analiza Sentymentu Tickerów
                         </h1>
                         <div className="flex items-center gap-3">
+                            <button
+                                onClick={toggleTheme}
+                                className="p-2 rounded-lg bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-200 hover:bg-gray-300 dark:hover:bg-gray-600 transition-colors"
+                                title={theme === 'dark' ? 'Przełącz na jasny motyw' : 'Przełącz na ciemny motyw'}
+                            >
+                                {theme === 'dark' ? '☀️' : '🌙'}
+                            </button>
                             <div className="flex items-center gap-2">
                                 <button
                                     onClick={() => setViewMode('tickers')}
                                     className={`px-3 py-1 text-sm rounded-lg transition-colors ${viewMode === 'tickers'
                                         ? 'bg-blue-500 text-white'
-                                        : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+                                        : 'bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-200 hover:bg-gray-300 dark:hover:bg-gray-600'
                                     }`}
                                 >
                                     Widok Tickerów
@@ -285,7 +294,7 @@ export default function TickerDashboard() {
                                     onClick={() => setViewMode('calendar')}
                                     className={`px-3 py-1 text-sm rounded-lg transition-colors ${viewMode === 'calendar'
                                         ? 'bg-blue-500 text-white'
-                                        : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+                                        : 'bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-200 hover:bg-gray-300 dark:hover:bg-gray-600'
                                     }`}
                                 >
                                     Kalendarz Analiz
@@ -294,7 +303,7 @@ export default function TickerDashboard() {
                                     onClick={() => setViewMode('rejected')}
                                     className={`px-3 py-1 text-sm rounded-lg transition-colors ${viewMode === 'rejected'
                                         ? 'bg-red-500 text-white'
-                                        : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+                                        : 'bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-200 hover:bg-gray-300 dark:hover:bg-gray-600'
                                     }`}
                                 >
                                     Odrzucone Newsy
@@ -303,18 +312,18 @@ export default function TickerDashboard() {
                                     onClick={() => setViewMode('portfolio')}
                                     className={`px-3 py-1 text-sm rounded-lg transition-colors ${viewMode === 'portfolio'
                                         ? 'bg-green-600 text-white'
-                                        : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+                                        : 'bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-200 hover:bg-gray-300 dark:hover:bg-gray-600'
                                     }`}
                                 >
                                     Portfolio
                                 </button>
                             </div>
                             <div className="flex items-center gap-2">
-                                <label className="text-xs text-gray-600">Okres:</label>
+                                <label className="text-xs text-gray-600 dark:text-gray-400">Okres:</label>
                             <select
                                 value={days}
                                 onChange={(e) => setDays(Number(e.target.value))}
-                                className="px-2 py-1 text-sm border border-gray-300 rounded-lg"
+                                className="px-2 py-1 text-sm border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
                             >
                                 <option value="7">7 dni</option>
                                 <option value="14">14 dni</option>
@@ -344,12 +353,12 @@ export default function TickerDashboard() {
                     <PortfolioView days={days} />
                 ) : (
                     <div className="grid grid-cols-12 gap-4">
-                        <div className="col-span-3 bg-white rounded-lg shadow p-3 sticky top-4 self-start" style={{ maxHeight: 'calc(100vh - 2rem)' }}>
+                        <div className="col-span-3 bg-white dark:bg-gray-800 rounded-lg shadow p-3 sticky top-4 self-start" style={{ maxHeight: 'calc(100vh - 2rem)' }}>
                             <div className="mb-3">
                                 <input
                                     type="text"
                                     placeholder="Szukaj tickera..."
-                                    className="w-full px-3 py-1.5 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                                    className="w-full px-3 py-1.5 text-sm border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white dark:bg-gray-700 text-gray-900 dark:text-white placeholder-gray-500 dark:placeholder-gray-400"
                                     value={searchTerm}
                                     onChange={(e) => setSearchTerm(e.target.value)}
                                 />
@@ -421,21 +430,21 @@ export default function TickerDashboard() {
                                             onClick={() => setSelectedTicker(ticker)}
                                             className={`p-2 rounded-lg cursor-pointer transition-all relative ${ticker.in_portfolio
                                                     ? (selectedTicker?.ticker === ticker.ticker
-                                                        ? 'bg-gradient-to-r from-green-100 to-emerald-100 border-2 border-blue-500'
-                                                        : 'bg-gradient-to-r from-green-50 to-emerald-50 hover:from-green-100 hover:to-emerald-100 border-2 border-green-200')
+                                                        ? 'bg-gradient-to-r from-green-100 to-emerald-100 dark:from-green-900 dark:to-emerald-900 border-2 border-blue-500'
+                                                        : 'bg-gradient-to-r from-green-50 to-emerald-50 dark:from-green-950 dark:to-emerald-950 hover:from-green-100 hover:to-emerald-100 dark:hover:from-green-900 dark:hover:to-emerald-900 border-2 border-green-200 dark:border-green-800')
                                                     : ticker.is_favorite
                                                         ? (selectedTicker?.ticker === ticker.ticker
-                                                            ? 'bg-gradient-to-r from-blue-100 to-cyan-100 border-2 border-blue-500'
-                                                            : 'bg-gradient-to-r from-blue-50 to-cyan-50 hover:from-blue-100 hover:to-cyan-100 border-2 border-blue-200')
+                                                            ? 'bg-gradient-to-r from-blue-100 to-cyan-100 dark:from-blue-900 dark:to-cyan-900 border-2 border-blue-500'
+                                                            : 'bg-gradient-to-r from-blue-50 to-cyan-50 dark:from-blue-950 dark:to-cyan-950 hover:from-blue-100 hover:to-cyan-100 dark:hover:from-blue-900 dark:hover:to-cyan-900 border-2 border-blue-200 dark:border-blue-800')
                                                         : (selectedTicker?.ticker === ticker.ticker
-                                                            ? 'bg-blue-50 border-2 border-blue-500'
-                                                            : 'bg-gray-50 hover:bg-gray-100 border-2 border-transparent')
+                                                            ? 'bg-blue-50 dark:bg-blue-900 border-2 border-blue-500'
+                                                            : 'bg-gray-50 dark:bg-gray-800 hover:bg-gray-100 dark:hover:bg-gray-700 border-2 border-transparent')
                                                 }`}
                                         >
                                             <div className="flex items-center justify-between">
                                                 <div className="flex-1 min-w-0">
                                                     <div className="flex items-center gap-1.5">
-                                                        <span className={`text-base ${ticker.in_portfolio ? 'font-extrabold text-green-900' : 'font-bold text-gray-900'}`}>
+                                                        <span className={`text-base ${ticker.in_portfolio ? 'font-extrabold text-green-900 dark:text-green-300' : 'font-bold text-gray-900 dark:text-gray-100'}`}>
                                                             {ticker.ticker}
                                                         </span>
                                                         {ticker.in_portfolio && (
@@ -449,8 +458,8 @@ export default function TickerDashboard() {
                                                             </span>
                                                         )}
                                                     </div>
-                                                    <p className="text-xs text-gray-600 truncate">{ticker.company_name || 'Brak nazwy'}</p>
-                                                    <p className="text-xs text-gray-500">{ticker.sector || 'Brak sektora'}</p>
+                                                    <p className="text-xs text-gray-600 dark:text-gray-400 truncate">{ticker.company_name || 'Brak nazwy'}</p>
+                                                    <p className="text-xs text-gray-500 dark:text-gray-500">{ticker.sector || 'Brak sektora'}</p>
                                                 </div>
                                                 <div className="flex flex-col items-center gap-2 ml-2">
                                                     <button onClick={handleScrape} disabled={scrapingTicker === ticker.ticker} className={`text-white px-2 py-1 rounded text-xs ${scrapingTicker === ticker.ticker ? 'bg-gray-400' : 'bg-blue-500'}`}>
@@ -460,7 +469,7 @@ export default function TickerDashboard() {
                                                         <div className={`text-base font-bold ${getSentimentColor(ticker.avg_sentiment)}`}>
                                                             {ticker.avg_sentiment > 0 ? '+' : ''}{Number(ticker.avg_sentiment).toFixed(2)}
                                                         </div>
-                                                        <div className="text-xs text-gray-500">
+                                                        <div className="text-xs text-gray-500 dark:text-gray-400">
                                                             {ticker.mentions} wzm.
                                                         </div>
                                                     </div>
@@ -490,7 +499,7 @@ export default function TickerDashboard() {
 
                         <div className="col-span-9">
                             {!selectedTicker ? (
-                                <div className="bg-white rounded-lg shadow p-6 flex items-center justify-center" style={{ minHeight: '300px' }}>
+                                <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6 flex items-center justify-center" style={{ minHeight: '300px' }}>
                                     <div className="text-center text-gray-400">
                                         <p className="text-lg">Wybierz ticker z listy po lewej</p>
                                     </div>
@@ -500,16 +509,16 @@ export default function TickerDashboard() {
                                     <div className={`p-3 rounded-lg shadow ${getSentimentBg(selectedTicker.avg_sentiment)}`}>
                                         <div className="flex items-center justify-between">
                                             <div>
-                                                <h2 className="text-xl font-bold text-gray-900">
+                                                <h2 className="text-xl font-bold text-gray-900 dark:text-white">
                                                     {selectedTicker.ticker} - {selectedTicker.company_name || 'Brak nazwy'}
                                                 </h2>
-                                                <p className="text-sm text-gray-600">{selectedTicker.sector || 'Brak sektora'}</p>
+                                                <p className="text-sm text-gray-600 dark:text-gray-400">{selectedTicker.sector || 'Brak sektora'}</p>
                                             </div>
                                             <div className="text-right">
                                                 <div className={`text-2xl font-bold ${getSentimentColor(selectedTicker.avg_sentiment)}`}>
                                                     {selectedTicker.avg_sentiment > 0 ? '+' : ''}{Number(selectedTicker.avg_sentiment).toFixed(2)}
                                                 </div>
-                                                <div className="text-xs text-gray-600">
+                                                <div className="text-xs text-gray-600 dark:text-gray-400">
                                                     Średni sentyment
                                                 </div>
                                             </div>
@@ -517,9 +526,9 @@ export default function TickerDashboard() {
                                     </div>
 
                                     {tickerStats && showStats && (
-                                        <div className="bg-white rounded-lg shadow p-4">
+                                        <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-4">
                                             <div className="flex items-center justify-between mb-3">
-                                                <h3 className="text-base font-semibold text-gray-900">Statystyki</h3>
+                                                <h3 className="text-base font-semibold text-gray-900 dark:text-white">Statystyki</h3>
                                                 <button
                                                     onClick={() => setShowStats(false)}
                                                     className="text-gray-400 hover:text-gray-600 text-sm"
@@ -528,33 +537,33 @@ export default function TickerDashboard() {
                                                 </button>
                                             </div>
                                             <div className="grid grid-cols-3 gap-3">
-                                                <div className="bg-gray-50 p-3 rounded-lg">
-                                                    <div className="text-xl font-bold text-gray-900">{tickerStats.totalNews}</div>
-                                                    <div className="text-xs text-gray-600">Wszystkie</div>
+                                                <div className="bg-gray-50 dark:bg-gray-700 p-3 rounded-lg">
+                                                    <div className="text-xl font-bold text-gray-900 dark:text-white">{tickerStats.totalNews}</div>
+                                                    <div className="text-xs text-gray-600 dark:text-gray-300">Wszystkie</div>
                                                 </div>
-                                                <div className="bg-green-50 p-3 rounded-lg">
-                                                    <div className="text-xl font-bold text-green-600">{tickerStats.positiveNews}</div>
-                                                    <div className="text-xs text-gray-600">Pozytywne</div>
+                                                <div className="bg-green-50 dark:bg-green-900/20 p-3 rounded-lg">
+                                                    <div className="text-xl font-bold text-green-600 dark:text-green-400">{tickerStats.positiveNews}</div>
+                                                    <div className="text-xs text-gray-600 dark:text-gray-300">Pozytywne</div>
                                                 </div>
-                                                <div className="bg-red-50 p-3 rounded-lg">
-                                                    <div className="text-xl font-bold text-red-600">{tickerStats.negativeNews}</div>
-                                                    <div className="text-xs text-gray-600">Negatywne</div>
+                                                <div className="bg-red-50 dark:bg-red-900/20 p-3 rounded-lg">
+                                                    <div className="text-xl font-bold text-red-600 dark:text-red-400">{tickerStats.negativeNews}</div>
+                                                    <div className="text-xs text-gray-600 dark:text-gray-300">Negatywne</div>
                                                 </div>
-                                                <div className="bg-gray-50 p-3 rounded-lg">
-                                                    <div className="text-xl font-bold text-gray-600">{tickerStats.neutralNews}</div>
-                                                    <div className="text-xs text-gray-600">Neutralne</div>
+                                                <div className="bg-gray-50 dark:bg-gray-700 p-3 rounded-lg">
+                                                    <div className="text-xl font-bold text-gray-600 dark:text-gray-300">{tickerStats.neutralNews}</div>
+                                                    <div className="text-xs text-gray-600 dark:text-gray-300">Neutralne</div>
                                                 </div>
-                                                <div className="bg-blue-50 p-3 rounded-lg">
+                                                <div className="bg-blue-50 dark:bg-blue-900/20 p-3 rounded-lg">
                                                     <div className={`text-xl font-bold ${getSentimentColor(tickerStats.avgImpact)}`}>
                                                         {tickerStats.avgImpact > 0 ? '+' : ''}{tickerStats.avgImpact.toFixed(3)}
                                                     </div>
-                                                    <div className="text-xs text-gray-600">Śr. impact</div>
+                                                    <div className="text-xs text-gray-600 dark:text-gray-300">Śr. impact</div>
                                                 </div>
-                                                <div className="bg-purple-50 p-3 rounded-lg">
-                                                    <div className="text-xl font-bold text-purple-600">
+                                                <div className="bg-purple-50 dark:bg-purple-900/20 p-3 rounded-lg">
+                                                    <div className="text-xl font-bold text-purple-600 dark:text-purple-400">
                                                         {(tickerStats.avgConfidence * 100).toFixed(0)}%
                                                     </div>
-                                                    <div className="text-xs text-gray-600">Śr. pewność</div>
+                                                    <div className="text-xs text-gray-600 dark:text-gray-300">Śr. pewność</div>
                                                 </div>
                                             </div>
                                         </div>
@@ -582,23 +591,23 @@ export default function TickerDashboard() {
                                     <TechnicalAnalysis ticker={selectedTicker.ticker} />
 
                                     {loading ? (
-                                        <div className="bg-white rounded-lg shadow-lg p-6 flex items-center justify-center py-12">
+                                        <div className="bg-white dark:bg-gray-800 rounded-lg shadow-lg p-6 flex items-center justify-center py-12">
                                             <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500"></div>
                                         </div>
                                     ) : (
-                                        <div className="bg-white rounded-lg shadow p-4">
+                                        <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-4">
                                             <div className="space-y-4">
                                                 <div>
                                                     <div className="flex items-center justify-between mb-2">
-                                                        <h3 className="text-base font-semibold text-gray-900">
+                                                        <h3 className="text-base font-semibold text-gray-900 dark:text-white">
                                                             Analizy newsowe ({filteredAnalyses.length})
                                                         </h3>
                                                         <div className="flex items-center gap-2">
-                                                            <label className="text-xs text-gray-600">Filtruj:</label>
+                                                            <label className="text-xs text-gray-600 dark:text-gray-400">Filtruj:</label>
                                                             <select
                                                                 value={filterImpact}
                                                                 onChange={(e) => setFilterImpact(e.target.value)}
-                                                                className="px-2 py-1 text-xs border border-gray-300 rounded-lg"
+                                                                className="px-2 py-1 text-xs border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
                                                             >
                                                                 <option value="all">Wszystkie</option>
                                                                 <option value="positive">Pozytywne</option>
@@ -614,7 +623,7 @@ export default function TickerDashboard() {
                                                             {filteredAnalyses.map((analysis, idx) => (
                                                                 <div
                                                                     key={idx}
-                                                                    className="border border-gray-200 rounded-lg p-3 hover:shadow-md transition-shadow relative"
+                                                                    className="border border-gray-200 dark:border-gray-700 rounded-lg p-3 hover:shadow-md transition-shadow relative"
                                                                 >
                                                                     <button
                                                                         onClick={() => markAsDuplicate(analysis.news_id)}
@@ -632,10 +641,10 @@ export default function TickerDashboard() {
                                                                         <div className="flex-1 pr-8">
                                                                             <div className="flex items-start justify-between mb-1.5">
                                                                                 <div className="flex-1">
-                                                                                    <h3 className="font-semibold text-sm text-gray-900 mb-0.5">
+                                                                                    <h3 className="font-semibold text-sm text-gray-900 dark:text-white mb-0.5">
                                                                                         {analysis.title}
                                                                                     </h3>
-                                                                                    <div className="flex items-center gap-2 text-xs text-gray-500">
+                                                                                    <div className="flex items-center gap-2 text-xs text-gray-500 dark:text-gray-400">
                                                                                         <span>{analysis.date}</span>
                                                                                         <span>•</span>
                                                                                         <span>{analysis.source}</span>
@@ -646,7 +655,7 @@ export default function TickerDashboard() {
                                                                                                     href={analysis.url}
                                                                                                     target="_blank"
                                                                                                     rel="noopener noreferrer"
-                                                                                                    className="text-blue-600 hover:underline"
+                                                                                                    className="text-blue-600 dark:text-blue-400 hover:underline"
                                                                                                 >
                                                                                                     Link
                                                                                                 </a>
@@ -658,20 +667,20 @@ export default function TickerDashboard() {
 
                                                                             <div className="flex items-center gap-3 mb-2">
                                                                                 <div className="flex items-center gap-1.5">
-                                                                                    <span className="text-xs text-gray-600">Impact:</span>
+                                                                                    <span className="text-xs text-gray-600 dark:text-gray-400">Impact:</span>
                                                                                     <span className={`font-bold text-sm ${getSentimentColor(analysis.impact)}`}>
                                                                                         {analysis.impact > 0 ? '+' : ''}{Number(analysis.impact).toFixed(2)}
                                                                                     </span>
                                                                                 </div>
                                                                                 <div className="flex items-center gap-1.5">
-                                                                                    <span className="text-xs text-gray-600">Confidence:</span>
-                                                                                    <span className="font-bold text-sm text-blue-600">
+                                                                                    <span className="text-xs text-gray-600 dark:text-gray-400">Confidence:</span>
+                                                                                    <span className="font-bold text-sm text-blue-600 dark:text-blue-400">
                                                                                         {(Number(analysis.confidence) * 100).toFixed(0)}%
                                                                                     </span>
                                                                                 </div>
                                                                                 {analysis.occasion && (
                                                                                     <div className="flex items-center gap-1.5">
-                                                                                        <span className="px-2 py-0.5 bg-blue-100 text-blue-700 text-xs rounded-full">
+                                                                                        <span className="px-2 py-0.5 bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 text-xs rounded-full">
                                                                                             {analysis.occasion}
                                                                                         </span>
                                                                                     </div>
@@ -680,7 +689,7 @@ export default function TickerDashboard() {
 
                                                                             {analysis.summary && (
                                                                                 <div
-                                                                                    className="text-xs text-gray-700 leading-relaxed"
+                                                                                    className="text-xs text-gray-700 dark:text-gray-300 leading-relaxed"
                                                                                     dangerouslySetInnerHTML={{ __html: analysis.summary }}
                                                                                 />
                                                                             )}
@@ -693,55 +702,55 @@ export default function TickerDashboard() {
                                                 </div>
 
                                                 {brokerageAnalyses.length > 0 && (
-                                                    <div className="mt-4 pt-4 border-t border-gray-200">
-                                                        <h3 className="text-base font-semibold text-gray-900 mb-2">
+                                                    <div className="mt-4 pt-4 border-t border-gray-200 dark:border-gray-700">
+                                                        <h3 className="text-base font-semibold text-gray-900 dark:text-white mb-2">
                                                             Rekomendacje domów maklerskich ({brokerageAnalyses.length})
                                                         </h3>
                                                         <div className="overflow-x-auto">
-                                                            <table className="min-w-full divide-y divide-gray-200">
-                                                                <thead className="bg-gray-50">
+                                                            <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
+                                                                <thead className="bg-gray-50 dark:bg-gray-700">
                                                                     <tr>
-                                                                        <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">
+                                                                        <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">
                                                                             Data
                                                                         </th>
-                                                                        <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">
+                                                                        <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">
                                                                             Dom maklerski
                                                                         </th>
-                                                                        <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">
+                                                                        <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">
                                                                             Rekomendacja
                                                                         </th>
-                                                                        <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">
+                                                                        <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">
                                                                             Cena obecna
                                                                         </th>
-                                                                        <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">
+                                                                        <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">
                                                                             Cena docelowa
                                                                         </th>
-                                                                        <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">
+                                                                        <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">
                                                                             Zmiana %
                                                                         </th>
-                                                                        <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">
+                                                                        <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">
                                                                             Upside %
                                                                         </th>
                                                                     </tr>
                                                                 </thead>
-                                                                <tbody className="bg-white divide-y divide-gray-200">
+                                                                <tbody className="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700">
                                                                     {brokerageAnalyses.map((brokerage, idx) => (
                                                                         <tr key={idx} className={getUpsideBg(brokerage.upside_percent)}>
-                                                                            <td className="px-3 py-2 whitespace-nowrap text-xs text-gray-700">
+                                                                            <td className="px-3 py-2 whitespace-nowrap text-xs text-gray-700 dark:text-gray-300">
                                                                                 {brokerage.date}
                                                                             </td>
-                                                                            <td className="px-3 py-2 text-xs text-gray-900 font-medium">
+                                                                            <td className="px-3 py-2 text-xs text-gray-900 dark:text-white font-medium">
                                                                                 {brokerage.brokerage_house}
                                                                             </td>
                                                                             <td className={`px-3 py-2 whitespace-nowrap text-xs ${getRecommendationColor(brokerage.recommendation)}`}>
                                                                                 {brokerage.recommendation || '-'}
                                                                             </td>
-                                                                            <td className="px-3 py-2 whitespace-nowrap text-xs text-gray-900 font-semibold">
+                                                                            <td className="px-3 py-2 whitespace-nowrap text-xs text-gray-900 dark:text-white font-semibold">
                                                                                 {brokerage.current_price
                                                                                     ? `${brokerage.current_price.toFixed(2)}`
                                                                                     : (brokerage.price_old ? brokerage.price_old.toFixed(2) : '-')}
                                                                             </td>
-                                                                            <td className="px-3 py-2 whitespace-nowrap text-xs text-gray-900 font-semibold">
+                                                                            <td className="px-3 py-2 whitespace-nowrap text-xs text-gray-900 dark:text-white font-semibold">
                                                                                 {brokerage.price_new ? brokerage.price_new.toFixed(2) : '-'}
                                                                             </td>
                                                                             <td className={`px-3 py-2 whitespace-nowrap text-xs ${getUpsideColor(brokerage.price_change_percent)}`}>

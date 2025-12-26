@@ -71,6 +71,25 @@ export default function DividendDashboard({ excludedTickers }) {
 
     if (!data || (!data.chart_data?.length && !data.table_data?.length)) return null;
 
+    // Calculate totals
+    const totalRow = {
+        ticker: 'SUMA',
+        total: 0,
+        months: {}
+    };
+    
+    if (data.table_data) {
+        data.table_data.forEach(row => {
+            totalRow.total += row.total;
+            if (data.all_months) {
+                data.all_months.forEach(m => {
+                    const val = row.months[m] || 0;
+                    totalRow.months[m] = (totalRow.months[m] || 0) + val;
+                });
+            }
+        });
+    }
+
     return (
         <div className="bg-white rounded-lg shadow-lg p-6 mt-6">
             <h3 className="text-xl font-bold text-gray-900 mb-4">Analiza Dywidend (Wypłacone)</h3>
@@ -100,6 +119,17 @@ export default function DividendDashboard({ excludedTickers }) {
                             </tr>
                         ))}
                     </tbody>
+                    <tfoot className="bg-gray-100 font-bold border-t-2 border-gray-200">
+                        <tr>
+                            <td className="px-3 py-2 text-left sticky left-0 bg-gray-100">SUMA</td>
+                            <td className="px-3 py-2 text-right text-green-700">{fmt(totalRow.total)}</td>
+                            {data.all_months && data.all_months.map(m => (
+                                <td key={m} className="px-3 py-2 text-right">
+                                    {totalRow.months[m] ? fmt(totalRow.months[m]) : ''}
+                                </td>
+                            ))}
+                        </tr>
+                    </tfoot>
                 </table>
             </div>
         </div>

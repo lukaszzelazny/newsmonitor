@@ -791,7 +791,7 @@ def calculate_portfolio_overview(session: Session, portfolio_id: int, roi_series
                 # Quantity held on dt (inclusive)
                 qty = 0.0
                 for tr in tx_list:
-                    if tr.transaction_date <= pd.Timestamp(dt).date():
+                    if tr.transaction_date < pd.Timestamp(dt).date():
                         if tr.transaction_type == TransactionType.BUY:
                             qty += float(tr.quantity)
                         elif tr.transaction_type == TransactionType.SELL:
