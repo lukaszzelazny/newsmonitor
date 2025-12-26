@@ -6,6 +6,7 @@ import { useTheme } from '../context/ThemeContext';
 
 export default function PortfolioView({ days }) {
     const { theme } = useTheme();
+    const [activeTab, setActiveTab] = useState('roi');
     const [overview, setOverview] = useState(null);
     const [isAddModalOpen, setIsAddModalOpen] = useState(false);
     const [excludedTickers, setExcludedTickers] = useState(new Set());
@@ -206,7 +207,7 @@ export default function PortfolioView({ days }) {
                 console.debug('Error removing chart (already disposed?):', e);
             }
         };
-    }, [roiSeries, theme]);
+    }, [roiSeries, theme, activeTab]);
 
     if (loading) {
         return (
@@ -403,6 +404,30 @@ export default function PortfolioView({ days }) {
                 </button>
             </div>
 
+            <div className="flex space-x-1 bg-gray-100 dark:bg-gray-700 p-1 rounded-lg overflow-x-auto mb-4">
+                {[
+                    { id: 'roi', label: 'ROI i Podsumowanie' },
+                    { id: 'composition', label: 'Skład portfela' },
+                    { id: 'history', label: 'Wszystkie aktywa' },
+                    { id: 'dividends', label: 'Dywidendy' },
+                    { id: 'monthly', label: 'Zysk miesięczny' }
+                ].map(tab => (
+                    <button
+                        key={tab.id}
+                        onClick={() => setActiveTab(tab.id)}
+                        className={`px-4 py-2 rounded-md text-sm font-medium transition-colors whitespace-nowrap ${
+                            activeTab === tab.id
+                                ? 'bg-white dark:bg-gray-600 text-blue-600 dark:text-blue-300 shadow'
+                                : 'text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600'
+                        }`}
+                    >
+                        {tab.label}
+                    </button>
+                ))}
+            </div>
+
+            {activeTab === 'roi' && (
+                <>
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-3">
                 <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-4">
                     <div className="text-xs text-gray-600 dark:text-gray-400">Wartość portfela</div>
@@ -460,10 +485,14 @@ export default function PortfolioView({ days }) {
                 
                 <div ref={chartContainerRef} key={`chart-${theme}`} className="w-full h-[300px]" />
             </div>
+                </>
+            )}
 
-            <DividendDashboard excludedTickers={excludedTickers} />
+            {activeTab === 'dividends' && (
+                <DividendDashboard excludedTickers={excludedTickers} />
+            )}
 
-            {overview.assets && overview.assets.length > 0 && (
+            {activeTab === 'composition' && overview.assets && overview.assets.length > 0 && (
                 <div className="bg-white dark:bg-gray-800 rounded-lg shadow-lg overflow-hidden">
                     <div className="px-6 py-4 border-b border-gray-200 dark:border-gray-700">
                         <h3 className="text-lg font-bold text-gray-900 dark:text-white">Aktywa w portfelu</h3>
@@ -544,7 +573,7 @@ export default function PortfolioView({ days }) {
                 </div>
             )}
 
-            {monthlyTableData.length > 0 && (
+            {activeTab === 'monthly' && monthlyTableData.length > 0 && (
                 <div className="bg-white dark:bg-gray-800 rounded-lg shadow-lg overflow-hidden mt-6">
                     <div className="px-6 py-4 border-b border-gray-200 dark:border-gray-700">
                         <h3 className="text-lg font-bold text-gray-900 dark:text-white">Zysk Miesięczny [PLN]</h3>
@@ -580,7 +609,7 @@ export default function PortfolioView({ days }) {
                 </div>
             )}
 
-            {historicalAssets.length > 0 && (
+            {activeTab === 'history' && historicalAssets.length > 0 && (
                 <div className="bg-white dark:bg-gray-800 rounded-lg shadow-lg overflow-hidden mt-6">
                     <div className="px-4 py-3 border-b border-gray-200 dark:border-gray-700 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
                         <h3 className="text-lg font-bold text-gray-900 dark:text-white">Wszystkie aktywa (historyczne)</h3>
