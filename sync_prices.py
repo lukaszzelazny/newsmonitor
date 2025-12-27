@@ -25,6 +25,7 @@ from datetime import datetime, timedelta
 from typing import List, Optional, TYPE_CHECKING
 from dotenv import load_dotenv
 import yfinance as yf
+from sqlalchemy import or_
 from sqlalchemy.orm import sessionmaker
 import pandas as pd
 # import requests
@@ -186,20 +187,18 @@ class PriceSyncService:
     def __init__(self, session):
         self.session = session
         # Import price_fetcher functions locally to avoid circular imports
-        from backend.tools.price_fetcher import get_currency_for_ticker, fx_symbol_to_pln, _fetch_fx_series
+        from backend.tools.price_fetcher import get_currency_for_ticker, fx_symbol_to_pln, _fetch_fx_series, get_yf_symbol
         self.get_currency_for_ticker = get_currency_for_ticker
         self.fx_symbol_to_pln = fx_symbol_to_pln
         self._fetch_fx_series = _fetch_fx_series
+        self.get_yf_symbol = get_yf_symbol
 
     def normalize_ticker_for_yf(self, ticker: str) -> str:
         """
         Normalize ticker for Yahoo Finance API.
-
-        Rules:
-        - Special mappings (BITCOIN → BTC-USD, etc.)
-        - .PL suffix → .WA (Polish stocks: XTB.PL → XTB.WA)
-        - .US suffix → remove (US stocks: GOOGL.US → GOOGL)
-        - No suffix → keep as is (AAPL → AAPL)
+        
+        Uses local mappings first, then falls back to centralized price_fetcher logic
+        which handles .WA suffixes, ambiguity resolution etc.
         """
         ticker = ticker.strip().upper()
 
@@ -207,15 +206,8 @@ class PriceSyncService:
         if ticker in self.TICKER_MAPPING:
             return self.TICKER_MAPPING[ticker]
 
-        if ticker.endswith('.PL'):
-            # Polish stocks: replace .PL with .WA
-            return ticker.replace('.PL', '.WA')
-        elif ticker.endswith('.US'):
-            # US stocks: remove .US suffix
-            return ticker.replace('.US', '')
-        else:
-            # Keep as is
-            return ticker
+        # Use centralized logic from price_fetcher (includes .WA probe)
+        return self.get_yf_symbol(ticker)
 
     def get_assets_to_sync(self, ticker: Optional[str] = None, active_only: bool = False) -> List:
         """Get list of assets that need price sync."""
@@ -229,10 +221,34 @@ class PriceSyncService:
             logger.info("Filtering for active assets (held or favorites)...")
             
             # 1. Get Favorite Tickers
-            favorite_tickers = {
-                t[0] for t in self.session.query(Ticker.ticker)
-                .filter(Ticker.in_portfolio == 1).all()
-            }
+            favorite_tickers_query = self.session.query(Ticker).filter(or_(Ticker.in_portfolio == 1, Ticker.is_favorite == True)).all()
+            favorite_tickers = {t.ticker for t in favorite_tickers_query}
+            
+            # Check for favorite tickers that are missing from Assets table
+            # We need to do this before filtering existing assets
+            all_assets = query.all()
+            existing_asset_tickers = {a.ticker for a in all_assets}
+            missing_tickers = favorite_tickers - existing_asset_tickers
+            
+            if missing_tickers:
+                logger.info(f"Found {len(missing_tickers)} favorite tickers missing from Assets table. Creating them...")
+                tickers_to_create = [t for t in favorite_tickers_query if t.ticker in missing_tickers]
+                
+                new_assets = []
+                for t in tickers_to_create:
+                    logger.info(f"Creating missing asset for {t.ticker}")
+                    new_asset = Asset(
+                        ticker=t.ticker,
+                        name=t.company_name,
+                        asset_type='stock'  # Default to stock
+                    )
+                    self.session.add(new_asset)
+                    new_assets.append(new_asset)
+                
+                if new_assets:
+                    self.session.commit()
+                    logger.info(f"Created {len(new_assets)} new assets.")
+                    all_assets.extend(new_assets)
             
             # 2. Get Currently Held Asset IDs
             transactions = self.session.query(Transaction).all()
@@ -248,7 +264,6 @@ class PriceSyncService:
             held_asset_ids = {aid for aid, qty in holdings.items() if qty > 0.0001}
             
             # Filter assets
-            all_assets = query.all()
             filtered_assets = []
             for asset in all_assets:
                 is_fav = asset.ticker in favorite_tickers
@@ -612,6 +627,7 @@ class PriceSyncService:
         success_count = 0
         fail_count = 0
         skip_count = 0
+        failed_tickers_list = []
 
         for idx, asset in enumerate(assets, 1):
             try:
@@ -624,15 +640,22 @@ class PriceSyncService:
                     success_count += 1
                 else:
                     fail_count += 1
+                    failed_tickers_list.append(asset.ticker)
             except Exception as e:
                 logger.error(f"Error syncing {asset.ticker}: {str(e)}")
                 fail_count += 1
+                failed_tickers_list.append(f"{asset.ticker} ({str(e)})")
                 self.session.rollback()
 
         logger.info(f"\n=== Sync Summary ===")
         logger.info(f"Successful: {success_count}")
         logger.info(f"Failed: {fail_count}")
         logger.info(f"Total: {len(assets)}")
+
+        if failed_tickers_list:
+            logger.info("\nFailed Tickers:")
+            for t in failed_tickers_list:
+                logger.info(f"  - {t}")
 
         if fail_count > 0:
             logger.info(f"\nNote: {fail_count} ticker(s) failed - they may be:")

@@ -2,7 +2,7 @@
 import enum
 import os
 from sqlalchemy import create_engine, Column, Integer, String, DateTime, Date, Index, \
-    ForeignKey, Float, Enum, UniqueConstraint
+    ForeignKey, Float, Enum, UniqueConstraint, Boolean, text
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, relationship
 from datetime import datetime, date as date_type
@@ -61,6 +61,7 @@ class Ticker(Base):
     company_name = Column(String(200), nullable=True)
     sector = Column(String(100), nullable=True)
     in_portfolio = Column(Integer, default=0, nullable=False)  # 0 = nie, 1 = tak
+    is_favorite = Column(Boolean, default=False, nullable=True) # Observed tickers
 
     def __repr__(self):
         return f"<Ticker(ticker='{self.ticker}')>"
