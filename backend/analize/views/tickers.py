@@ -12,26 +12,34 @@ def get_tickers():
     days = request.args.get('days', 30, type=int)
 
     query = text(f"""
+    WITH sentiment_stats AS (
+        SELECT
+            ts.ticker,
+            COUNT(*) as mentions,
+            AVG(ts.impact::numeric) as avg_sentiment,
+            AVG(ts.confidence::numeric) as avg_confidence,
+            MAX(na.date) as last_mention
+        FROM {schema}.ticker_sentiment ts
+        JOIN {schema}.analysis_result ar ON ts.analysis_id = ar.id
+        JOIN {schema}.news_articles na ON ar.news_id = na.id
+        WHERE na.date >= CURRENT_DATE - INTERVAL '{days} days'
+        AND na.id NOT IN (SELECT news_id FROM {schema}.news_not_analyzed WHERE reason = 'duplicate')
+        GROUP BY ts.ticker
+    )
     SELECT
-        ts.ticker,
+        t.ticker,
         t.company_name,
         t.sector,
-        COUNT(*) as mentions,
-        AVG(ts.impact::numeric) as avg_sentiment,
-        AVG(ts.confidence::numeric) as avg_confidence,
-        MAX(na.date) as last_mention,
+        COALESCE(s.mentions, 0) as mentions,
+        COALESCE(s.avg_sentiment, 0) as avg_sentiment,
+        COALESCE(s.avg_confidence, 0) as avg_confidence,
+        s.last_mention,
         COALESCE(t.in_portfolio, 0) as in_portfolio,
         COALESCE(t.is_favorite, false) as is_favorite
-    FROM {schema}.ticker_sentiment ts
-    JOIN {schema}.analysis_result ar ON ts.analysis_id = ar.id
-    JOIN {schema}.news_articles na ON ar.news_id = na.id
-    LEFT JOIN {schema}.tickers t ON ts.ticker = t.ticker
-    WHERE ts.ticker IS NOT NULL
-        AND na.date >= CURRENT_DATE - INTERVAL '{days} days'
-        AND na.id NOT IN (SELECT news_id FROM {schema}.news_not_analyzed WHERE reason = 'duplicate')
-    GROUP BY ts.ticker, t.company_name, t.sector, t.in_portfolio, t.is_favorite
-    HAVING COUNT(*) >= 1
-    ORDER BY COUNT(*) DESC, ts.ticker
+    FROM {schema}.tickers t
+    LEFT JOIN sentiment_stats s ON t.ticker = s.ticker
+    WHERE s.mentions > 0 OR t.in_portfolio = 1 OR t.is_favorite = true
+    ORDER BY COALESCE(s.mentions, 0) DESC, t.ticker
     """)
 
     with engine.connect() as conn:

@@ -421,6 +421,48 @@ def _fetch_fx_rate_from_db_or_yf(currency: str) -> Optional[float]:
         return None
 
 
+def _convert_df_to_pln(df: pd.DataFrame, ticker: str) -> pd.DataFrame:
+    """Convert DataFrame prices to PLN using FX rates."""
+    if df is None or df.empty:
+        return df
+        
+    yf_symbol = get_yf_symbol(ticker)
+    currency = get_currency_for_ticker(yf_symbol)
+    
+    if currency == "PLN":
+        return df
+        
+    start_date = df.index.min().date()
+    end_date = df.index.max().date() + pd.Timedelta(days=1)
+    
+    # Fetch FX
+    fx_ticker = fx_symbol_to_pln(currency)
+    if not fx_ticker:
+        return df
+        
+    fx_series_map = _fetch_fx_series([currency], start_date, end_date)
+    fx_series = fx_series_map.get(fx_ticker)
+    
+    if fx_series is None or fx_series.empty:
+        return df
+        
+    # Align
+    if df.index.tz is not None:
+        df.index = df.index.tz_localize(None)
+    if fx_series.index.tz is not None:
+        fx_series.index = fx_series.index.tz_localize(None)
+        
+    aligned_fx = fx_series.reindex(df.index).ffill().bfill()
+    
+    # Convert
+    cols = ['Open', 'High', 'Low', 'Close', 'Adj Close']
+    for col in cols:
+        if col in df.columns:
+            df[col] = df[col] * aligned_fx.values
+            
+    return df
+
+
 @lru_cache(maxsize=1000)
 def get_current_price(ticker_symbol: str):
     """Fetches the current price of a ticker, converted to PLN."""
@@ -445,14 +487,7 @@ def get_current_price(ticker_symbol: str):
                 session.close()
         
         if price is not None:
-             # Handle Currency using resolved asset ticker
-            yf_symbol = get_yf_symbol(asset.ticker)
-            currency = get_currency_for_ticker(yf_symbol)
-            
-            if currency != "PLN":
-                fx_rate = _fetch_fx_rate_from_db_or_yf(currency)
-                if fx_rate:
-                    return price * float(fx_rate)
+            # If price comes from DB, it is assumed to be in PLN (as per requirement)
             return price
         
         # If not found in DB, return None (Database mode implies preferring DB)
@@ -823,6 +858,8 @@ def get_price_history(ticker_symbol: str, days: int = 90):
                                     pass
                             
                             if df is not None and not df.empty:
+                                # Convert to PLN before saving
+                                df = _convert_df_to_pln(df, ticker_symbol)
                                 _save_history_to_db(session, asset.id, df)
                         except Exception as e:
                             print(f"Caching fetch failed: {e}")
@@ -833,12 +870,7 @@ def get_price_history(ticker_symbol: str, days: int = 90):
                     .order_by(AssetPriceHistory.date.asc())\
                     .all()
                 
-                # Convert to PLN if needed
-                yf_symbol = get_yf_symbol(asset.ticker)
-                currency = get_currency_for_ticker(yf_symbol)
-                
-                # TODO: Handle currency conversion for history in DB mode
-                # Currently returning raw prices or 1:1 if currency mismatch
+                # DB prices are assumed to be in PLN
                 
                 for h in history:
                     price_data.append({
@@ -865,7 +897,7 @@ def get_price_history(ticker_symbol: str, days: int = 90):
             return price_data
 
     yf_symbol = get_yf_symbol(ticker_symbol)
-    currency = 'PLN' #get_currency_for_ticker(yf_symbol)
+    currency = get_currency_for_ticker(yf_symbol)
     
     # Use Stooq for Polish tickers
     # if yf_symbol.endswith(".WA"):

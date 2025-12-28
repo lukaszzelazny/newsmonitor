@@ -759,7 +759,7 @@ def calculate_portfolio_overview(session: Session, portfolio_id: int, roi_series
 
     # ROI (TWR) for overview: use time-weighted return from series (matches wykres i oczekiwania)
     if roi_series is None:
-        roi_series = calculate_roi_over_time(session, portfolio_id) or []
+        roi_series = calculate_roi_over_time(session, portfolio_id, excluded_tickers=excluded_tickers) or []
     roi_pct = roi_series[-1]['rate_of_return'] if roi_series else 0.0
 
     # Annualized from TWR over holding period
@@ -1086,6 +1086,13 @@ def calculate_monthly_profit(session: Session, portfolio_id: int, excluded_ticke
     
     # Group dividends by month
     dividends_by_month = defaultdict(float)
+
+    def get_tx_value_pln(t):
+        if t.transaction_type == TransactionType.DIVIDEND:
+             if t.sale_value_pln is not None:
+                 return float(t.sale_value_pln)
+             return float(t.price)
+        return 0.0
     
     # Manual Dividends
     for t in transactions:
