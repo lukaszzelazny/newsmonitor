@@ -5,6 +5,7 @@ import TickerSelect from './TickerSelect';
 import CalendarView from './CalendarView';
 import CalendarRejectedView from './CalendarRejectedView';
 import PortfolioView from './PortfolioView';
+import RecommendationsView from './RecommendationsView';
 import { useTheme } from '../context/ThemeContext';
 
 export default function TickerDashboard() {
@@ -44,7 +45,7 @@ export default function TickerDashboard() {
             return true;
         }
     });
-    const [viewMode, setViewMode] = useState('tickers'); // 'tickers', 'calendar', 'rejected' lub 'portfolio'
+    const [viewMode, setViewMode] = useState('tickers'); // 'tickers', 'calendar', 'rejected', 'portfolio', 'recommendations'
     const [scrapingTicker, setScrapingTicker] = useState(null);
     const [notification, setNotification] = useState(null);
     const notificationTimeout = useRef(null);
@@ -317,6 +318,15 @@ export default function TickerDashboard() {
                                 >
                                     Portfolio
                                 </button>
+                                <button
+                                    onClick={() => setViewMode('recommendations')}
+                                    className={`px-3 py-1 text-sm rounded-lg transition-colors ${viewMode === 'recommendations'
+                                        ? 'bg-purple-600 text-white'
+                                        : 'bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-200 hover:bg-gray-300 dark:hover:bg-gray-600'
+                                    }`}
+                                >
+                                    Rekomendacje
+                                </button>
                             </div>
                             <div className="flex items-center gap-2">
                                 <label className="text-xs text-gray-600 dark:text-gray-400">Okres:</label>
@@ -351,6 +361,8 @@ export default function TickerDashboard() {
                     <CalendarRejectedView days={days} />
                 ) : viewMode === 'portfolio' ? (
                     <PortfolioView days={days} />
+                ) : viewMode === 'recommendations' ? (
+                    <RecommendationsView days={days} />
                 ) : (
                     <div className="grid grid-cols-12 gap-4">
                         <div className="col-span-3 bg-white dark:bg-gray-800 rounded-lg shadow p-3 sticky top-4 self-start" style={{ maxHeight: 'calc(100vh - 2rem)' }}>
