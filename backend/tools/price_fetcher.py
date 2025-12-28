@@ -244,6 +244,72 @@ def get_yf_symbol(ticker_symbol: str) -> str:
         return _resolve_ambiguous_symbol(t)
     return ticker_symbol
 
+def get_yf_symbols_batch(tickers: List[str]) -> Dict[str, str]:
+    """
+    Resolves a list of tickers to YF symbols in batch, handling ambiguous ones via a single API probe.
+    """
+    resolved = {}
+    ambiguous_tickers = []
+    
+    # 1. Handle non-ambiguous by logic
+    for t in tickers:
+        tu = t.upper()
+        if tu in _CRYPTO_MAP:
+            resolved[t] = _CRYPTO_MAP[tu]
+            continue
+        if tu.endswith(".PL"):
+            resolved[t] = tu.replace(".PL", ".WA")
+            continue
+        if tu.endswith(".US"):
+            resolved[t] = tu.replace(".US", "")
+            continue
+        if tu.endswith(".DE"):
+            resolved[t] = tu
+            continue
+        if tu.endswith(".UK"):
+            resolved[t] = tu.replace(".UK", ".L")
+            continue
+        if tu.endswith(".L") or tu.endswith(".WA"):
+            resolved[t] = tu
+            continue
+        if tu == 'DFEN':
+            resolved[t] = 'DFEN.DE'
+            continue
+            
+        # Ambiguous check
+        if len(tu) <= 4 and tu.isupper() and '.' not in tu:
+            ambiguous_tickers.append(t)
+        else:
+            resolved[t] = tu
+
+    if not ambiguous_tickers:
+        return resolved
+
+    # 2. Batch probe for ambiguous
+    candidates = []
+    for t in ambiguous_tickers:
+        tu = t.upper()
+        candidates.extend([f"{tu}.WA", tu])
+    
+    unique_candidates = list(set(candidates))
+    # Batch fetch to see which exist
+    api_res = _fetch_quotes_batch_via_api(unique_candidates)
+    
+    # 3. Resolve
+    for t in ambiguous_tickers:
+        tu = t.upper()
+        opts = [f"{tu}.WA", tu]
+        found = False
+        for opt in opts:
+            if opt in api_res:
+                resolved[t] = opt
+                found = True
+                break
+        if not found:
+            resolved[t] = tu # Fallback
+            
+    return resolved
+
 def get_yf_symbol_by_exchange(ticker: str, exchange: str) -> str:
     """
     Constructs YF symbol based on known exchange.
@@ -741,28 +807,21 @@ def get_current_prices(tickers: List[str]) -> Dict[str, float]:
 
     # 1. Prepare symbols
     yf_symbols_map = {}
-    ambiguous_tickers = []
-
+    
+    # Split into known vs unknown exchange
+    unknown_exchange_tickers = []
+    
     for t in tickers_to_fetch:
         if t in ticker_exchange_map:
-            # Use explicit exchange mapping -> No probing needed!
+            # Explicit exchange -> Fast path
             yf_symbols_map[t] = get_yf_symbol_by_exchange(t, ticker_exchange_map[t])
         else:
-            # Fallback to probing logic
-            tu = t.upper()
-            if len(tu) <= 4 and tu.isupper() and '.' not in tu and tu not in _CRYPTO_MAP:
-                 ambiguous_tickers.append(t)
-            yf_symbols_map[t] = get_yf_symbol(t)
-
-    # 0. Prefetch ambiguous symbols (only for those NOT in DB or with unknown exchange)
-    if ambiguous_tickers:
-        candidates_to_prefetch = []
-        for t in ambiguous_tickers:
-             candidates_to_prefetch.extend([f"{t}.WA", t])
-        
-        if candidates_to_prefetch:
-            # This populates _QUOTE_CACHE
-            _fetch_quotes_batch_via_api(list(set(candidates_to_prefetch)))
+            unknown_exchange_tickers.append(t)
+            
+    # Resolve unknown tickers in batch
+    if unknown_exchange_tickers:
+        resolved_batch = get_yf_symbols_batch(unknown_exchange_tickers)
+        yf_symbols_map.update(resolved_batch)
 
     # Collect final symbols
     yf_symbols = list(set(yf_symbols_map.values()))
