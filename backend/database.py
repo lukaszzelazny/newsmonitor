@@ -62,6 +62,7 @@ class Ticker(Base):
     sector = Column(String(100), nullable=True)
     in_portfolio = Column(Integer, default=0, nullable=False)  # 0 = nie, 1 = tak
     is_favorite = Column(Boolean, default=False, nullable=True) # Observed tickers
+    exchange = Column(String(50), default='GPW', nullable=False)
 
     def __repr__(self):
         return f"<Ticker(ticker='{self.ticker}')>"

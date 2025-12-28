@@ -185,6 +185,13 @@ _FX_SERIES_TTL_SECONDS = 3600.0
 _YF_LAST_CALL_TS = 0.0
 _YF_MIN_INTERVAL_SECONDS = 1.0  # minimum spacing between yf requests
 
+_CRYPTO_MAP = {
+    "BITCOIN": "BTC-USD",
+    "ETHEREUM": "ETH-USD",
+    "XAUUSD=X": "GC=F", # XAUUSD=X broken in yfinance, use Futures
+    "XAUUSD": "GC=F",
+}
+
 def _throttle_yf():
     global _YF_LAST_CALL_TS
     now = time.time()
@@ -205,7 +212,7 @@ def _resolve_ambiguous_symbol(base: str) -> str:
     """
     base = base.upper()
     # Prioritize Warsaw (.WA) for this environment
-    candidates = [f"{base}.WA", base, f"{base}.L", f"{base}.DE"]
+    candidates = [f"{base}.WA", base]
     res = _fetch_quotes_batch_via_api(candidates)
     # Pick first candidate that returned a price
     for c in candidates:
@@ -217,15 +224,9 @@ def _resolve_ambiguous_symbol(base: str) -> str:
 
 def get_yf_symbol(ticker_symbol: str) -> str:
     """Converts a given ticker symbol to the Yahoo Finance format."""
-    crypto_map = {
-        "BITCOIN": "BTC-USD",
-        "ETHEREUM": "ETH-USD",
-        "XAUUSD=X": "GC=F", # XAUUSD=X broken in yfinance, use Futures
-        "XAUUSD": "GC=F",
-    }
     t = ticker_symbol.upper()
-    if t in crypto_map:
-        return crypto_map[t]
+    if t in _CRYPTO_MAP:
+        return _CRYPTO_MAP[t]
     if t.endswith(".PL"):
         return t.replace(".PL", ".WA")
     if t.endswith(".US"):
@@ -236,11 +237,37 @@ def get_yf_symbol(ticker_symbol: str) -> str:
         return t.replace(".UK", ".L")  # .L for London
     if t.endswith(".L") or t.endswith(".WA"):
         return t
+    if t == 'DFEN':
+        return 'DFEN.DE'
     # Ambiguous short tickers: resolve via API instead of assuming .WA
     if len(t) <= 4 and t.isupper():
         return _resolve_ambiguous_symbol(t)
     return ticker_symbol
 
+def get_yf_symbol_by_exchange(ticker: str, exchange: str) -> str:
+    """
+    Constructs YF symbol based on known exchange.
+    """
+    t = ticker.upper()
+    
+    if t in _CRYPTO_MAP:
+        return _CRYPTO_MAP[t]
+        
+    # Handle suffixes already present
+    if '.' in t:
+        return get_yf_symbol(t) # Fallback to standard logic if suffix exists
+        
+    if exchange == 'GPW':
+        return f"{t}.WA"
+    elif exchange == 'LSE':
+        return f"{t}.L"
+    elif exchange == 'XETRA' or exchange == 'DE':
+        return f"{t}.DE"
+    elif exchange == 'US' or exchange == 'NYSE' or exchange == 'NASDAQ':
+        return t
+        
+    # Default fallback
+    return get_yf_symbol(t)
 
 def get_currency_for_ticker(ticker_symbol: str) -> str:
     """Best-effort currency inference from ticker suffixes/maps."""
@@ -654,51 +681,115 @@ def get_current_prices(tickers: List[str]) -> Dict[str, float]:
     if not tickers:
         return {}
         
-    # Database Mode
-    if _DB_SESSION_FACTORY:
-        results = {}
-        for t in tickers:
-            p = get_current_price(t)
-            if p is not None:
-                results[t] = p
-        return results
-
     # Deduplicate
     tickers = list(set(tickers))
+    results = {}
+    tickers_to_fetch = list(tickers)
+
+    # Database Mode: Try fetching from DB first
+    if _DB_SESSION_FACTORY:
+        session = _get_db_session()
+        try:
+            from backend.database import AssetPriceHistory
+            
+            still_missing = []
+            for t in tickers:
+                price = None
+                try:
+                    asset = _find_asset_in_db(session, t)
+                    if asset:
+                        last = session.query(AssetPriceHistory)\
+                            .filter(AssetPriceHistory.asset_id == asset.id)\
+                            .order_by(AssetPriceHistory.date.desc()).first()
+                        if last:
+                            price = float(last.close)
+                except Exception as e:
+                    print(f"DB Batch Error for {t}: {e}")
+                
+                if price is not None:
+                    results[t] = price
+                else:
+                    still_missing.append(t)
+            
+            tickers_to_fetch = still_missing
+        except Exception as e:
+            print(f"DB Batch Session Error: {e}")
+        finally:
+            if session:
+                session.close()
+
+    if not tickers_to_fetch:
+        return results
     
+    # Batch API Fetch for remaining tickers
+    
+    # Resolve Exchange from DB to construct correct YF symbols without probing
+    ticker_exchange_map = {}
+    session = _get_db_session() or _get_caching_session()
+    if session:
+        try:
+            from backend.database import Ticker
+            # Fetch exchanges for requested tickers
+            res = session.query(Ticker.ticker, Ticker.exchange).filter(Ticker.ticker.in_(tickers_to_fetch)).all()
+            ticker_exchange_map = {r[0]: r[1] for r in res}
+        except Exception:
+            pass
+        finally:
+            # If we created a temporary session, close it
+            if not _DB_SESSION_FACTORY and session:
+                session.close()
+
     # 1. Prepare symbols
-    yf_symbols_map = {t: get_yf_symbol(t) for t in tickers}
+    yf_symbols_map = {}
+    ambiguous_tickers = []
+
+    for t in tickers_to_fetch:
+        if t in ticker_exchange_map:
+            # Use explicit exchange mapping -> No probing needed!
+            yf_symbols_map[t] = get_yf_symbol_by_exchange(t, ticker_exchange_map[t])
+        else:
+            # Fallback to probing logic
+            tu = t.upper()
+            if len(tu) <= 4 and tu.isupper() and '.' not in tu and tu not in _CRYPTO_MAP:
+                 ambiguous_tickers.append(t)
+            yf_symbols_map[t] = get_yf_symbol(t)
+
+    # 0. Prefetch ambiguous symbols (only for those NOT in DB or with unknown exchange)
+    if ambiguous_tickers:
+        candidates_to_prefetch = []
+        for t in ambiguous_tickers:
+             candidates_to_prefetch.extend([f"{t}.WA", t])
+        
+        if candidates_to_prefetch:
+            # This populates _QUOTE_CACHE
+            _fetch_quotes_batch_via_api(list(set(candidates_to_prefetch)))
+
+    # Collect final symbols
     yf_symbols = list(set(yf_symbols_map.values()))
     
     raw_prices = {} 
     
-    # Try efficient API batch first (reduces HTTP calls from N to 1 per chunk)
+    # Try efficient API batch first
     try:
         api_results = _fetch_quotes_batch_via_api(yf_symbols)
         if api_results:
-            # Map back to original tickers
-            for t in tickers:
+            for t in tickers_to_fetch:
                 sym = yf_symbols_map[t]
                 if sym in api_results:
                     raw_prices[t] = api_results[sym]
     except Exception:
         pass
     
-    # If API batch missed many, or failed, we might use yf.download but it's risky for bans.
-    # Only try yf.download for tickers we don't have yet.
-    missing_symbols = [yf_symbols_map[t] for t in tickers if t not in raw_prices]
+    # If API batch missed many, use yf.download for missing
+    missing_symbols = [yf_symbols_map[t] for t in tickers_to_fetch if t not in raw_prices]
     missing_symbols = list(set(missing_symbols))
     
-    # Single batch fallback via yfinance for still-missing symbols (throttled)
     if missing_symbols:
         try:
             _throttle_yf()
             data = yf.download(missing_symbols, period="5d", progress=False, threads=False)
             if data is not None and not data.empty:
                 closes = data["Close"] if "Close" in data.columns else data
-                # Normalize shape
-                if isinstance(closes, pd.Series) and len(missing_symbols) == 1:
-                    closes = closes.to_frame(name=missing_symbols[0])
                 closes = _normalize_to_dataframe(closes)
                 
                 for sym in missing_symbols:
@@ -709,16 +800,12 @@ def get_current_prices(tickers: List[str]) -> Dict[str, float]:
                         series = closes.dropna()
                     if series is not None and not series.empty:
                         price = float(series.iloc[-1])
-                        # Assign back to all original tickers mapped to this sym
                         for orig_t, mapped_s in yf_symbols_map.items():
                             if mapped_s == sym:
                                 raw_prices[orig_t] = price
         except Exception:
-            # If fallback fails, we leave symbols missing
             pass
         
-    final_prices = {}
-    
     # Prepare FX
     tickers_needing_fx = [t for t in raw_prices.keys() if get_currency_for_ticker(t) != "PLN"]
     fx_rates = {}
@@ -730,7 +817,6 @@ def get_current_prices(tickers: List[str]) -> Dict[str, float]:
         
         if fx_symbols:
             try:
-                # Use v7 quote API for FX to avoid yfinance timezone/history calls
                 fx_api = _fetch_quotes_batch_via_api(fx_symbols)
                 for c in currencies:
                     sym = fx_symbol_to_pln(c)
@@ -739,19 +825,18 @@ def get_current_prices(tickers: List[str]) -> Dict[str, float]:
             except Exception:
                 pass
     
-    # Convert raw prices
+    # Convert raw prices and add to results
     for t, p in raw_prices.items():
         curr = get_currency_for_ticker(t)
-        if curr == "PLN":
-            final_prices[t] = p
-        else:
+        price_pln = p
+        if curr != "PLN":
             rate = fx_rates.get(curr)
             if rate:
-                final_prices[t] = p * rate
-            else:
-                final_prices[t] = p
+                price_pln = p * rate
+        
+        results[t] = price_pln
                 
-    return final_prices
+    return results
 
 
 def get_price_history_from_stooq(ticker_symbol: str, days: int = 90):
