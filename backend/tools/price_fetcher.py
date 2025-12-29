@@ -670,13 +670,12 @@ def get_current_price(ticker_symbol: str):
 
 def _fetch_quotes_batch_via_api(yf_symbols: List[str]) -> Dict[str, float]:
     """
-    Attempts to fetch current prices using Yahoo Finance.
-    Falls back to yf.download since v7 quote API requires authentication.
+    Efficiently fetches current prices using Yahoo Finance.
     Returns {yf_symbol: price}.
     """
     results = {}
-    
-    # Use TTL cache to avoid hammering API repeatedly
+
+    # 1. Check cache first
     now_ts = time.time()
     pending: List[str] = []
     for s in yf_symbols:
@@ -685,57 +684,63 @@ def _fetch_quotes_batch_via_api(yf_symbols: List[str]) -> Dict[str, float]:
             results[s] = cached[0]
         else:
             pending.append(s)
-    
+
     if not pending:
         return results
 
-    # Deduplicate pending
+    # Deduplicate
     pending = list(set(pending))
-    
+
     try:
-        # Use threads=False to avoid issues, progress=False
-        # period="5d" to catch last close
         _throttle_yf()
-        # Suppress FutureWarnings from yfinance if possible, or just ignore
-        df = yf.download(pending, period="5d", progress=False, threads=False)
-        
-        if df is not None and not df.empty:
-            # Normalize to get Close prices
-            close_df = None
+
+        # OPTYMALIZACJA: Użyj period="5d" ale interval="1d"
+        # 5 dni obsługuje weekendy i święta, ale pobiera tylko daily bars
+        df = yf.download(
+            pending,
+            period="5d",  # Wystarczy na weekend + 1 dzień święta
+            interval="1d",  # Tylko dzienne świece - minimalna ilość danych
+            progress=False,
+            threads=False,
+            auto_adjust=True,  # Automatycznie zwraca adjusted close
+            actions=False,  # Nie pobieraj dywidend/splitów
+            keepna=False  # Usuń puste wiersze
+        )
+
+        if df is None or df.empty:
+            return results
+
+        # Uproszczona ekstrakcja cen
+        if isinstance(df, pd.Series):
+            # Pojedynczy symbol
+            if not df.empty:
+                price = float(df.iloc[-1])
+                sym = pending[0] if len(pending) == 1 else df.name
+                results[sym] = price
+                _QUOTE_CACHE[sym] = (price, now_ts)
+        else:
+            # Multiple symbols
             if "Close" in df.columns:
-                close_df = df["Close"]
-            elif "Adj Close" in df.columns:
-                close_df = df["Adj Close"]
+                close_data = df["Close"]
             else:
-                # Fallback if single column or different structure
-                close_df = df
-            
-            # Extract prices
-            if isinstance(close_df, pd.Series):
-                 # Single symbol result
-                 val = close_df.dropna()
-                 if not val.empty:
-                     price = float(val.iloc[-1])
-                     # We need to know WHICH symbol this is.
-                     sym = close_df.name
-                     if sym in pending:
-                         results[sym] = price
-                         _QUOTE_CACHE[sym] = (price, now_ts)
-                     elif len(pending) == 1:
-                         results[pending[0]] = price
-                         _QUOTE_CACHE[pending[0]] = (price, now_ts)
-            elif isinstance(close_df, pd.DataFrame):
-                 for col in close_df.columns:
-                     series = close_df[col].dropna()
-                     if not series.empty:
-                         price = float(series.iloc[-1])
-                         results[col] = price
-                         _QUOTE_CACHE[col] = (price, now_ts)
-                         
+                close_data = df
+
+            if isinstance(close_data, pd.Series):
+                if not close_data.empty:
+                    price = float(close_data.iloc[-1])
+                    results[pending[0]] = price
+                    _QUOTE_CACHE[pending[0]] = (price, now_ts)
+            else:
+                for col in close_data.columns:
+                    val = close_data[col].dropna()
+                    if not val.empty:
+                        price = float(val.iloc[-1])
+                        results[col] = price
+                        _QUOTE_CACHE[col] = (price, now_ts)
+
     except Exception as e:
         print(f"Batch fetch failed: {e}")
-        pass
-            
+
     return results
 
 def get_current_prices(tickers: List[str]) -> Dict[str, float]:
