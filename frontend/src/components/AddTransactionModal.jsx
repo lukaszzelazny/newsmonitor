@@ -1,6 +1,8 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 
-export default function AddTransactionModal({ isOpen, onClose, onAdded }) {
+export default function AddTransactionModal({ isOpen, onClose, onAdded, holdings = [] }) {
+    const [isManualTicker, setIsManualTicker] = useState(false);
+
     const [formData, setFormData] = useState({
         ticker: '',
         date: new Date().toISOString().split('T')[0],
@@ -9,11 +11,24 @@ export default function AddTransactionModal({ isOpen, onClose, onAdded }) {
         price: '',
         commission: '0'
     });
+    
+    const isCashTx = formData.type === 'DEPOSIT' || formData.type === 'WITHDRAWAL';
     const [unit, setUnit] = useState('default'); // 'default' or 'grams'
     const [currency, setCurrency] = useState('AUTO'); // 'AUTO', 'PLN', 'USD', 'EUR'
 
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState(null);
+
+    useEffect(() => {
+        if (formData.type === 'SELL' && holdings && holdings.length > 0) {
+            setIsManualTicker(false);
+        } else if (isCashTx) {
+            // For cash transactions, ticker is not relevant (handled internally)
+            setIsManualTicker(true); 
+        } else {
+            setIsManualTicker(true);
+        }
+    }, [formData.type, holdings, isCashTx]);
 
     if (!isOpen) return null;
 
@@ -22,21 +37,40 @@ export default function AddTransactionModal({ isOpen, onClose, onAdded }) {
         setFormData(prev => ({ ...prev, [name]: value }));
     };
 
+    const handleTickerSelectChange = (e) => {
+        const val = e.target.value;
+        if (val === '__MANUAL__') {
+            setIsManualTicker(true);
+            setFormData(prev => ({ ...prev, ticker: '' }));
+        } else {
+            const asset = holdings.find(h => h.ticker === val);
+            if (asset) {
+                setFormData(prev => ({ 
+                    ...prev, 
+                    ticker: val,
+                    quantity: asset.quantity // Set default quantity
+                }));
+            }
+        }
+    };
+
     const handleSubmit = async (e) => {
         e.preventDefault();
         setLoading(true);
         setError(null);
 
         try {
-            let price = parseFloat(formData.price);
+            let price = isCashTx ? 1.0 : parseFloat(formData.price);
             let qty = 0;
+            let tickerToSend = isCashTx ? 'PLN' : formData.ticker;
+            let currencyToSend = isCashTx ? 'PLN' : currency;
 
             if (formData.type !== 'DIVIDEND') {
                 qty = parseFloat(formData.quantity);
-                if (isNaN(qty)) throw new Error('Niepoprawna ilość');
+                if (isNaN(qty)) throw new Error('Niepoprawna ilość/kwota');
 
                 // Konwersja z gramów na uncje (dla złota/srebra)
-                if (unit === 'grams') {
+                if (!isCashTx && unit === 'grams') {
                     const OZ_IN_GRAMS = 31.1034768;
                     // Ilość: g -> oz (dzielimy)
                     qty = qty / OZ_IN_GRAMS;
@@ -47,13 +81,14 @@ export default function AddTransactionModal({ isOpen, onClose, onAdded }) {
                 qty = 0; // Dividend has 0 quantity
             }
 
-            if (isNaN(price)) throw new Error('Niepoprawna cena/kwota');
+            if (!isCashTx && isNaN(price)) throw new Error('Niepoprawna cena');
 
             const payload = {
                 ...formData,
+                ticker: tickerToSend,
                 quantity: qty,
                 price: price,
-                currency: currency
+                currency: currencyToSend
             };
 
             const res = await fetch('/api/portfolio/transaction', {
@@ -95,19 +130,52 @@ export default function AddTransactionModal({ isOpen, onClose, onAdded }) {
                 {error && <div className="mb-4 p-2 bg-red-100 dark:bg-red-900/30 text-red-600 dark:text-red-400 text-sm rounded border border-red-200 dark:border-red-800">{error}</div>}
 
                 <form onSubmit={handleSubmit} className="space-y-4">
+                    {!isCashTx && (
                     <div>
                         <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">Ticker</label>
-                        <input
-                            type="text"
-                            name="ticker"
-                            value={formData.ticker}
-                            onChange={handleChange}
-                            placeholder="np. XAUUSD=X lub PKN"
-                            className="mt-1 block w-full border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white rounded-md shadow-sm p-2 focus:ring-blue-500 focus:border-blue-500 transition-colors"
-                            required
-                        />
+                        {!isManualTicker && formData.type === 'SELL' && holdings.length > 0 ? (
+                            <div className="flex gap-2">
+                                <select
+                                    name="ticker"
+                                    value={formData.ticker}
+                                    onChange={handleTickerSelectChange}
+                                    className="mt-1 block w-full border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white rounded-md shadow-sm p-2 focus:ring-blue-500 focus:border-blue-500 transition-colors"
+                                    required
+                                >
+                                    <option value="">Wybierz walor...</option>
+                                    {holdings.map(h => (
+                                        <option key={h.ticker} value={h.ticker}>
+                                            {h.ticker} (Dostępne: {h.quantity})
+                                        </option>
+                                    ))}
+                                    <option value="__MANUAL__">Inny / Wpisz ręcznie...</option>
+                                </select>
+                            </div>
+                        ) : (
+                            <div className="flex flex-col">
+                                <input
+                                    type="text"
+                                    name="ticker"
+                                    value={formData.ticker}
+                                    onChange={handleChange}
+                                    placeholder="np. XAUUSD=X lub PKN"
+                                    className="mt-1 block w-full border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white rounded-md shadow-sm p-2 focus:ring-blue-500 focus:border-blue-500 transition-colors"
+                                    required={!isCashTx}
+                                />
+                                {formData.type === 'SELL' && holdings.length > 0 && (
+                                    <button 
+                                        type="button" 
+                                        onClick={() => setIsManualTicker(false)}
+                                        className="text-xs text-blue-600 dark:text-blue-400 hover:underline mt-1 text-left"
+                                    >
+                                        Wybierz z listy posiadanych
+                                    </button>
+                                )}
+                            </div>
+                        )}
                         <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">Dla Złota użyj <b>XAUUSD=X</b></p>
                     </div>
+                    )}
 
                     <div>
                         <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">Data</label>
@@ -133,8 +201,11 @@ export default function AddTransactionModal({ isOpen, onClose, onAdded }) {
                                 <option value="BUY">Kupno</option>
                                 <option value="SELL">Sprzedaż</option>
                                 <option value="DIVIDEND">Dywidenda</option>
+                                <option value="DEPOSIT">Wpłata Gotówki</option>
+                                <option value="WITHDRAWAL">Wypłata Gotówki</option>
                             </select>
                         </div>
+                        {!isCashTx && (
                         <div className="w-1/2">
                              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">Waluta</label>
                             <select
@@ -148,13 +219,14 @@ export default function AddTransactionModal({ isOpen, onClose, onAdded }) {
                                 <option value="EUR">EUR</option>
                             </select>
                         </div>
+                        )}
                     </div>
 
                     {formData.type !== 'DIVIDEND' && (
                         <>
                             <div className="flex gap-2">
                                 <div className="flex-grow">
-                                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">Ilość</label>
+                                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">{isCashTx ? 'Kwota' : 'Ilość'}</label>
                                     <input
                                         type="number"
                                         step="any"
@@ -165,6 +237,7 @@ export default function AddTransactionModal({ isOpen, onClose, onAdded }) {
                                         required
                                     />
                                 </div>
+                                {!isCashTx && (
                                 <div className="w-24">
                                     <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">Jednostka</label>
                                     <select
@@ -176,13 +249,15 @@ export default function AddTransactionModal({ isOpen, onClose, onAdded }) {
                                         <option value="grams">Gramy</option>
                                     </select>
                                 </div>
+                                )}
                             </div>
-                            {unit === 'grams' && (
+                            {unit === 'grams' && !isCashTx && (
                                 <p className="text-xs text-blue-600 dark:text-blue-400">Zostanie przeliczone na uncje (dzielone przez 31.1035)</p>
                             )}
                         </>
                     )}
 
+                    {!isCashTx && (
                     <div>
                         <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">
                             {formData.type === 'DIVIDEND' ? 'Kwota Dywidendy (Netto)' : `Cena za jednostkę (${unit === 'grams' ? 'za gram' : 'domyślna'})`}
@@ -198,6 +273,7 @@ export default function AddTransactionModal({ isOpen, onClose, onAdded }) {
                         />
                         <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">Cena w wybranej walucie transakcji.</p>
                     </div>
+                    )}
 
                     <div>
                         <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">Prowizja (opcjonalnie)</label>

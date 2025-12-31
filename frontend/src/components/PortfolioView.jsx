@@ -14,6 +14,7 @@ export default function PortfolioView({ days }) {
     const [roiSeries, setRoiSeries] = useState([]);
     const [monthlyProfits, setMonthlyProfits] = useState([]);
     const [historicalAssets, setHistoricalAssets] = useState([]);
+    const [transactions, setTransactions] = useState([]);
     const [showOnlyCurrentInHistory, setShowOnlyCurrentInHistory] = useState(false);
     const [tickerFilter, setTickerFilter] = useState('');
     const [loading, setLoading] = useState(true);
@@ -71,22 +72,25 @@ export default function PortfolioView({ days }) {
             const excludedStr = Array.from(excludedTickers).join(',');
             const query = excludedStr ? `?excluded_tickers=${excludedStr}` : '';
 
-            const [ovrRes, roiRes, monthlyRes, histRes] = await Promise.all([
+            const [ovrRes, roiRes, monthlyRes, histRes, txRes] = await Promise.all([
                 fetch(`/api/portfolio/overview${query}`),
                 fetch(`/api/portfolio/roi${query}`),
                 fetch(`/api/portfolio/monthly_profit${query}`),
-                fetch('/api/portfolio/all_assets_summary')
+                fetch('/api/portfolio/all_assets_summary'),
+                fetch('/api/portfolio/transactions')
             ]);
             const ovr = await ovrRes.json();
             const roi = await roiRes.json();
             const monthly = await monthlyRes.json();
             const hist = await histRes.json();
+            const txs = await txRes.json();
             
             setOverview(ovr);
             setMonthlyProfits(Array.isArray(monthly) ? monthly : []);
             const series = Array.isArray(roi) ? roi : [];
             setFullRoiSeries(series);
             setHistoricalAssets(Array.isArray(hist) ? hist : []);
+            setTransactions(Array.isArray(txs) ? txs : []);
             filterData(series, 'ALL');
         } catch (e) {
             console.error('Error fetching portfolio data:', e);
@@ -141,6 +145,18 @@ export default function PortfolioView({ days }) {
     const handleTimeRangeChange = (range) => {
         setTimeRange(range);
         filterData(fullRoiSeries, range);
+    };
+
+    const handleDeleteTransaction = async (id) => {
+        if (!window.confirm('Czy na pewno chcesz usunąć tę transakcję?')) return;
+        
+        try {
+            const res = await fetch(`/api/portfolio/transaction/${id}`, { method: 'DELETE' });
+            if (!res.ok) throw new Error('Failed to delete');
+            fetchData(); // Reload all data
+        } catch (e) {
+            alert('Błąd usuwania transakcji: ' + e.message);
+        }
     };
 
     useEffect(() => {
@@ -391,7 +407,8 @@ export default function PortfolioView({ days }) {
             <AddTransactionModal 
                 isOpen={isAddModalOpen} 
                 onClose={() => setIsAddModalOpen(false)} 
-                onAdded={fetchData} 
+                onAdded={fetchData}
+                holdings={overview?.assets || []}
             />
             
             <div className="flex justify-between items-center">
@@ -409,6 +426,7 @@ export default function PortfolioView({ days }) {
                     { id: 'roi', label: 'ROI i Podsumowanie' },
                     { id: 'composition', label: 'Skład portfela' },
                     { id: 'history', label: 'Wszystkie aktywa' },
+                    { id: 'transactions', label: 'Lista transakcji' },
                     { id: 'dividends', label: 'Dywidendy' },
                     { id: 'monthly', label: 'Zysk miesięczny' }
                 ].map(tab => (
@@ -708,6 +726,48 @@ export default function PortfolioView({ days }) {
                                             </td>
                                         </tr>
                                     ))}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            )}
+
+            {activeTab === 'transactions' && (
+                <div className="bg-white dark:bg-gray-800 rounded-lg shadow-lg overflow-hidden mt-6">
+                    <div className="px-4 py-3 border-b border-gray-200 dark:border-gray-700">
+                        <h3 className="text-lg font-bold text-gray-900 dark:text-white">Lista transakcji (ostatnie 200)</h3>
+                    </div>
+                    <div className="overflow-x-auto">
+                        <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700 text-xs">
+                            <thead className="bg-gray-50 dark:bg-gray-700">
+                                <tr>
+                                    <th className="px-3 py-2 text-left font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">Data</th>
+                                    <th className="px-3 py-2 text-left font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">Typ</th>
+                                    <th className="px-3 py-2 text-left font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">Ticker</th>
+                                    <th className="px-3 py-2 text-right font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">Ilość/Kwota</th>
+                                    <th className="px-3 py-2 text-right font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">Cena</th>
+                                    <th className="px-3 py-2 text-center font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">Akcje</th>
+                                </tr>
+                            </thead>
+                            <tbody className="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700">
+                                {transactions.map((tx) => (
+                                    <tr key={tx.id} className="hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors">
+                                        <td className="px-3 py-2 whitespace-nowrap text-gray-900 dark:text-white">{tx.transaction_date}</td>
+                                        <td className="px-3 py-2 whitespace-nowrap text-gray-700 dark:text-gray-300 font-semibold">{tx.transaction_type}</td>
+                                        <td className="px-3 py-2 whitespace-nowrap text-gray-900 dark:text-white font-bold">{tx.ticker}</td>
+                                        <td className="px-3 py-2 whitespace-nowrap text-right text-gray-900 dark:text-white">{fmt(tx.quantity, 4)}</td>
+                                        <td className="px-3 py-2 whitespace-nowrap text-right text-gray-900 dark:text-white">{fmt(tx.price, 2)}</td>
+                                        <td className="px-3 py-2 whitespace-nowrap text-center">
+                                            <button 
+                                                onClick={() => handleDeleteTransaction(tx.id)}
+                                                className="text-red-600 hover:text-red-900 dark:text-red-400 dark:hover:text-red-300 transition-colors"
+                                                title="Usuń transakcję"
+                                            >
+                                                Usuń
+                                            </button>
+                                        </td>
+                                    </tr>
+                                ))}
                             </tbody>
                         </table>
                     </div>

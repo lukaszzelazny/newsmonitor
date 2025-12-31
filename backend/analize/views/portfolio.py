@@ -222,34 +222,36 @@ def portfolio_all_assets_summary():
 @portfolio_bp.route('/api/portfolio/transactions')
 def portfolio_transactions():
     """
-    Zwraca listę transakcji (buy/sell) dla zadanego tickera.
+    Zwraca listę transakcji.
     Parametry:
-      - ticker: symbol tickera (np. 'PKN')
+      - ticker: (opcjonalny) symbol tickera
     """
     ticker = request.args.get('ticker', default=None, type=str)
-    if not ticker:
-        return jsonify([])
-
+    
     db = Database()
     session = db.Session()
     try:
+        rows = []
+        if ticker:
+            # --- ZMODYFIKOWANA LOGIKA FILTROWANIA ---
+            base_pl = f'{ticker}.PL'
+            base_us = f'{ticker}.US'
+            filter_conditions = (Asset.ticker == ticker) | (Asset.ticker == base_pl) | (Asset.ticker == base_us)
 
-        # --- ZMODYFIKOWANA LOGIKA FILTROWANIA ---
-
-        base_pl = f'{ticker}.PL'
-        base_us = f'{ticker}.US'
-        filter_conditions = (Asset.ticker == ticker) | (Asset.ticker == base_pl) | (Asset.ticker == base_us)
-
-        # Stosujemy zdefiniowany warunek filtrowania
-        rows = session.query(Transaction).join(Asset).filter(
-            filter_conditions).order_by(Transaction.transaction_date).all()
-
-        # --- KONIEC ZMODYFIKOWANEJ LOGIKI FILTROWANIA ---
+            # Stosujemy zdefiniowany warunek filtrowania
+            rows = session.query(Transaction).join(Asset).filter(
+                filter_conditions).order_by(Transaction.transaction_date.desc()).all()
+            # --- KONIEC ZMODYFIKOWANEJ LOGIKI FILTROWANIA ---
+        else:
+            # Return latest 200 transactions if no ticker specified
+            rows = session.query(Transaction).order_by(Transaction.transaction_date.desc(), Transaction.id.desc()).limit(200).all()
 
         result = []
         for t in rows:
+            ticker_name = t.asset.ticker if t.asset else 'Unknown'
             result.append({
                 'id': t.id,
+                'ticker': ticker_name,
                 'transaction_type': t.transaction_type.value if hasattr(
                     t.transaction_type, 'value') else str(t.transaction_type),
                 'quantity': float(t.quantity) if t.quantity is not None else None,
@@ -356,6 +358,10 @@ def add_transaction():
             tx_type = TransactionType.SELL
         elif tx_type_str == 'DIVIDEND':
             tx_type = TransactionType.DIVIDEND
+        elif tx_type_str == 'DEPOSIT':
+            tx_type = TransactionType.DEPOSIT
+        elif tx_type_str == 'WITHDRAWAL':
+            tx_type = TransactionType.WITHDRAWAL
         else:
             return jsonify({'error': 'Invalid transaction type'}), 400
         
@@ -366,19 +372,25 @@ def add_transaction():
             # (Price * Qty - Comm) * FX
             sale_value_pln = (price * quantity - commission) * fx_rate
         elif tx_type == TransactionType.DIVIDEND:
-            # Dividend: Price is total amount. Quantity is usually 0 or 1.
-            # Treat as Cash Inflow (like Sell) but separate type.
-            # If quantity is 0, we can use price as amount.
-            # Formula: Amount * FX.
-            # We store it in sale_value_pln for convenience or handle separately.
-            # Let's store in sale_value_pln so it acts as cash inflow in generic logic,
-            # but we can distinguish by type.
-            # Frontend sends "Price" as Total Amount. Quantity as 0.
-            # commission is subtracted from amount? Or separate?
-            # Usually dividend is Net or Gross. If Net, commission is 0.
-            # If Gross, commission is tax?
-            # Let's assume Price is the amount received.
             sale_value_pln = (price - commission) * fx_rate
+        elif tx_type in [TransactionType.DEPOSIT, TransactionType.WITHDRAWAL]:
+            # For Cash ops, Quantity is Amount. Price is 1.0.
+            # Value is Amount * FX (if currency != PLN, but usually PLN)
+            purchase_value_pln = quantity * fx_rate
+            # commission on deposit/withdrawal?
+            if commission > 0:
+                 commission_pln = commission * fx_rate
+                 # Net value might be adjusted? 
+                 # Usually deposit 1000 - 0 comm = 1000.
+                 # Withdrawal 1000 - 0 comm = 1000.
+                 # If withdrawal fee exists?
+                 # Handled by commission field.
+                 # Logic in analysis.py uses val = purchase_value_pln (or qty).
+                 # So we should store the GROSS amount in value or NET?
+                 # If I withdraw 1000, and pay 10 fee.
+                 # Cash balance -1000? Or -1010?
+                 # Usually fee is deducted from account?
+                 # Let's assume Amount is the change in cash. Commission is just for record.
 
         transaction = Transaction(
             portfolio_id=portfolio.id,
@@ -402,6 +414,29 @@ def add_transaction():
         print(f"Error adding transaction: {e}")
         import traceback
         traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+    finally:
+        session.close()
+
+
+@portfolio_bp.route('/api/portfolio/transaction/<int:tx_id>', methods=['DELETE'])
+def delete_transaction(tx_id):
+    """
+    Usuwa transakcję.
+    """
+    db = Database()
+    session = db.Session()
+    try:
+        transaction = session.query(Transaction).get(tx_id)
+        if not transaction:
+            return jsonify({'error': 'Transaction not found'}), 404
+        
+        session.delete(transaction)
+        session.commit()
+        return jsonify({'message': 'Transaction deleted'})
+    except Exception as e:
+        session.rollback()
+        print(f"Error deleting transaction: {e}")
         return jsonify({'error': str(e)}), 500
     finally:
         session.close()

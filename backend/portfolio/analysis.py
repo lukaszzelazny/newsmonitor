@@ -52,30 +52,36 @@ def calculate_asset_return(session: Session, portfolio_id: int, asset_id: int, p
     quantity_held = 0.0
     asset_ticker = transactions[0].asset.ticker if transactions else None
 
+    # Helper to get transaction type as string
+    def get_type(t):
+        tt = t.transaction_type
+        if hasattr(tt, 'value'):
+            return tt.value
+        return str(tt)
+
     # Helper to get transaction value in PLN
     def get_tx_value_pln_asset(t):
-        if t.transaction_type == TransactionType.BUY:
+        tt = get_type(t)
+        if tt == 'BUY':
             if t.purchase_value_pln is not None and float(t.purchase_value_pln) > 0:
                 return float(t.purchase_value_pln)
             else:
-                # Fallback: assume price is in original currency, but we don't have FX rate here.
-                # This function is used for realized PnL, so we need PLN values.
-                # For consistency, we'll use price * quantity + commission, but that may be in original currency.
-                # However, the caller expects PLN. Since we don't have historical FX, we'll assume price is in PLN.
                 return float(t.quantity) * float(t.price) + float(t.commission or 0.0)
-        else:  # SELL
+        elif tt == 'SELL':
             if t.sale_value_pln is not None and float(t.sale_value_pln) > 0:
                 return float(t.sale_value_pln)
             else:
                 return float(t.quantity) * float(t.price) - float(t.commission or 0.0)
+        return 0.0
 
     for t in transactions:
         tx_value_pln = get_tx_value_pln_asset(t)
-        if t.transaction_type == TransactionType.BUY:
+        tt = get_type(t)
+        if tt == 'BUY':
             total_cost_pln += tx_value_pln
             total_bought_shares += float(t.quantity)
             quantity_held += float(t.quantity)
-        elif t.transaction_type == TransactionType.SELL:
+        elif tt == 'SELL':
             total_revenue_pln += tx_value_pln
             total_sold_shares += float(t.quantity)
             quantity_held -= float(t.quantity)
@@ -131,8 +137,6 @@ def calculate_portfolio_return(session: Session, portfolio_id: int) -> dict:
     for row in asset_ids_result:
         asset_id = row.asset_id
         asset_id_list.append(asset_id)
-        # We need ticker to fetch price
-        # Optimization: fetch ticker along with asset_id or query Assets
         ticker = session.query(Asset.ticker).filter_by(id=asset_id).scalar()
         if ticker:
             tickers.append(ticker)
@@ -169,45 +173,13 @@ def calculate_portfolio_return(session: Session, portfolio_id: int) -> dict:
     }
 
 
-def calculate_group_return(session: Session) -> dict:
-    """
-    Calculates the combined rate of return for all portfolios.
-
-    Args:
-        session: The database session.
-
-    Returns:
-        A dictionary with aggregated performance for all portfolios.
-    """
-    portfolios = session.query(Portfolio).all()
-    
-    total_cost = 0
-    total_revenue = 0
-
-    for p in portfolios:
-        portfolio_return = calculate_portfolio_return(session, p.id)
-        total_cost += portfolio_return['total_cost']
-        total_revenue += portfolio_return['total_revenue']
-
-    realized_pnl = total_revenue - total_cost
-    rate_of_return = (realized_pnl / total_cost) * 100 if total_cost > 0 else 0
-
-    return {
-        "total_cost": total_cost,
-        "total_revenue": total_revenue,
-        "realized_pnl": realized_pnl,
-        "rate_of_return": rate_of_return
-    }
-
-
 def calculate_roi_over_time(session: Session, portfolio_id: int, excluded_tickers=None):
     if excluded_tickers is None:
         excluded_tickers = set()
     """
-    Oblicza stopę zwrotu portfela w czasie.
-    Używa Simple Cumulative Return (PnL / Total Invested).
+    Calculates portfolio ROI over time.
+    Tracks Cash Balance and Assets Market Value.
     """
-    # Pobierz wszystkie transakcje dla portfela
     all_transactions = session.query(Transaction).filter_by(
         portfolio_id=portfolio_id
     ).order_by(Transaction.transaction_date).all()
@@ -217,11 +189,9 @@ def calculate_roi_over_time(session: Session, portfolio_id: int, excluded_ticker
     if not transactions:
         return []
 
-    # Zakres dat
     start_date = transactions[0].transaction_date
     end_date = pd.Timestamp.today().date()
 
-    # Pobierz unikalne tickery
     asset_ids = session.query(Transaction.asset_id).filter_by(
         portfolio_id=portfolio_id
     ).distinct().all()
@@ -229,80 +199,56 @@ def calculate_roi_over_time(session: Session, portfolio_id: int, excluded_ticker
     tickers = []
     for asset_id in asset_ids:
         ticker = session.query(Asset.ticker).filter_by(id=asset_id[0]).scalar()
-        if ticker:
+        if ticker and ticker != 'PLN':
             tickers.append(ticker)
 
     if not tickers:
-        return []
+        # Check if we have only Cash transactions?
+        pass
 
-    # Pobierz historyczne ceny (już w PLN!)
+    # Fetch historical prices
     historical_prices = get_historical_prices_for_tickers(tickers, start_date, end_date, session=session)
 
-    # Wszystkie ceny w asset_price_history są już w PLN, nie konwertujemy walut
-    # Używamy wartości *_pln z transakcji, więc waluta zawsze PLN
-    currency_by_ticker = {ticker: "PLN" for ticker in tickers}
-    fx_series_map = {}
-
-    # Helper: Pobierz wartość transakcji w PLN
+    # Helper: Get value in PLN
     def get_tx_value_pln(t):
-        """
-        Zwraca wartość transakcji w PLN.
-        Preferuje purchase_value_pln/sale_value_pln jeśli dostępne i niezerowe.
-        W przeciwnym razie używa price * quantity, zakładając że cena jest już w PLN.
-        """
         if t.transaction_type == TransactionType.BUY:
             if t.purchase_value_pln is not None and float(t.purchase_value_pln) > 0:
                 return float(t.purchase_value_pln)
             else:
-                # Cena jest już w PLN
                 return float(t.quantity) * float(t.price) + float(t.commission or 0.0)
-        else:  # SELL
+        elif t.transaction_type == TransactionType.SELL:
             if t.sale_value_pln is not None and float(t.sale_value_pln) > 0:
                 return float(t.sale_value_pln)
             else:
-                # Cena jest już w PLN
                 return float(t.quantity) * float(t.price) - float(t.commission or 0.0)
+        elif t.transaction_type in [TransactionType.DEPOSIT, TransactionType.WITHDRAWAL]:
+            if t.purchase_value_pln is not None:
+                return float(t.purchase_value_pln)
+            return float(t.quantity)
+        elif t.transaction_type == TransactionType.DIVIDEND:
+            if t.sale_value_pln is not None:
+                return float(t.sale_value_pln)
+            return float(t.price) if t.price else 0.0
+        return 0.0
 
-    # Helper: Pobierz cenę za akcję w PLN z transakcji
     def get_tx_price_per_share_pln(t):
-        """
-        Oblicza cenę za jedną akcję w PLN z transakcji.
-        Preferuje purchase_value_pln/sale_value_pln jeśli dostępne i niezerowe.
-        W przeciwnym razie używa price, zakładając że cena jest już w PLN.
-        """
-        if t.transaction_type == TransactionType.BUY and t.purchase_value_pln is not None and float(
-                t.purchase_value_pln) > 0:
-            # purchase_value_pln jest już w PLN
+        if t.transaction_type == TransactionType.BUY and t.purchase_value_pln is not None and float(t.purchase_value_pln) > 0:
             return float(t.purchase_value_pln) / float(t.quantity)
-        elif t.transaction_type == TransactionType.SELL and t.sale_value_pln is not None and float(
-                t.sale_value_pln) > 0:
-            # sale_value_pln jest już w PLN
+        elif t.transaction_type == TransactionType.SELL and t.sale_value_pln is not None and float(t.sale_value_pln) > 0:
             return float(t.sale_value_pln) / float(t.quantity)
         else:
-            # Cena jest już w PLN
             return float(t.price)
 
-    # Helper: Pobierz cenę rynkową na dany dzień lub wcześniej (już w PLN)
     def get_price_on_or_before(ticker, date):
-        """
-        Zwraca cenę historyczną na lub przed daną datą.
-        Ceny z historical_prices są już w PLN!
-        Pomija wartości NaN.
-        """
+        if ticker == 'PLN': return 1.0
         if ticker not in historical_prices or not historical_prices[ticker]:
             return None
         prices = historical_prices[ticker]
         date_ts = pd.Timestamp(date)
-
-        # Znajdź cenę na ten dzień lub wcześniej, pomijając NaN
-        # Sprawdź najpierw dokładną datę
         if date_ts in prices:
             price = prices[date_ts]
             if isinstance(price, (int, float)) and not math.isnan(price):
                 return float(price)
-            # Jeśli NaN, szukaj wcześniejszych dat
-
-        # Posortuj daty malejąco, aby znaleźć najnowszą poprzednią
         prev_dates = [d for d in prices.keys() if d <= date_ts]
         prev_dates.sort(reverse=True)
         for d in prev_dates:
@@ -312,147 +258,166 @@ def calculate_roi_over_time(session: Session, portfolio_id: int, excluded_ticker
         return None
 
     date_range = pd.date_range(start=start_date, end=end_date, freq='D')
-
-    # Simple Cumulative Return Implementation (Total PnL / Total Invested)
-    # To satisfy user expectation that negative PnL -> negative ROI.
     results = []
     
     holdings = defaultdict(float)
+    cash_balance = 0.0
     last_known_prices = {}
     
-    # Track Cumulative metrics for PnL
     cumulative_buys = 0.0
     cumulative_sells = 0.0
     
-    # Track metrics for Average Capital (Modified Dietz)
     cumulative_weighted_capital = 0.0
     days_with_capital = 0
     prev_invested_sum = 0.0
     
-    # Track Cost Basis per ticker for 'invested' line
     cost_basis_by_ticker = defaultdict(float)
+    
+    # Check if user has deposits
+    has_deposits = any(t.transaction_type == TransactionType.DEPOSIT for t in transactions)
+    
+    cumulative_deposits = 0.0
+    cumulative_withdrawals = 0.0
 
-    # Init last known prices
     for t in transactions:
         ticker = t.asset.ticker
-        if ticker not in last_known_prices:
+        if ticker not in last_known_prices and ticker != 'PLN':
             price = get_tx_price_per_share_pln(t)
             if price > 0:
                 last_known_prices[ticker] = price
 
     for date in date_range:
         date_obj = date.date()
-
-        # 1. Identify transactions today
         day_transactions = [tr for tr in transactions if tr.transaction_date == date_obj]
         
-        # Calculate daily cash flows
         daily_buys_val = 0.0
-        daily_sells_val = 0.0
+        daily_sells_val = 0.0 # Revenue from assets
         
         for t in day_transactions:
             val = get_tx_value_pln(t)
-            if t.transaction_type == TransactionType.BUY:
-                daily_buys_val += val
-            elif t.transaction_type == TransactionType.SELL:
-                daily_sells_val += val
-            elif t.transaction_type == TransactionType.DIVIDEND:
-                daily_sells_val += val # Treat dividend as cash inflow (like sell)
-                
-        # Update Holdings and Cost Basis
-        for t in day_transactions:
             ticker = t.asset.ticker
-            qty = float(t.quantity)
-            val = get_tx_value_pln(t)
-            
-            prev_qty = holdings[ticker]
             
             if t.transaction_type == TransactionType.BUY:
-                holdings[ticker] += qty
-                # Add to cost basis (only for Long buys, technically covering short is also 'buy' but basis logic is tricky)
-                # Simplified: All buys add to basis, all sells reduce proportionally?
-                # Better: Just track Long positions cost basis.
-                if prev_qty >= 0:
-                    cost_basis_by_ticker[ticker] += val
-                else:
-                    # Covering short: cost basis remains 0?
-                    pass
-                    
+                if ticker != 'PLN':
+                    holdings[ticker] += float(t.quantity)
+                    daily_buys_val += val
+                    # Cost Basis Update
+                    if holdings[ticker] > 0: # simplified
+                        cost_basis_by_ticker[ticker] += val
+                
+                # Cash impact: Buying asset reduces cash
+                cash_balance -= val
+                
             elif t.transaction_type == TransactionType.SELL:
-                holdings[ticker] -= qty
-                # Reduce cost basis if Long
-                if prev_qty > 0:
-                    # Calculate proportion sold
-                    # Note: qty is the amount sold. prev_qty is amount held before.
-                    amount_sold_from_long = min(qty, prev_qty)
+                if ticker != 'PLN':
+                    prev_qty = holdings[ticker]
+                    qty = float(t.quantity)
+                    holdings[ticker] -= qty
+                    daily_sells_val += val
+                    
+                    # Cost Basis Update
                     if prev_qty > 0:
+                        amount_sold_from_long = min(qty, prev_qty)
                         ratio = amount_sold_from_long / prev_qty
                         reduction = cost_basis_by_ticker[ticker] * ratio
                         cost_basis_by_ticker[ticker] -= reduction
-            
-            elif t.transaction_type == TransactionType.DIVIDEND:
-                # Dividends do not affect holdings or cost basis (usually)
-                pass
+                        
+                # Cash impact: Selling asset increases cash
+                cash_balance += val
 
-            # Reset if closed
-            if abs(holdings[ticker]) < 0.0001:
+            elif t.transaction_type == TransactionType.DIVIDEND:
+                daily_sells_val += val # Treated as revenue
+                cash_balance += val
+                
+            elif t.transaction_type == TransactionType.DEPOSIT:
+                cash_balance += val
+                cumulative_deposits += val
+                
+            elif t.transaction_type == TransactionType.WITHDRAWAL:
+                cash_balance -= val
+                cumulative_withdrawals += val
+                
+            # Cleanup small holdings
+            if ticker != 'PLN' and abs(holdings[ticker]) < 0.0001:
                 holdings[ticker] = 0.0
                 cost_basis_by_ticker[ticker] = 0.0
-                    
-        # Calculate Current Market Value (EOD)
-        current_market_value = 0.0
-        has_any_holdings = False
-        
+
+        # Current Market Value of Assets
+        assets_market_value = 0.0
         for ticker, qty in holdings.items():
             if abs(qty) > 0.0001:
-                has_any_holdings = True
                 price = get_price_on_or_before(ticker, date)
-                
                 if price is None or price <= 0:
                     price = last_known_prices.get(ticker)
                 else:
                     last_known_prices[ticker] = price
-                    
+                
                 if price and price > 0:
-                    current_market_value += qty * price
+                    assets_market_value += qty * price
         
-        if not has_any_holdings:
-            current_market_value = 0.0
-            
-        # Update Cumulative metrics
         cumulative_buys += daily_buys_val
         cumulative_sells += daily_sells_val
         
-        # Invested for chart is sum of current cost bases
-        current_invested_sum = sum(cost_basis_by_ticker.values())
-        
-        # Calculate Average Capital Employed (Modified Dietz approximation)
-        # We estimate daily capital as max of start/end to cover high water mark of exposure
+        # Calculate Value and Invested based on mode
+        if has_deposits:
+            # "Cash Aware" Mode
+            total_market_value = assets_market_value + cash_balance
+            # Invested = Net Deposits
+            # If Net Deposits <= 0 (e.g. profitable withdrawal or just started), 
+            # we might have issues with ROI denominator.
+            current_invested_sum = cumulative_deposits - cumulative_withdrawals
+            if current_invested_sum < 0.0001: 
+                # Fallback to Cost Basis if Net Deposits is 0/neg (e.g. trading on house money)
+                # But Cost Basis ignores Cash. 
+                # Ideally ROI on house money is infinite.
+                # Let's clamp or fallback.
+                current_invested_sum = sum(cost_basis_by_ticker.values()) + max(0, cash_balance)
+        else:
+            # "Asset Only" Mode (Legacy)
+            # Ignore Cash Balance (which is likely negative due to no deposits)
+            total_market_value = assets_market_value
+            # Invested = Cost Basis of Held Assets
+            current_invested_sum = sum(cost_basis_by_ticker.values())
+
+        # Daily Capital (for Time Weighted Return approximation)
         daily_capital = max(prev_invested_sum, current_invested_sum)
-        
-        # Handle Intraday Trading (Buy then Sell same day) where EOD is 0 but capital was used
         if daily_capital < 0.0001 and daily_buys_val > 0.0001:
             daily_capital = daily_buys_val
-
-        # Only update average capital if capital was actually employed
+            
         if daily_capital > 0.0001:
             cumulative_weighted_capital += daily_capital
             days_with_capital += 1
+            
+        avg_capital = cumulative_weighted_capital / days_with_capital if days_with_capital > 0 else 0.0
         
-        avg_capital = 0.0
-        if days_with_capital > 0:
-            avg_capital = cumulative_weighted_capital / days_with_capital
+        # Total PnL Calculation
+        # Universal Formula: Assets Value + Sales - Buys
+        # This represents total profit generated by trading activity.
+        # It works regardless of deposits/withdrawals.
+        # Note: 'cumulative_buys' includes Cost of Assets Bought.
+        # 'cumulative_sells' includes Revenue from Assets Sold + Dividends.
+        total_pnl = assets_market_value + cumulative_sells - cumulative_buys
         
-        # Calculate ROI
-        total_pnl = current_market_value + cumulative_sells - cumulative_buys
         roi_pct = 0.0
         
         if avg_capital > 0.0001:
             roi_pct = (total_pnl / avg_capital) * 100.0
             
+        # Special case: If has_deposits and using Net Invested, maybe we should use (Value - Invested) / Invested?
+        # Let's verify consistency.
+        # If I Deposit 1000. Buy 1000. Value 1100.
+        # PnL = 1100 + 0 - 1000 = 100.
+        # Avg Capital = 1000.
+        # ROI = 10%. Correct.
+        # If I Deposit 1000. Keep Cash. Value 1000.
+        # PnL = 0 + 0 - 0 = 0.
+        # Avg Capital = 1000.
+        # ROI = 0%. Correct.
+        # So Universal PnL formula works with Net Deposits as Capital.
+            
         results.append({
             'date': date,
-            'market_value': current_market_value,
+            'market_value': total_market_value,
             'invested': current_invested_sum,
             'rate_of_return': roi_pct,
             'total_pnl': total_pnl
@@ -460,17 +425,12 @@ def calculate_roi_over_time(session: Session, portfolio_id: int, excluded_ticker
         
         prev_invested_sum = current_invested_sum
 
-    # Utwórz DataFrame
     df = pd.DataFrame(results)
     df['date'] = pd.to_datetime(df['date'])
-
-    # Forward fill tylko brakujących wartości (NaN), nie zamieniaj zer na NaN
-    # Zera oznaczają brak holdingów (sprzedane aktywa) i muszą pozostać zerami
     df['market_value'] = df['market_value'].ffill().fillna(0)
     df['rate_of_return'] = df['rate_of_return'].ffill().fillna(0)
     df['invested'] = df['invested'].ffill().fillna(0)
 
-    # Konwersja do listy słowników
     roi_data = []
     for _, row in df.iterrows():
         roi_data.append({
@@ -486,17 +446,7 @@ def calculate_roi_over_time(session: Session, portfolio_id: int, excluded_ticker
 def calculate_portfolio_overview(session: Session, portfolio_id: int, roi_series=None, div_map=None, excluded_tickers=None) -> dict:
     if excluded_tickers is None:
         excluded_tickers = set()
-    """
-    Calculates extended portfolio summary:
-    - current value (PLN)
-    - day change value and percent (vs previous available trading day)
-    - total profit (holdings + sales - buys)
-    - ROI (TWR %) from calculate_roi_over_time
-    - current profit (value - net invested capital)
-    - annualized return (from TWR over period)
-    - assets details (list of holdings with metrics)
-    """
-    # Load transactions
+
     all_transactions = session.query(Transaction).filter_by(
          portfolio_id=portfolio_id
      ).order_by(Transaction.transaction_date).all()
@@ -515,38 +465,56 @@ def calculate_portfolio_overview(session: Session, portfolio_id: int, roi_series
 
     transactions = [t for t in all_transactions if t.asset.ticker not in excluded_tickers]
     
-    if transactions:
-        start_date = transactions[0].transaction_date
-    else:
-        start_date = all_transactions[0].transaction_date
-
+    start_date = transactions[0].transaction_date if transactions else all_transactions[0].transaction_date
     end_date = pd.Timestamp.today().date()
 
-    # Helper to get transaction value in PLN using purchase_value_pln/sale_value_pln if available
     def get_tx_value_pln(t):
         if t.transaction_type == TransactionType.BUY:
             if t.purchase_value_pln is not None and float(t.purchase_value_pln) > 0:
                 return float(t.purchase_value_pln)
             else:
-                # Assume price is already in PLN
                 return float(t.quantity) * float(t.price) + float(t.commission or 0.0)
-        else:  # SELL
+        elif t.transaction_type == TransactionType.SELL:
             if t.sale_value_pln is not None and float(t.sale_value_pln) > 0:
                 return float(t.sale_value_pln)
             else:
-                # Assume price is already in PLN
                 return float(t.quantity) * float(t.price) - float(t.commission or 0.0)
+        elif t.transaction_type in [TransactionType.DEPOSIT, TransactionType.WITHDRAWAL]:
+            if t.purchase_value_pln is not None:
+                return float(t.purchase_value_pln)
+            return float(t.quantity)
+        return 0.0
+
+    # Calculate Cash Balance
+    # We use ALL transactions for cash balance, even if ticker excluded?
+    # If ticker excluded, maybe we shouldn't count its buy/sell?
+    # Consistent with 'transactions' filter above.
+    cash_balance = 0.0
+    for t in transactions:
+        val = get_tx_value_pln(t)
+        if t.transaction_type == TransactionType.BUY:
+            cash_balance -= val
+        elif t.transaction_type == TransactionType.SELL:
+            cash_balance += val
+        elif t.transaction_type == TransactionType.DIVIDEND:
+            val_div = val
+            if val_div == 0 and t.price: val_div = float(t.price) # Fallback
+            cash_balance += val_div
+        elif t.transaction_type == TransactionType.DEPOSIT:
+            cash_balance += val
+        elif t.transaction_type == TransactionType.WITHDRAWAL:
+            cash_balance -= val
 
     total_buys = sum(get_tx_value_pln(t) for t in transactions if t.transaction_type == TransactionType.BUY)
     total_sells = sum(get_tx_value_pln(t) for t in transactions if t.transaction_type == TransactionType.SELL)
     total_dividends_manual = sum(get_tx_value_pln(t) for t in transactions if t.transaction_type == TransactionType.DIVIDEND)
-    net_invested = total_buys - total_sells
+    
+    # Asset Metrics
+    asset_metrics = {} 
 
-    # Calculate per-asset avg price (Original Currency) and Cost Basis (PLN)
-    # Handles both Long and Short positions correctly.
-    asset_metrics = {} # ticker -> {qty, avg_price_org, cost_basis_pln}
-
-    for t in all_transactions:
+    for t in all_transactions: # Keep using all for asset metrics calc? No, filter excluded.
+        if t.asset.ticker in excluded_tickers: continue
+        
         tkr = t.asset.ticker
         if tkr not in asset_metrics:
             asset_metrics[tkr] = {'qty': 0.0, 'avg_price_org': 0.0, 'cost_basis_pln': 0.0}
@@ -555,105 +523,72 @@ def calculate_portfolio_overview(session: Session, portfolio_id: int, roi_series
         old_qty = curr['qty']
         tx_qty = float(t.quantity)
         tx_price = float(t.price)
-        tx_val_pln = get_tx_value_pln(t)  # already includes commission if purchase_value_pln/sale_value_pln available
+        tx_val_pln = get_tx_value_pln(t)
         
         if t.transaction_type == TransactionType.BUY:
-            # Buying
             if old_qty >= 0:
-                # Long: Add to position
                 new_qty = old_qty + tx_qty
-                # Avg Price Update
                 if new_qty > 0:
                     curr['avg_price_org'] = ((old_qty * curr['avg_price_org']) + (tx_qty * tx_price)) / new_qty
-                
                 curr['cost_basis_pln'] += tx_val_pln
                 curr['qty'] = new_qty
-            else:
-                # Short: Covering
-                # Determine if we flip to long
+            else: # Short cover
                 abs_old = abs(old_qty)
                 if tx_qty >= abs_old:
-                    # Closed completely or flipped
-                    # First, close the short
                     curr['qty'] = 0.0
                     curr['avg_price_org'] = 0.0
                     curr['cost_basis_pln'] = 0.0
-                    
                     excess_qty = tx_qty - abs_old
                     if excess_qty > 0:
-                        # Opened long
                         curr['qty'] = excess_qty
                         curr['avg_price_org'] = tx_price
-                        curr['cost_basis_pln'] = get_tx_value_pln(t)  # use same value for the part that becomes long
+                        curr['cost_basis_pln'] = get_tx_value_pln(t) 
                 else:
-                    # Partial cover
                     remaining_fraction = (abs_old - tx_qty) / abs_old
-                    curr['qty'] += tx_qty # -10 + 2 = -8
-                    # Reduce cost basis (Proceeds)
+                    curr['qty'] += tx_qty
                     curr['cost_basis_pln'] *= remaining_fraction
 
         elif t.transaction_type == TransactionType.SELL:
-            # Selling
-            if old_qty <= 0:
-                # Short: Adding to position (or opening)
-                new_qty = old_qty - tx_qty # -5 - 5 = -10
+            if old_qty <= 0: # Short add
+                new_qty = old_qty - tx_qty 
                 abs_new = abs(new_qty)
-                
-                # Avg Price Update (Weighted avg of entry)
                 if abs_new > 0:
                     curr['avg_price_org'] = ((abs(old_qty) * curr['avg_price_org']) + (tx_qty * tx_price)) / abs_new
-                
-                # Cost Basis (Proceeds) Update
                 curr['cost_basis_pln'] += tx_val_pln
                 curr['qty'] = new_qty
-            else:
-                # Long: Selling
+            else: # Long sell
                 if tx_qty >= old_qty:
-                    # Closed or flipped
                     curr['qty'] = 0.0
                     curr['avg_price_org'] = 0.0
                     curr['cost_basis_pln'] = 0.0
-                    
                     excess_qty = tx_qty - old_qty
                     if excess_qty > 0:
-                        # Opened short
                         curr['qty'] = -excess_qty
                         curr['avg_price_org'] = tx_price
-                        curr['cost_basis_pln'] = get_tx_value_pln(t)  # proceeds from the part that becomes short
+                        curr['cost_basis_pln'] = get_tx_value_pln(t)
                 else:
-                    # Partial sell
                     fraction_remaining = (old_qty - tx_qty) / old_qty
                     curr['qty'] -= tx_qty
                     curr['cost_basis_pln'] *= fraction_remaining
 
-    # Current holdings (ticker -> qty)
-    # Filter out near-zero quantities (both pos and neg)
     holdings = {k: v for k, v in asset_metrics.items() if abs(v['qty']) > 0.000001}
     tickers = list(holdings.keys())
 
-    # Fetch recent historical prices for current holdings to compute day change and value
-    current_value = 0.0
-    prev_value = 0.0
+    current_value_assets = 0.0
+    prev_value_assets = 0.0
     assets_list = []
 
     if tickers:
-        # Look back only recent days to get daily change (Yesterday vs Today)
-        # We don't need full history here, just enough to find the previous close.
-        # calculate_roi_over_time fetches full history separately for TWR.
         hist_start_short = end_date - timedelta(days=10)
         hist = get_historical_prices_for_tickers(tickers, hist_start_short, end_date, session=session)
-        
-        # Pre-fetch live prices for all tickers to avoid loop calls
         live_prices_map = get_current_prices(tickers)
 
-        # Helper to get last and previous price for a ticker
         def last_and_prev_price(tkr):
             if tkr not in hist or not hist[tkr]:
                 return None, None, None
             dates = sorted(hist[tkr].keys())
             last_d = max(dates)
             last_p = hist[tkr][last_d]
-            # previous available date strictly before last_d
             prev_dates = [d for d in dates if d < last_d]
             if prev_dates:
                 prev_d = max(prev_dates)
@@ -664,23 +599,13 @@ def calculate_portfolio_overview(session: Session, portfolio_id: int, roi_series
 
         for tkr, metrics in holdings.items():
             qty = metrics['qty']
-            is_excluded = tkr in excluded_tickers
             last_p, prev_p, last_d = last_and_prev_price(tkr)
-
-            # Determine Current Price
-            # Strategy:
-            # 1. If we have live price and historical data is old (not today), use live price (Calculates Today's Change vs Yesterday Close)
-            # 2. If we have historical data from today, use it (Calculates Today's Change vs Yesterday Close)
-            # 3. If no live price, fallback to history (Calculates Yesterday's Change vs Day Before)
             
             price_pln = 0.0
             used_live_price = False
             today = pd.Timestamp.today().date()
-            
-            # Check if history is from today
             is_history_today = False
             if last_d:
-                # last_d might be Timestamp or date
                 d_date = last_d.date() if hasattr(last_d, 'date') else last_d
                 if d_date == today:
                     is_history_today = True
@@ -696,99 +621,111 @@ def calculate_portfolio_overview(session: Session, portfolio_id: int, roi_series
             elif has_live:
                 price_pln = float(live_price)
                 used_live_price = True
-            else:
-                price_pln = 0.0
-
-            asset_val_pln = qty * price_pln
             
-            if not is_excluded:
-                current_value += asset_val_pln
+            asset_val_pln = qty * price_pln
+            current_value_assets += asset_val_pln
 
-            # Daily change calculation
             daily_chg_pct = 0.0
             prev_price_pln = 0.0
-            
             if used_live_price:
-                # Compare Live (Today) vs Last History (Yesterday)
                 if last_p is not None and math.isfinite(float(last_p)) and float(last_p) > 0:
                     prev_price_pln = float(last_p)
             else:
-                # Compare History vs Prev History
-                # (Today vs Yesterday) OR (Yesterday vs DayBefore)
                 if prev_p is not None and math.isfinite(float(prev_p)) and float(prev_p) > 0:
                     prev_price_pln = float(prev_p)
             
             if prev_price_pln > 0 and price_pln > 0:
                 prev_val_pln = qty * prev_price_pln
-                if not is_excluded:
-                    prev_value += prev_val_pln
+                prev_value_assets += prev_val_pln
                 daily_chg_pct = (price_pln - prev_price_pln) / prev_price_pln * 100.0
 
-            price_org = price_pln
-
-            # Profit calculation
             cost_basis_pln = metrics['cost_basis_pln']
             profit_pln = asset_val_pln - cost_basis_pln
-            
-            # Rate of Return % (on current holding)
             return_pct = (profit_pln / cost_basis_pln * 100.0) if cost_basis_pln > 0 else 0.0
             
             assets_list.append({
                 'ticker': tkr,
                 'quantity': float(qty),
                 'avg_purchase_price': float(metrics['avg_price_org']),
-                'current_price': float(price_org) if price_org else 0.0,
+                'current_price': float(price_pln),
                 'value': float(asset_val_pln),
                 'daily_change': float(daily_chg_pct),
                 'profit_pln': float(profit_pln),
                 'return_pct': float(return_pct),
-                'share_pct': 0.0, # to be calculated after total value
-                'excluded': is_excluded
+                'share_pct': 0.0,
+                'excluded': False
             })
 
+    # Add Cash Asset
+    # Logic: If no deposits exist and cash is negative (implicit loan), ignore it in totals.
+    # If cash is positive (realized profit), always include it.
+    has_deposits = any(t.transaction_type == TransactionType.DEPOSIT for t in transactions)
+    include_cash = True
+    if not has_deposits and cash_balance < 0:
+        include_cash = False
+
+    if abs(cash_balance) > 0.01:
+        if include_cash:
+            assets_list.append({
+                'ticker': 'PLN',
+                'quantity': float(cash_balance),
+                'avg_purchase_price': 1.0,
+                'current_price': 1.0,
+                'value': float(cash_balance),
+                'daily_change': 0.0,
+                'profit_pln': 0.0,
+                'return_pct': 0.0,
+                'share_pct': 0.0,
+                'excluded': False
+            })
+    
+    if include_cash:
+        current_value_total = current_value_assets + cash_balance
+    else:
+        current_value_total = current_value_assets
+    
     # Calculate share pct
-    if current_value > 0:
+    if current_value_total > 0:
         for asset in assets_list:
-            asset['share_pct'] = (asset['value'] / current_value) * 100.0
+            asset['share_pct'] = (asset['value'] / current_value_total) * 100.0
             
-    # Sort assets by value descending
     assets_list.sort(key=lambda x: x['value'], reverse=True)
 
-    daily_change_value = current_value - prev_value
-    daily_change_pct = (daily_change_value / prev_value * 100.0) if prev_value > 0 else 0.0
+    # Previous Value Calculation (Approximation)
+    # Assets prev value + Cash (Assuming cash didn't change intra-day for this purpose, or just use current cash)
+    # Ideally we reconstruct prev cash, but that's hard.
+    # Using current cash for daily change calculation of Total Portfolio minimizes noise from deposits today.
+    # Daily Change = (AssetsToday + Cash) - (AssetsYest + Cash) = AssetsChange.
+    prev_value_total = prev_value_assets + cash_balance
+    
+    daily_change_value = current_value_total - prev_value_total
+    daily_change_pct = (daily_change_value / prev_value_total * 100.0) if prev_value_total > 0 else 0.0
 
-    # ROI (TWR) for overview: use time-weighted return from series (matches wykres i oczekiwania)
     if roi_series is None:
         roi_series = calculate_roi_over_time(session, portfolio_id, excluded_tickers=excluded_tickers) or []
     roi_pct = roi_series[-1]['rate_of_return'] if roi_series else 0.0
 
-    # Annualized from TWR over holding period
     days = (end_date - start_date).days or 1
     twr_total = max(min(roi_pct / 100.0, 10.0), -0.9999)
     annualized_return_pct = ((1.0 + twr_total) ** (365.0 / days) - 1.0) * 100.0 if days > 0 else 0.0
 
-    # Dividends (PLN): sum over all dividend events of (div_per_share * quantity held on ex-date)
     dividends_total_pln = 0.0
     try:
         if div_map is None:
             all_tickers = sorted({t.asset.ticker for t in transactions})
             div_map = get_dividends_for_tickers(all_tickers, start_date, end_date)
-            
-        # Build transactions by ticker for quick qty lookup
+        
         tx_by_ticker = {}
         for t in transactions:
             tx_by_ticker.setdefault(t.asset.ticker, []).append(t)
-        # Sort transactions per ticker by date
         for tkr in tx_by_ticker:
             tx_by_ticker[tkr].sort(key=lambda tr: tr.transaction_date)
 
         for tkr, series in (div_map or {}).items():
-            # series: pd.Series indexed by date -> dividend per share in PLN
             tx_list = tx_by_ticker.get(tkr, [])
             if not tx_list or series is None or series.empty:
                 continue
             for dt, div_ps in series.items():
-                # Quantity held on dt (inclusive)
                 qty = 0.0
                 for tr in tx_list:
                     if tr.transaction_date < pd.Timestamp(dt).date():
@@ -798,24 +735,29 @@ def calculate_portfolio_overview(session: Session, portfolio_id: int, roi_series
                             qty -= float(tr.quantity)
                 if qty > 0 and div_ps and float(div_ps) != 0.0:
                     dividends_total_pln += qty * float(div_ps)
-    except Exception as _e:
-        # Keep dividends_total_pln = 0.0 on errors
+    except Exception:
         pass
 
-    # Profits
-    # Bieżący zysk (unrealized): suma zysków pozycji w assets_list (spójne z tabelą)
     current_profit = sum(a['profit_pln'] for a in assets_list if not a.get('excluded')) if assets_list else 0.0
     
-    # Zysk łącznie (Total PnL) = Bieżąca Wartość + Sprzedaż - Kupno + Dywidendy
-    # Zawiera Zysk Zrealizowany i Niezrealizowany.
     total_dividends_all = float(dividends_total_pln or 0.0) + total_dividends_manual
-    total_profit = (current_value + total_sells - total_buys) + total_dividends_all
     
-    # realized pozostawiamy tylko jako wartość pochodną (nieeksponowaną)
-    realized_profit = total_profit - current_profit - total_dividends_all
+    # Total Profit: AssetsValue + Sells - Buys + Divs
+    # Note: current_value_assets should be used here, NOT total (with cash).
+    # Why?
+    # Profit = (Assets + Cash) - Net_Deposits.
+    # Cash = Sells - Buys + Net_Deposits.
+    # Profit = Assets + Sells - Buys.
+    # So using current_value_assets + Sells - Buys matches!
+    # If we used current_value_total (Assets+Cash), we would double count Sells-Buys part of Cash.
+    # UNLESS we subtract Net_Deposits explicitly.
+    # But we don't have Net_Deposits variable calculated sum.
+    # So `current_value_assets + total_sells - total_buys` is the correct invariant.
+    
+    total_profit = (current_value_assets + total_sells - total_buys) + total_dividends_all
 
     return {
-        'value': float(current_value),
+        'value': float(current_value_total),
         'daily_change_value': float(daily_change_value),
         'daily_change_pct': float(daily_change_pct),
         'total_profit': float(total_profit),
@@ -830,11 +772,7 @@ def calculate_portfolio_overview(session: Session, portfolio_id: int, roi_series
 def calculate_portfolio_value_over_time(session: Session, portfolio_id: int):
     """
     Oblicza historyczną wartość portfela w czasie.
-
-    Returns:
-        Lista słowników z kluczami: 'date', 'value'.
     """
-
     transactions = session.query(Transaction).filter_by(
         portfolio_id=portfolio_id
     ).order_by(Transaction.transaction_date).all()
@@ -849,9 +787,9 @@ def calculate_portfolio_value_over_time(session: Session, portfolio_id: int):
         portfolio_id=portfolio_id
     ).distinct().all()
     tickers = [session.query(Asset.ticker).filter_by(id=asset_id[0]).scalar() for asset_id in asset_ids if session.query(Asset.ticker).filter_by(id=asset_id[0]).scalar()]
-
-    if not tickers:
-        return []
+    
+    # Filter out PLN from price fetching
+    tickers = [t for t in tickers if t != 'PLN']
 
     try:
         currency_by_ticker = {t: get_currency_for_ticker(t) for t in tickers}
@@ -884,6 +822,7 @@ def calculate_portfolio_value_over_time(session: Session, portfolio_id: int):
         return float(price) * fx_rate
 
     def get_price_on_or_before(ticker, date):
+        if ticker == 'PLN': return 1.0
         if ticker not in historical_prices or not historical_prices[ticker]:
             return None
         prices = historical_prices[ticker]
@@ -896,18 +835,49 @@ def calculate_portfolio_value_over_time(session: Session, portfolio_id: int):
             return convert_to_pln(prices[prev_date], ticker, prev_date)
         return None
 
+    def get_tx_value_pln_simple(t):
+        if t.transaction_type == TransactionType.BUY:
+            if t.purchase_value_pln: return float(t.purchase_value_pln)
+            return float(t.quantity) * float(t.price)
+        elif t.transaction_type == TransactionType.SELL:
+            if t.sale_value_pln: return float(t.sale_value_pln)
+            return float(t.quantity) * float(t.price)
+        elif t.transaction_type in [TransactionType.DEPOSIT, TransactionType.WITHDRAWAL]:
+            if t.purchase_value_pln: return float(t.purchase_value_pln)
+            return float(t.quantity)
+        elif t.transaction_type == TransactionType.DIVIDEND:
+            if t.sale_value_pln: return float(t.sale_value_pln)
+            return float(t.price or 0.0)
+        return 0.0
+
     date_range = pd.date_range(start=start_date, end=end_date, freq='D')
     holdings = defaultdict(float)
+    cash_balance = 0.0
     results = []
+    
+    has_deposits = any(t.transaction_type == TransactionType.DEPOSIT for t in transactions)
 
     for date in date_range:
         date_obj = date.date()
 
         for t in [tr for tr in transactions if tr.transaction_date == date_obj]:
+            ticker = t.asset.ticker
+            val = get_tx_value_pln_simple(t)
+            
             if t.transaction_type == TransactionType.BUY:
-                holdings[t.asset.ticker] += t.quantity
+                if ticker != 'PLN':
+                    holdings[ticker] += t.quantity
+                cash_balance -= val
             elif t.transaction_type == TransactionType.SELL:
-                holdings[t.asset.ticker] -= t.quantity
+                if ticker != 'PLN':
+                    holdings[ticker] -= t.quantity
+                cash_balance += val
+            elif t.transaction_type == TransactionType.DIVIDEND:
+                cash_balance += val
+            elif t.transaction_type == TransactionType.DEPOSIT:
+                cash_balance += val
+            elif t.transaction_type == TransactionType.WITHDRAWAL:
+                cash_balance -= val
 
         market_value = 0.0
         for ticker, qty in holdings.items():
@@ -915,8 +885,15 @@ def calculate_portfolio_value_over_time(session: Session, portfolio_id: int):
                 price = get_price_on_or_before(ticker, date)
                 if price is not None and price > 0:
                     market_value += qty * price
-
-        results.append({'date': date.strftime('%Y-%m-%d'), 'value': market_value})
+        
+        # Include Cash in total value logic
+        # If no deposits and cash is negative, ignore it (Asset Value Only view)
+        if not has_deposits and cash_balance < 0:
+            total_value = market_value
+        else:
+            total_value = market_value + cash_balance
+            
+        results.append({'date': date.strftime('%Y-%m-%d'), 'value': total_value})
         
     df = pd.DataFrame(results)
     df['value'] = df['value'].replace(0, pd.NA).ffill().fillna(0)
