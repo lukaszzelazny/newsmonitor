@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
 import PriceChart from './PriceChart';
 import TechnicalAnalysis from './TechnicalAnalysis';
+import TickerNotes from './TickerNotes';
+import AddTickerModal from './AddTickerModal';
 import TickerSelect from './TickerSelect';
 import CalendarView from './CalendarView';
 import CalendarRejectedView from './CalendarRejectedView';
@@ -10,6 +12,7 @@ import { useTheme } from '../context/ThemeContext';
 
 export default function TickerDashboard() {
     const { theme, toggleTheme } = useTheme();
+    const [showAddTickerModal, setShowAddTickerModal] = useState(false);
     const [tickers, setTickers] = useState([]);
     const [selectedTicker, setSelectedTicker] = useState(null);
     const [analyses, setAnalyses] = useState([]);
@@ -366,7 +369,7 @@ export default function TickerDashboard() {
                 ) : (
                     <div className="grid grid-cols-12 gap-4">
                         <div className="col-span-3 bg-white dark:bg-gray-800 rounded-lg shadow p-3 sticky top-4 self-start" style={{ maxHeight: 'calc(100vh - 2rem)' }}>
-                            <div className="mb-3">
+                            <div className="mb-3 flex gap-2">
                                 <input
                                     type="text"
                                     placeholder="Szukaj tickera..."
@@ -374,6 +377,13 @@ export default function TickerDashboard() {
                                     value={searchTerm}
                                     onChange={(e) => setSearchTerm(e.target.value)}
                                 />
+                                <button
+                                    onClick={() => setShowAddTickerModal(true)}
+                                    className="px-3 py-1.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-xl font-bold flex items-center justify-center"
+                                    title="Dodaj nowy ticker"
+                                >
+                                    +
+                                </button>
                             </div>
 
                             <div className="space-y-1.5 overflow-y-auto" style={{ maxHeight: 'calc(100vh - 10rem)' }}>
@@ -600,6 +610,8 @@ export default function TickerDashboard() {
                                         />
                                     )}
 
+                                    <TickerNotes ticker={selectedTicker.ticker} />
+                                    
                                     <TechnicalAnalysis ticker={selectedTicker.ticker} />
 
                                     {loading ? (
@@ -791,6 +803,15 @@ export default function TickerDashboard() {
                     </div>
                 )}
             </div>
+            
+            <AddTickerModal 
+                isOpen={showAddTickerModal} 
+                onClose={() => setShowAddTickerModal(false)} 
+                onAdded={() => {
+                    fetchTickers();
+                    showNotification('Ticker dodany pomyślnie!', 'success');
+                }}
+            />
         </div>
     );
 }

@@ -370,3 +370,173 @@ def toggle_favorite():
         import traceback
         traceback.print_exc()
         return jsonify({'error': str(e)}), 500
+
+@tickers_bp.route('/api/tickers/add', methods=['POST'])
+def add_ticker():
+    """Endpoint do dodawania nowego tickera"""
+    try:
+        data = request.get_json()
+        ticker_symbol = data.get('ticker')
+        company_name = data.get('company_name')
+        sector = data.get('sector')
+
+        if not ticker_symbol:
+            return jsonify({'error': 'Missing ticker symbol'}), 400
+
+        with engine.connect() as conn:
+            # Sprawdź czy ticker istnieje
+            check_query = text(f"""
+                SELECT ticker, in_portfolio, is_favorite FROM {schema}.tickers WHERE ticker = :ticker
+            """)
+            result = conn.execute(check_query, {'ticker': ticker_symbol})
+            exists = result.fetchone()
+
+            if exists:
+                # Jeśli ticker istnieje ale nie jest widoczny (nie jest w portfolio ani ulubiony),
+                # to ustaw go jako ulubiony, aby pojawił się na liście.
+                in_portfolio = exists[1]
+                is_favorite = exists[2]
+
+                if not in_portfolio and not is_favorite:
+                    update_query = text(f"""
+                        UPDATE {schema}.tickers 
+                        SET is_favorite = true 
+                        WHERE ticker = :ticker
+                    """)
+                    conn.execute(update_query, {'ticker': ticker_symbol})
+                    conn.commit()
+                    return jsonify({'success': True, 'ticker': ticker_symbol, 'message': 'Ticker restored to favorites'})
+                
+                return jsonify({'error': 'Ticker already exists'}), 409
+
+            # Dodaj nowy ticker (domyślnie jako ulubiony, aby był widoczny)
+            insert_query = text(f"""
+                INSERT INTO {schema}.tickers (ticker, company_name, sector, in_portfolio, is_favorite)
+                VALUES (:ticker, :company_name, :sector, 0, true)
+            """)
+            conn.execute(insert_query, {
+                'ticker': ticker_symbol,
+                'company_name': company_name,
+                'sector': sector
+            })
+            conn.commit()
+
+        return jsonify({'success': True, 'ticker': ticker_symbol})
+
+    except Exception as e:
+        print(f"Error adding ticker: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+
+@tickers_bp.route('/api/tickers/<ticker>/notes', methods=['GET'])
+def get_ticker_notes(ticker):
+    """Endpoint do pobierania notatek dla tickera"""
+    try:
+        # Resolve ticker if needed, but notes are attached to specific ticker symbol usually
+        # resolved_ticker = resolve_db_ticker(engine, schema, ticker) 
+        # Actually better use the raw ticker or ensure consistency. 
+        # Existing endpoints use resolve_db_ticker but that's for matching with external data maybe?
+        # Let's stick to simple ticker lookup for notes.
+
+        query = text(f"""
+            SELECT id, content, created_at, updated_at
+            FROM {schema}.ticker_notes
+            WHERE ticker = :ticker
+            ORDER BY created_at DESC
+        """)
+
+        with engine.connect() as conn:
+            result = conn.execute(query, {'ticker': ticker})
+            notes = []
+            for row in result:
+                notes.append({
+                    'id': row[0],
+                    'content': row[1],
+                    'created_at': row[2].strftime('%Y-%m-%d %H:%M:%S') if row[2] else None,
+                    'updated_at': row[3].strftime('%Y-%m-%d %H:%M:%S') if row[3] else None
+                })
+
+        return jsonify(notes)
+
+    except Exception as e:
+        print(f"Error fetching notes: {e}")
+        return jsonify({'error': str(e)}), 500
+
+@tickers_bp.route('/api/tickers/<ticker>/notes', methods=['POST'])
+def add_ticker_note(ticker):
+    """Endpoint do dodawania notatki"""
+    try:
+        data = request.get_json()
+        content = data.get('content')
+
+        if not content:
+            return jsonify({'error': 'Missing content'}), 400
+
+        with engine.connect() as conn:
+            insert_query = text(f"""
+                INSERT INTO {schema}.ticker_notes (ticker, content, created_at, updated_at)
+                VALUES (:ticker, :content, NOW(), NOW())
+                RETURNING id, created_at
+            """)
+            result = conn.execute(insert_query, {
+                'ticker': ticker,
+                'content': content
+            })
+            row = result.fetchone()
+            conn.commit()
+            
+            new_note = {
+                'id': row[0],
+                'content': content,
+                'created_at': row[1].strftime('%Y-%m-%d %H:%M:%S'),
+                'updated_at': row[1].strftime('%Y-%m-%d %H:%M:%S')
+            }
+
+        return jsonify(new_note)
+
+    except Exception as e:
+        print(f"Error adding note: {e}")
+        return jsonify({'error': str(e)}), 500
+
+@tickers_bp.route('/api/notes/<int:note_id>', methods=['PUT'])
+def update_note(note_id):
+    """Endpoint do edycji notatki"""
+    try:
+        data = request.get_json()
+        content = data.get('content')
+
+        if not content:
+            return jsonify({'error': 'Missing content'}), 400
+
+        with engine.connect() as conn:
+            update_query = text(f"""
+                UPDATE {schema}.ticker_notes
+                SET content = :content, updated_at = NOW()
+                WHERE id = :id
+            """)
+            conn.execute(update_query, {'content': content, 'id': note_id})
+            conn.commit()
+
+        return jsonify({'success': True})
+
+    except Exception as e:
+        print(f"Error updating note: {e}")
+        return jsonify({'error': str(e)}), 500
+
+@tickers_bp.route('/api/notes/<int:note_id>', methods=['DELETE'])
+def delete_note(note_id):
+    """Endpoint do usuwania notatki"""
+    try:
+        with engine.connect() as conn:
+            delete_query = text(f"""
+                DELETE FROM {schema}.ticker_notes WHERE id = :id
+            """)
+            conn.execute(delete_query, {'id': note_id})
+            conn.commit()
+
+        return jsonify({'success': True})
+
+    except Exception as e:
+        print(f"Error deleting note: {e}")
+        return jsonify({'error': str(e)}), 500

@@ -68,6 +68,22 @@ class Ticker(Base):
         return f"<Ticker(ticker='{self.ticker}')>"
 
 
+class TickerNote(Base):
+    """Notes associated with a ticker."""
+    __tablename__ = 'ticker_notes'
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    ticker = Column(String(32), ForeignKey('tickers.ticker', ondelete='CASCADE'), nullable=False)
+    content = Column(String, nullable=False)
+    created_at = Column(DateTime, default=datetime.now, nullable=False)
+    updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now, nullable=False)
+
+    ticker_ref = relationship('Ticker', backref='notes')
+
+    def __repr__(self):
+        return f"<TickerNote(id={self.id}, ticker='{self.ticker}')>"
+
+
 class TickerSentiment(Base):
     """Per-ticker sentiment derived from an analysis."""
 
