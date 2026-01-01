@@ -160,9 +160,15 @@ export default function RecommendationsView({ days }) {
                                     </th>
                                     <th 
                                         className="px-3 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-600"
+                                        onClick={() => requestSort('price_at_recommendation')}
+                                    >
+                                        Cena (Rek.) <SortIcon column="price_at_recommendation" />
+                                    </th>
+                                    <th 
+                                        className="px-3 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-600"
                                         onClick={() => requestSort('current_price')}
                                     >
-                                        Cena <SortIcon column="current_price" />
+                                        Cena (Akt.) <SortIcon column="current_price" />
                                     </th>
                                     <th 
                                         className="px-3 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-600"
@@ -210,10 +216,11 @@ export default function RecommendationsView({ days }) {
                                         <td className={`px-3 py-2 whitespace-nowrap text-xs ${getRecommendationColor(rec.recommendation)}`}>
                                             {rec.recommendation || '-'}
                                         </td>
+                                        <td className="px-3 py-2 whitespace-nowrap text-xs text-gray-600 dark:text-gray-400">
+                                            {rec.price_at_recommendation ? rec.price_at_recommendation.toFixed(2) : '-'}
+                                        </td>
                                         <td className="px-3 py-2 whitespace-nowrap text-xs text-gray-900 dark:text-white font-semibold">
-                                            {rec.current_price 
-                                                ? rec.current_price.toFixed(2) 
-                                                : (rec.price_old ? rec.price_old.toFixed(2) : '-')}
+                                            {rec.current_price ? rec.current_price.toFixed(2) : '-'}
                                         </td>
                                         <td className="px-3 py-2 whitespace-nowrap text-xs text-gray-900 dark:text-white font-semibold">
                                             {rec.price_new ? rec.price_new.toFixed(2) : '-'}
