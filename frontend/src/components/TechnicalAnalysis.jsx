@@ -63,7 +63,44 @@ export default function TechnicalAnalysis({ ticker }) {
     }
 
     const { summary, details } = technicalData;
-    const isDark = theme === 'dark';
+
+    const getSignalStyles = (score) => {
+        switch (score) {
+            case 2: // Mocne kupuj
+                return {
+                    container: "bg-emerald-50 dark:bg-emerald-900/20 border-emerald-600 dark:border-emerald-500",
+                    text: "text-emerald-700 dark:text-emerald-400"
+                };
+            case 1: // Kupuj
+                return {
+                    container: "bg-emerald-50 dark:bg-emerald-900/20 border-emerald-500 dark:border-emerald-500",
+                    text: "text-emerald-600 dark:text-emerald-400"
+                };
+            case 0: // Neutralne
+                return {
+                    container: "bg-gray-50 dark:bg-gray-700/30 border-gray-400 dark:border-gray-500",
+                    text: "text-gray-600 dark:text-gray-300"
+                };
+            case -1: // Sprzedaj
+                return {
+                    container: "bg-red-50 dark:bg-red-900/20 border-red-500 dark:border-red-500",
+                    text: "text-red-600 dark:text-red-400"
+                };
+            case -2: // Mocne sprzedaj
+                return {
+                    container: "bg-red-50 dark:bg-red-900/20 border-red-700 dark:border-red-500",
+                    text: "text-red-700 dark:text-red-400"
+                };
+            default:
+                return {
+                    container: "bg-gray-50 dark:bg-gray-800 border-gray-300 dark:border-gray-600",
+                    text: "text-gray-600 dark:text-gray-400"
+                };
+        }
+    };
+
+    const indicatorsStyle = getSignalStyles(summary.indicators.score);
+    const maStyle = getSignalStyles(summary.moving_averages.score);
 
     return (
         <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6">
@@ -79,16 +116,11 @@ export default function TechnicalAnalysis({ ticker }) {
 
             <div className="grid grid-cols-2 gap-4 mb-4">
                 <div
-                    className="p-4 rounded-lg border-2"
-                    style={{
-                        backgroundColor: isDark ? `${summary.indicators.bg_color}33` : summary.indicators.bg_color,
-                        borderColor: summary.indicators.color
-                    }}
+                    className={`p-4 rounded-lg border-2 ${indicatorsStyle.container}`}
                 >
                     <div className="text-sm font-medium text-gray-600 dark:text-gray-400 mb-2">Wskaźniki</div>
                     <div
-                        className="text-2xl font-bold"
-                        style={{ color: summary.indicators.color }}
+                        className={`text-2xl font-bold ${indicatorsStyle.text}`}
                     >
                         {summary.indicators.label}
                     </div>
@@ -98,16 +130,11 @@ export default function TechnicalAnalysis({ ticker }) {
                 </div>
 
                 <div
-                    className="p-4 rounded-lg border-2"
-                    style={{
-                        backgroundColor: isDark ? `${summary.moving_averages.bg_color}33` : summary.moving_averages.bg_color,
-                        borderColor: summary.moving_averages.color
-                    }}
+                    className={`p-4 rounded-lg border-2 ${maStyle.container}`}
                 >
                     <div className="text-sm font-medium text-gray-600 dark:text-gray-400 mb-2">Średnie kroczące</div>
                     <div
-                        className="text-2xl font-bold"
-                        style={{ color: summary.moving_averages.color }}
+                        className={`text-2xl font-bold ${maStyle.text}`}
                     >
                         {summary.moving_averages.label}
                     </div>

@@ -346,11 +346,12 @@ class Asset(Base):
     __tablename__ = 'assets'
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    ticker = Column(String(32), nullable=False, unique=True, index=True)
+    ticker = Column(String(32), ForeignKey('tickers.ticker'), nullable=False, unique=True, index=True)
     name = Column(String(200), nullable=True)
     asset_type = Column(String(50), nullable=False)  # e.g., 'stock', 'etf'
 
     transactions = relationship('Transaction', back_populates='asset')
+    ticker_ref = relationship('Ticker')
     price_history = relationship('AssetPriceHistory', back_populates='asset', cascade="all, delete-orphan")
 
     def __repr__(self):
