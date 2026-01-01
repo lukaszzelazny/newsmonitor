@@ -62,7 +62,7 @@ export default function TickerDashboard() {
         }, 5000);
     };
 
-    const handleTickerSelectFromCalendar = (tickerSymbol) => {
+    const handleTickerSelect = (tickerSymbol) => {
         const tickerData = tickers.find(t => t.ticker === tickerSymbol);
         if (tickerData) {
             setSelectedTicker(tickerData);
@@ -356,13 +356,13 @@ export default function TickerDashboard() {
                 )}
 
                 {viewMode === 'calendar' ? (
-                    <CalendarView days={days} onTickerSelect={handleTickerSelectFromCalendar} showNotification={showNotification} />
+                    <CalendarView days={days} onTickerSelect={handleTickerSelect} showNotification={showNotification} />
                 ) : viewMode === 'rejected' ? (
                     <CalendarRejectedView days={days} />
                 ) : viewMode === 'portfolio' ? (
                     <PortfolioView days={days} />
                 ) : viewMode === 'recommendations' ? (
-                    <RecommendationsView days={days} />
+                    <RecommendationsView days={days} onTickerSelect={handleTickerSelect} />
                 ) : (
                     <div className="grid grid-cols-12 gap-4">
                         <div className="col-span-3 bg-white dark:bg-gray-800 rounded-lg shadow p-3 sticky top-4 self-start" style={{ maxHeight: 'calc(100vh - 2rem)' }}>

@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 
-export default function RecommendationsView({ days }) {
+export default function RecommendationsView({ days, onTickerSelect }) {
     const [recommendations, setRecommendations] = useState([]);
     const [loading, setLoading] = useState(false);
     const [searchTerm, setSearchTerm] = useState('');
@@ -11,11 +11,30 @@ export default function RecommendationsView({ days }) {
     }, [days]);
 
     const fetchRecommendations = async () => {
+        const CACHE_KEY = `recommendations_cache_${days}`;
+        const cached = sessionStorage.getItem(CACHE_KEY);
+        if (cached) {
+            try {
+                const { timestamp, data } = JSON.parse(cached);
+                // Cache valid for 1 hour
+                if (Date.now() - timestamp < 3600000) {
+                    setRecommendations(data);
+                    return;
+                }
+            } catch(e) {
+                console.warn('Cache parse error', e);
+            }
+        }
+
         setLoading(true);
         try {
             const response = await fetch(`/api/recommendations?days=${days}`);
             const data = await response.json();
             setRecommendations(data);
+            sessionStorage.setItem(CACHE_KEY, JSON.stringify({
+                timestamp: Date.now(),
+                data: data
+            }));
         } catch (error) {
             console.error('Error fetching recommendations:', error);
         } finally {
@@ -194,7 +213,15 @@ export default function RecommendationsView({ days }) {
                                             {rec.date}
                                         </td>
                                         <td className="px-3 py-2 whitespace-nowrap text-sm font-bold text-gray-900 dark:text-white">
-                                            {rec.ticker}
+                                            <button 
+                                                onClick={(e) => { 
+                                                    e.stopPropagation(); 
+                                                    if (onTickerSelect) onTickerSelect(rec.ticker); 
+                                                }}
+                                                className="hover:text-blue-600 dark:hover:text-blue-400 hover:underline text-left"
+                                            >
+                                                {rec.ticker}
+                                            </button>
                                             <div className="text-xs font-normal text-gray-500 dark:text-gray-400 truncate max-w-[150px]">
                                                 {rec.company_name}
                                             </div>
