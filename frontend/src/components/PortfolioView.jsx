@@ -562,7 +562,14 @@ export default function PortfolioView({ days }) {
                                                 className="h-4 w-4 text-blue-600 rounded cursor-pointer"
                                             />
                                         </td>
-                                        <td className="px-3 py-2 whitespace-nowrap font-bold text-gray-900 dark:text-white">{asset.ticker}</td>
+                                        <td className="px-3 py-2 whitespace-nowrap font-bold text-gray-900 dark:text-white">
+                                            <div>{asset.ticker}</div>
+                                            {asset.company_name && asset.company_name !== asset.ticker && (
+                                                <div className="text-[10px] text-gray-500 font-normal truncate max-w-[150px]" title={asset.company_name}>
+                                                    {asset.company_name}
+                                                </div>
+                                            )}
+                                        </td>
                                         <td className={`px-3 py-2 whitespace-nowrap text-right font-semibold ${asset.daily_change >= 0 ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}`}>
                                             {asset.daily_change >= 0 ? '+' : ''}{fmt(asset.daily_change, 2)}%
                                         </td>

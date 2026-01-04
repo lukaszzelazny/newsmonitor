@@ -2,9 +2,342 @@ import json
 from flask import Blueprint, jsonify, request
 from sqlalchemy import text
 from analize.utils import get_db_engine, get_current_price, parse_price, format_summary, resolve_db_ticker
+from backend.tools.price_fetcher import get_yf_symbol, get_currency_for_ticker, fx_symbol_to_pln, _fetch_fx_series
+import yfinance as yf
+from datetime import datetime, timedelta
+import pandas as pd
+from backend.database import Database, Asset, AssetPriceHistory
 
 tickers_bp = Blueprint('tickers', __name__)
 engine, schema = get_db_engine()
+
+@tickers_bp.route('/api/tickers/<ticker>/fundamental', methods=['POST'])
+def fetch_fundamental_data(ticker):
+    """Fetch and save fundamental data for a ticker from Yahoo Finance."""
+    try:
+        # Use existing utility to get correct YF symbol (handles .PL -> .WA conversion)
+        yf_ticker = get_yf_symbol(ticker)
+        
+        # Fetch data
+        stock = yf.Ticker(yf_ticker)
+        info = stock.info
+        
+        # Extract indicators
+        eps = info.get('trailingEps')
+        eps_forward = info.get('forwardEps')
+        pe_trailing = info.get('trailingPE')
+        pe_forward = info.get('forwardPE')
+        revenue = info.get('totalRevenue')
+        revenue_growth = info.get('revenueGrowth')
+        earnings_growth = info.get('earningsGrowth')
+        peg_ratio = info.get('pegRatio')
+        market_cap = info.get('marketCap')
+        ebitda = info.get('ebitda')
+        cash_flow = info.get('freeCashflow')
+        profit_margin = info.get('profitMargins')
+        
+        # Save current data to DB
+        with engine.connect() as conn:
+             insert_query = text(f"""
+                INSERT INTO {schema}.fundamental_analysis 
+                (ticker, date, eps, eps_forward, pe_trailing, pe_forward, revenue, revenue_growth, earnings_growth, peg_ratio, market_cap, ebitda, cash_flow, profit_margin)
+                VALUES (:ticker, NOW(), :eps, :eps_forward, :pe_trailing, :pe_forward, :revenue, :revenue_growth, :earnings_growth, :peg_ratio, :market_cap, :ebitda, :cash_flow, :profit_margin)
+             """)
+             conn.execute(insert_query, {
+                 'ticker': ticker,
+                 'eps': eps,
+                 'eps_forward': eps_forward,
+                 'pe_trailing': pe_trailing,
+                 'pe_forward': pe_forward,
+                 'revenue': revenue,
+                 'revenue_growth': revenue_growth,
+                 'earnings_growth': earnings_growth,
+                 'peg_ratio': peg_ratio,
+                 'market_cap': market_cap,
+                 'ebitda': ebitda,
+                 'cash_flow': cash_flow,
+                 'profit_margin': profit_margin
+             })
+             conn.commit()
+
+        # Fetch Historical Data (Financials)
+        try:
+            financials = stock.financials
+            cashflow = stock.cashflow
+            
+            if not financials.empty:
+                # Prepare FX rates if needed
+                currency = get_currency_for_ticker(yf_ticker)
+                fx_rates = {}
+                if currency != 'PLN':
+                    dates_list = [pd.to_datetime(d).date() for d in financials.columns]
+                    if dates_list:
+                        start_d = min(dates_list)
+                        end_d = max(dates_list) + timedelta(days=5)
+                        fx_ticker_sym = fx_symbol_to_pln(currency)
+                        if fx_ticker_sym:
+                            fx_map = _fetch_fx_series([currency], start_d, end_d)
+                            fx_series = fx_map.get(fx_ticker_sym)
+                            if fx_series is not None:
+                                fx_rates = {d.date(): val for d, val in fx_series.items()}
+
+                dates = financials.columns
+                for date in dates:
+                    try:
+                        date_val = pd.to_datetime(date).date()
+                        
+                        # Get FX rate for this date
+                        fx_rate = 1.0
+                        if currency != 'PLN':
+                            # Simple lookup with 5 day tolerance backward
+                            for d in range(5):
+                                check_date = date_val - timedelta(days=d)
+                                if check_date in fx_rates:
+                                    fx_rate = float(fx_rates[check_date])
+                                    break
+
+                        # Helper to get value and convert
+                        def get_val(df, key_primary, key_alt, date_col):
+                            val = None
+                            if key_primary in df.index: val = df.loc[key_primary, date_col]
+                            elif key_alt in df.index: val = df.loc[key_alt, date_col]
+                            
+                            if val is not None and not pd.isna(val):
+                                return float(val) * fx_rate
+                            return None
+
+                        rev = get_val(financials, 'Total Revenue', 'TotalRevenue', date)
+                        ebitda_hist = get_val(financials, 'EBITDA', 'Normalized EBITDA', date)
+                        net_income = get_val(financials, 'Net Income', 'NetIncome', date)
+                        eps_hist = get_val(financials, 'Basic EPS', 'Diluted EPS', date)
+                        
+                        cf_hist = None
+                        if not cashflow.empty and date in cashflow.columns:
+                            cf_hist = get_val(cashflow, 'Free Cash Flow', 'Operating Cash Flow', date)
+                        
+                        profit_margin_hist = None
+                        if net_income and rev:
+                            profit_margin_hist = net_income / rev
+                            
+                        market_cap_hist = None
+                        pe_trailing_hist = None
+                        
+                        hist = stock.history(start=date, end=date + timedelta(days=5))
+                        if not hist.empty:
+                            close_price_native = float(hist['Close'].iloc[0])
+                            close_price_pln = close_price_native * fx_rate
+                            
+                            shares = info.get('sharesOutstanding')
+                            if shares:
+                                market_cap_hist = close_price_pln * shares
+                            if eps_hist:
+                                pe_trailing_hist = close_price_pln / eps_hist
+
+                        with engine.connect() as conn:
+                            # Check existence
+                            check_query = text(f"""
+                                SELECT id FROM {schema}.fundamental_analysis 
+                                WHERE ticker = :ticker AND date::date = :date
+                            """)
+                            existing_id = conn.execute(check_query, {'ticker': ticker, 'date': date_val}).fetchone()
+                            
+                            if existing_id:
+                                update_query = text(f"""
+                                    UPDATE {schema}.fundamental_analysis
+                                    SET eps = :eps, pe_trailing = :pe_trailing, 
+                                        revenue = :revenue, market_cap = :market_cap,
+                                        ebitda = :ebitda, cash_flow = :cash_flow,
+                                        profit_margin = :profit_margin
+                                    WHERE id = :id
+                                """)
+                                conn.execute(update_query, {
+                                    'id': existing_id[0],
+                                    'eps': eps_hist,
+                                    'pe_trailing': pe_trailing_hist,
+                                    'revenue': rev,
+                                    'market_cap': market_cap_hist,
+                                    'ebitda': ebitda_hist,
+                                    'cash_flow': cf_hist,
+                                    'profit_margin': profit_margin_hist
+                                })
+                            else:
+                                insert_query = text(f"""
+                                    INSERT INTO {schema}.fundamental_analysis 
+                                    (ticker, date, eps, pe_trailing, revenue, market_cap, ebitda, cash_flow, profit_margin)
+                                    VALUES (:ticker, :date, :eps, :pe_trailing, :revenue, :market_cap, :ebitda, :cash_flow, :profit_margin)
+                                """)
+                                conn.execute(insert_query, {
+                                    'ticker': ticker,
+                                    'date': date_val,
+                                    'eps': eps_hist,
+                                    'pe_trailing': pe_trailing_hist,
+                                    'revenue': rev,
+                                    'market_cap': market_cap_hist,
+                                    'ebitda': ebitda_hist,
+                                    'cash_flow': cf_hist,
+                                    'profit_margin': profit_margin_hist
+                                })
+                            conn.commit()
+
+                    except Exception as e:
+                        print(f"Error processing historical date {date}: {e}")
+                        continue
+        except Exception as e:
+            print(f"Error processing historical financials: {e}")
+            # Continue without history if failed (user gets current data at least)
+             
+        return jsonify({'success': True})
+        
+    except Exception as e:
+        print(f"Error fetching fundamental data: {e}")
+        return jsonify({'error': str(e)}), 500
+
+@tickers_bp.route('/api/tickers/<ticker>/fundamental', methods=['GET'])
+def get_fundamental_data(ticker):
+    """Get historical fundamental data for a ticker."""
+    try:
+        query = text(f"""
+            SELECT date, eps, eps_forward, pe_trailing, pe_forward, revenue, revenue_growth, earnings_growth, peg_ratio, market_cap, ebitda, cash_flow, profit_margin
+            FROM {schema}.fundamental_analysis
+            WHERE ticker = :ticker
+            ORDER BY date DESC
+        """)
+        
+        with engine.connect() as conn:
+            result = conn.execute(query, {'ticker': ticker})
+            data = []
+            for row in result:
+                data.append({
+                    'date': row[0].strftime('%Y-%m-%d') if row[0] else None,
+                    'eps': row[1],
+                    'eps_forward': row[2],
+                    'pe_trailing': row[3],
+                    'pe_forward': row[4],
+                    'revenue': row[5],
+                    'revenue_growth': row[6],
+                    'earnings_growth': row[7],
+                    'peg_ratio': row[8],
+                    'market_cap': row[9],
+                    'ebitda': row[10],
+                    'cash_flow': row[11],
+                    'profit_margin': row[12]
+                })
+                
+        return jsonify(data)
+        
+    except Exception as e:
+        print(f"Error getting fundamental data: {e}")
+        return jsonify({'error': str(e)}), 500
+
+@tickers_bp.route('/api/tickers/<ticker>/sync_prices', methods=['POST'])
+def sync_ticker_prices(ticker):
+    """Sync price history for a specific ticker on demand."""
+    try:
+        db = Database()
+        session = db.Session()
+        
+        try:
+            # 1. Get or Create Asset
+            asset = session.query(Asset).filter(Asset.ticker == ticker).first()
+            if not asset:
+                asset = Asset(ticker=ticker, asset_type='stock')
+                session.add(asset)
+                session.flush()
+
+            # 2. Determine fetch range
+            last_record = session.query(AssetPriceHistory).filter(AssetPriceHistory.asset_id == asset.id).order_by(AssetPriceHistory.date.desc()).first()
+            
+            end_date = datetime.now()
+            if last_record:
+                # Sync from last record minus 1 day to cover overlaps/updates
+                start_date = datetime.combine(last_record.date, datetime.min.time()) - timedelta(days=1)
+            else:
+                # Default 5 years history if empty
+                start_date = end_date - timedelta(days=365*5)
+            
+            # 3. Fetch from YF
+            yf_ticker = get_yf_symbol(ticker)
+            stock = yf.Ticker(yf_ticker)
+            df = stock.history(start=start_date, end=end_date)
+            
+            if df.empty:
+                 # Try downloading max history if 5 years returned nothing (sometimes helps with delisted/old)
+                 if not last_record:
+                     df = stock.history(period="max")
+            
+            if df.empty:
+                 return jsonify({'success': False, 'message': 'No data found'}), 404
+
+            # 4. Convert to PLN
+            currency = get_currency_for_ticker(yf_ticker)
+            if currency != "PLN":
+                fx_ticker_sym = fx_symbol_to_pln(currency)
+                if fx_ticker_sym:
+                    # Fetch FX series
+                    fx_start = df.index.min().date()
+                    fx_end = df.index.max().date() + timedelta(days=1)
+                    fx_series_map = _fetch_fx_series([currency], fx_start, fx_end)
+                    fx_series = fx_series_map.get(fx_ticker_sym)
+                    
+                    if fx_series is not None and not fx_series.empty:
+                        # Align indexes
+                        if df.index.tz is not None: df.index = df.index.tz_localize(None)
+                        if fx_series.index.tz is not None: fx_series.index = fx_series.index.tz_localize(None)
+                        
+                        aligned_fx = fx_series.reindex(df.index).ffill().bfill()
+                        
+                        for col in ['Open', 'High', 'Low', 'Close', 'Adj Close']:
+                            if col in df.columns:
+                                df[col] = df[col] * aligned_fx.values
+
+            # 5. Save to DB
+            count = 0
+            for date_idx, row in df.iterrows():
+                date_val = date_idx.date() if hasattr(date_idx, 'date') else pd.to_datetime(date_idx).date()
+                
+                existing = session.query(AssetPriceHistory).filter(
+                    AssetPriceHistory.asset_id == asset.id,
+                    AssetPriceHistory.date == date_val
+                ).first()
+                
+                # Check for NaNs
+                close_val = row['Close']
+                if pd.isna(close_val): continue
+                close_val = float(close_val)
+                
+                if existing:
+                    existing.close = close_val
+                    existing.open = float(row['Open']) if 'Open' in row else None
+                    existing.high = float(row['High']) if 'High' in row else None
+                    existing.low = float(row['Low']) if 'Low' in row else None
+                    existing.volume = float(row['Volume']) if 'Volume' in row else None
+                    existing.adjusted_close = close_val
+                else:
+                    new_rec = AssetPriceHistory(
+                        asset_id=asset.id,
+                        date=date_val,
+                        close=close_val,
+                        open=float(row['Open']) if 'Open' in row else None,
+                        high=float(row['High']) if 'High' in row else None,
+                        low=float(row['Low']) if 'Low' in row else None,
+                        volume=float(row['Volume']) if 'Volume' in row else None,
+                        adjusted_close=close_val
+                    )
+                    session.add(new_rec)
+                count += 1
+            
+            session.commit()
+            return jsonify({'success': True, 'count': count, 'ticker': ticker})
+            
+        except Exception as e:
+            session.rollback()
+            raise e
+        finally:
+            session.close()
+
+    except Exception as e:
+        print(f"Error syncing prices: {e}")
+        return jsonify({'error': str(e)}), 500
 
 @tickers_bp.route('/api/tickers')
 def get_tickers():
@@ -539,4 +872,43 @@ def delete_note(note_id):
 
     except Exception as e:
         print(f"Error deleting note: {e}")
+        return jsonify({'error': str(e)}), 500
+
+@tickers_bp.route('/api/tickers/<ticker>/update', methods=['POST'])
+def update_ticker_details(ticker):
+    """Endpoint do aktualizacji szczegółów tickera (nazwa, sektor)"""
+    try:
+        data = request.get_json()
+        company_name = data.get('company_name')
+        sector = data.get('sector')
+        
+        # We allow partial updates
+        
+        with engine.connect() as conn:
+            # Check if exists
+            # We assume it exists as we update existing
+            
+            # Construct update query dynamically or just set both if provided
+            updates = []
+            params = {'ticker': ticker}
+            
+            if company_name is not None:
+                updates.append("company_name = :company_name")
+                params['company_name'] = company_name
+            
+            if sector is not None:
+                updates.append("sector = :sector")
+                params['sector'] = sector
+                
+            if not updates:
+                return jsonify({'success': True, 'message': 'Nothing to update'})
+                
+            update_sql = f"UPDATE {schema}.tickers SET {', '.join(updates)} WHERE ticker = :ticker"
+            conn.execute(text(update_sql), params)
+            conn.commit()
+            
+        return jsonify({'success': True})
+        
+    except Exception as e:
+        print(f"Error updating ticker details: {e}")
         return jsonify({'error': str(e)}), 500

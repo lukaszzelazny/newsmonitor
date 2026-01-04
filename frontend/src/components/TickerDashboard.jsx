@@ -18,8 +18,11 @@ export default function TickerDashboard() {
     const [analyses, setAnalyses] = useState([]);
     const [brokerageAnalyses, setBrokerageAnalyses] = useState([]);
     const [priceHistory, setPriceHistory] = useState([]);
+    const [fundamentalData, setFundamentalData] = useState([]);
     const [loading, setLoading] = useState(false);
     const [loadingChart, setLoadingChart] = useState(false);
+    const [loadingFundamental, setLoadingFundamental] = useState(false);
+    const [loadingPrices, setLoadingPrices] = useState(false);
     const [searchTerm, setSearchTerm] = useState('');
     const [days, setDays] = useState(365);
     const [filterImpact, setFilterImpact] = useState('all');
@@ -53,6 +56,9 @@ export default function TickerDashboard() {
     const [notification, setNotification] = useState(null);
     const notificationTimeout = useRef(null);
 
+    const [isEditingDetails, setIsEditingDetails] = useState(false);
+    const [editForm, setEditForm] = useState({ company_name: '', sector: '' });
+
     const showNotification = (message, type = 'success') => {
         setNotification({ message, type });
 
@@ -75,6 +81,67 @@ export default function TickerDashboard() {
         setViewMode('tickers');
     };
 
+    const handleEditClick = () => {
+        setEditForm({
+            company_name: selectedTicker.company_name || '',
+            sector: selectedTicker.sector || ''
+        });
+        setIsEditingDetails(true);
+    };
+
+    const handleSaveDetails = async () => {
+        try {
+            const res = await fetch(`/api/tickers/${selectedTicker.ticker}/update`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(editForm)
+            });
+            if (res.ok) {
+                const response = await fetch(`/api/tickers?days=${days}`);
+                const data = await response.json();
+                setTickers(data);
+                const updated = data.find(t => t.ticker === selectedTicker.ticker);
+                if (updated) setSelectedTicker(updated);
+                
+                setIsEditingDetails(false);
+                showNotification('Zaktualizowano dane tickera', 'success');
+            } else {
+                 showNotification('Błąd aktualizacji', 'error');
+            }
+        } catch (e) {
+             console.error(e);
+             showNotification('Błąd sieci', 'error');
+        }
+    };
+    const CollapsibleSection = ({ title, children, defaultExpanded = true, count = null }) => {
+        const [isExpanded, setIsExpanded] = useState(defaultExpanded);
+        return (
+            <div className="bg-white dark:bg-gray-800 rounded-lg shadow overflow-hidden mb-4">
+                <button 
+                    onClick={() => setIsExpanded(!isExpanded)}
+                    className="w-full px-4 py-3 bg-gray-50 dark:bg-gray-700 flex items-center justify-between text-left focus:outline-none hover:bg-gray-100 dark:hover:bg-gray-600 transition-colors"
+                >
+                    <div className="flex items-center gap-2">
+                        <span className="font-semibold text-gray-900 dark:text-white">{title}</span>
+                        {count !== null && (
+                             <span className="text-xs bg-gray-200 dark:bg-gray-600 px-2 py-0.5 rounded-full text-gray-700 dark:text-gray-200">
+                                 {count}
+                             </span>
+                        )}
+                    </div>
+                    <span className="text-gray-500 dark:text-gray-400 text-sm">
+                        {isExpanded ? '▲ Zwiń' : '▼ Rozwiń'}
+                    </span>
+                </button>
+                {isExpanded && (
+                    <div className="p-4 border-t border-gray-200 dark:border-gray-700">
+                        {children}
+                    </div>
+                )}
+            </div>
+        );
+    };
+
     useEffect(() => {
         fetchTickers();
     }, [days]);
@@ -84,6 +151,7 @@ export default function TickerDashboard() {
             fetchAnalyses(selectedTicker.ticker);
             fetchBrokerageAnalyses(selectedTicker.ticker);
             fetchPriceHistory(selectedTicker.ticker);
+            fetchFundamentalData(selectedTicker.ticker);
         }
     }, [selectedTicker, days]);
 
@@ -132,6 +200,68 @@ export default function TickerDashboard() {
         } finally {
             setLoadingChart(false);
         }
+    };
+
+    const fetchFundamentalData = async (ticker) => {
+        try {
+            const response = await fetch(`/api/tickers/${ticker}/fundamental`);
+            const data = await response.json();
+            setFundamentalData(data);
+        } catch (error) {
+            console.error('Error fetching fundamental data:', error);
+            setFundamentalData([]);
+        }
+    };
+
+    const handleFetchFundamental = async () => {
+        if (!selectedTicker) return;
+        setLoadingFundamental(true);
+        try {
+            const response = await fetch(`/api/tickers/${selectedTicker.ticker}/fundamental`, {
+                method: 'POST'
+            });
+            if (response.ok) {
+                showNotification('Dane fundamentalne pobrane pomyślnie!', 'success');
+                fetchFundamentalData(selectedTicker.ticker);
+            } else {
+                showNotification('Błąd pobierania danych fundamentalnych', 'error');
+            }
+        } catch (error) {
+            console.error('Error fetching fundamental data:', error);
+            showNotification('Błąd sieci', 'error');
+        } finally {
+            setLoadingFundamental(false);
+        }
+    };
+
+    const handleUpdatePrices = async () => {
+        if (!selectedTicker) return;
+        setLoadingPrices(true);
+        try {
+            const response = await fetch(`/api/tickers/${selectedTicker.ticker}/sync_prices`, {
+                method: 'POST'
+            });
+            const data = await response.json();
+            if (response.ok) {
+                showNotification(`Zaktualizowano ceny: ${data.count} nowych rekordów`, 'success');
+                fetchPriceHistory(selectedTicker.ticker); // Refresh chart
+            } else {
+                showNotification(`Błąd aktualizacji cen: ${data.error || 'Nieznany błąd'}`, 'error');
+            }
+        } catch (error) {
+            console.error('Error updating prices:', error);
+            showNotification('Błąd sieci', 'error');
+        } finally {
+            setLoadingPrices(false);
+        }
+    };
+
+    const formatLargeNumber = (num) => {
+        if (num === null || num === undefined) return '-';
+        if (Math.abs(num) >= 1.0e+9) return (num / 1.0e+9).toFixed(2) + ' B';
+        if (Math.abs(num) >= 1.0e+6) return (num / 1.0e+6).toFixed(2) + ' M';
+        if (Math.abs(num) >= 1.0e+3) return (num / 1.0e+3).toFixed(2) + ' K';
+        return num.toFixed(2);
     };
 
     const markAsDuplicate = async (newsId) => {
@@ -530,11 +660,47 @@ export default function TickerDashboard() {
                                 <div className="space-y-4">
                                     <div className={`p-3 rounded-lg shadow ${getSentimentBg(selectedTicker.avg_sentiment)}`}>
                                         <div className="flex items-center justify-between">
-                                            <div>
-                                                <h2 className="text-xl font-bold text-gray-900 dark:text-white">
-                                                    {selectedTicker.ticker} - {selectedTicker.company_name || 'Brak nazwy'}
-                                                </h2>
-                                                <p className="text-sm text-gray-600 dark:text-gray-400">{selectedTicker.sector || 'Brak sektora'}</p>
+                                            <div className="flex-1">
+                                                {isEditingDetails ? (
+                                                    <div className="flex flex-col gap-2 max-w-md">
+                                                        <div className="flex gap-2">
+                                                            <input 
+                                                                type="text" 
+                                                                value={editForm.company_name}
+                                                                onChange={(e) => setEditForm({...editForm, company_name: e.target.value})}
+                                                                placeholder="Nazwa firmy"
+                                                                className="px-2 py-1 border rounded text-sm dark:bg-gray-700 dark:text-white dark:border-gray-600"
+                                                            />
+                                                        </div>
+                                                        <div className="flex gap-2">
+                                                            <input 
+                                                                type="text" 
+                                                                value={editForm.sector}
+                                                                onChange={(e) => setEditForm({...editForm, sector: e.target.value})}
+                                                                placeholder="Sektor"
+                                                                className="px-2 py-1 border rounded text-sm dark:bg-gray-700 dark:text-white dark:border-gray-600"
+                                                            />
+                                                            <button onClick={handleSaveDetails} className="bg-green-600 text-white px-3 py-1 rounded text-sm hover:bg-green-700">Zapisz</button>
+                                                            <button onClick={() => setIsEditingDetails(false)} className="bg-gray-400 text-white px-3 py-1 rounded text-sm hover:bg-gray-500">Anuluj</button>
+                                                        </div>
+                                                    </div>
+                                                ) : (
+                                                    <div className="group">
+                                                        <div className="flex items-center gap-2">
+                                                            <h2 className="text-xl font-bold text-gray-900 dark:text-white">
+                                                                {selectedTicker.ticker} - {selectedTicker.company_name || 'Brak nazwy'}
+                                                            </h2>
+                                                            <button 
+                                                                onClick={handleEditClick}
+                                                                className="opacity-0 group-hover:opacity-100 transition-opacity text-gray-400 hover:text-blue-500"
+                                                                title="Edytuj nazwę"
+                                                            >
+                                                                ✎
+                                                            </button>
+                                                        </div>
+                                                        <p className="text-sm text-gray-600 dark:text-gray-400">{selectedTicker.sector || 'Brak sektora'}</p>
+                                                    </div>
+                                                )}
                                             </div>
                                             <div className="text-right">
                                                 <div className={`text-2xl font-bold ${getSentimentColor(selectedTicker.avg_sentiment)}`}>
@@ -591,6 +757,17 @@ export default function TickerDashboard() {
                                         </div>
                                     )}
 
+                                    <div className="flex justify-end">
+                                        <button 
+                                            onClick={handleUpdatePrices} 
+                                            className="text-xs bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-200 px-3 py-1 rounded transition-colors flex items-center gap-1"
+                                            disabled={loadingPrices}
+                                            title="Pobierz najnowsze ceny z Yahoo Finance"
+                                        >
+                                            {loadingPrices ? '↻ Aktualizowanie...' : '↻ Aktualizuj ceny'}
+                                        </button>
+                                    </div>
+
                                     {loadingChart ? (
                                         <div className="bg-white rounded-lg shadow-lg p-6 flex items-center justify-center">
                                             <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500"></div>
@@ -610,192 +787,255 @@ export default function TickerDashboard() {
                                         />
                                     )}
 
-                                    <TickerNotes ticker={selectedTicker.ticker} />
+                                    <CollapsibleSection title="Notatki" defaultExpanded={false}>
+                                        <TickerNotes ticker={selectedTicker.ticker} />
+                                    </CollapsibleSection>
                                     
-                                    <TechnicalAnalysis ticker={selectedTicker.ticker} />
+                                    <CollapsibleSection title="Analiza Techniczna" defaultExpanded={false}>
+                                        <TechnicalAnalysis ticker={selectedTicker.ticker} />
+                                    </CollapsibleSection>
+
+                                    <CollapsibleSection title="Analiza Fundamentalna" defaultExpanded={false}>
+                                        <div className="flex justify-end mb-4">
+                                            <button 
+                                                onClick={handleFetchFundamental} 
+                                                className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 disabled:opacity-50 text-sm font-medium transition-colors"
+                                                disabled={loadingFundamental}
+                                            >
+                                                {loadingFundamental ? 'Pobieranie...' : 'Pobierz dane fundamentalne'}
+                                            </button>
+                                        </div>
+                                        
+                                        <div className="overflow-x-auto">
+                                            <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
+                                                <thead className="bg-gray-50 dark:bg-gray-700">
+                                                    <tr>
+                                                        <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">Data</th>
+                                                        <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">EPS</th>
+                                                        <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">EPS (Fwd)</th>
+                                                        <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">P/E (Trail)</th>
+                                                        <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">P/E (Fwd)</th>
+                                                        <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">PEG</th>
+                                                        <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">Rev Growth</th>
+                                                        <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">Earn Growth</th>
+                                                        <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">Revenue</th>
+                                                        <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">Market Cap</th>
+                                                        <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">EBITDA</th>
+                                                        <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">Cash Flow</th>
+                                                        <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">Profit Margin</th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody className="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700">
+                                                    {fundamentalData.length === 0 ? (
+                                                        <tr>
+                                                            <td colSpan="13" className="px-3 py-4 text-center text-sm text-gray-500 dark:text-gray-400">
+                                                                Brak danych. Kliknij "Pobierz dane fundamentalne" aby pobrać.
+                                                            </td>
+                                                        </tr>
+                                                    ) : (
+                                                        fundamentalData.map((item, idx) => (
+                                                            <tr key={idx} className="hover:bg-gray-50 dark:hover:bg-gray-750">
+                                                                <td className="px-3 py-2 whitespace-nowrap text-xs text-gray-700 dark:text-gray-300">{item.date}</td>
+                                                                <td className="px-3 py-2 whitespace-nowrap text-xs text-gray-900 dark:text-white font-medium">{item.eps !== null ? item.eps.toFixed(2) : '-'}</td>
+                                                                <td className="px-3 py-2 whitespace-nowrap text-xs text-gray-900 dark:text-white font-medium">{item.eps_forward !== null && item.eps_forward !== undefined ? item.eps_forward.toFixed(2) : '-'}</td>
+                                                                <td className="px-3 py-2 whitespace-nowrap text-xs text-gray-900 dark:text-white font-medium">{item.pe_trailing !== null ? item.pe_trailing.toFixed(2) : '-'}</td>
+                                                                <td className="px-3 py-2 whitespace-nowrap text-xs text-gray-900 dark:text-white font-medium">{item.pe_forward !== null ? item.pe_forward.toFixed(2) : '-'}</td>
+                                                                <td className="px-3 py-2 whitespace-nowrap text-xs text-gray-900 dark:text-white font-medium">{item.peg_ratio !== null && item.peg_ratio !== undefined ? item.peg_ratio.toFixed(2) : '-'}</td>
+                                                                <td className="px-3 py-2 whitespace-nowrap text-xs text-green-600 dark:text-green-400 font-medium">{item.revenue_growth !== null && item.revenue_growth !== undefined ? (item.revenue_growth * 100).toFixed(2) + '%' : '-'}</td>
+                                                                <td className="px-3 py-2 whitespace-nowrap text-xs text-green-600 dark:text-green-400 font-medium">{item.earnings_growth !== null && item.earnings_growth !== undefined ? (item.earnings_growth * 100).toFixed(2) + '%' : '-'}</td>
+                                                                <td className="px-3 py-2 whitespace-nowrap text-xs text-gray-900 dark:text-white font-medium">{formatLargeNumber(item.revenue)}</td>
+                                                                <td className="px-3 py-2 whitespace-nowrap text-xs text-gray-900 dark:text-white font-medium">{formatLargeNumber(item.market_cap)}</td>
+                                                                <td className="px-3 py-2 whitespace-nowrap text-xs text-gray-900 dark:text-white font-medium">{formatLargeNumber(item.ebitda)}</td>
+                                                                <td className="px-3 py-2 whitespace-nowrap text-xs text-gray-900 dark:text-white font-medium">{formatLargeNumber(item.cash_flow)}</td>
+                                                                <td className="px-3 py-2 whitespace-nowrap text-xs text-gray-900 dark:text-white font-medium">{item.profit_margin !== null ? (item.profit_margin * 100).toFixed(2) + '%' : '-'}</td>
+                                                            </tr>
+                                                        ))
+                                                    )}
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                    </CollapsibleSection>
 
                                     {loading ? (
                                         <div className="bg-white dark:bg-gray-800 rounded-lg shadow-lg p-6 flex items-center justify-center py-12">
                                             <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500"></div>
                                         </div>
                                     ) : (
-                                        <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-4">
-                                            <div className="space-y-4">
-                                                <div>
-                                                    <div className="flex items-center justify-between mb-2">
-                                                        <h3 className="text-base font-semibold text-gray-900 dark:text-white">
-                                                            Analizy newsowe ({filteredAnalyses.length})
-                                                        </h3>
-                                                        <div className="flex items-center gap-2">
-                                                            <label className="text-xs text-gray-600 dark:text-gray-400">Filtruj:</label>
-                                                            <select
-                                                                value={filterImpact}
-                                                                onChange={(e) => setFilterImpact(e.target.value)}
-                                                                className="px-2 py-1 text-xs border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
-                                                            >
-                                                                <option value="all">Wszystkie</option>
-                                                                <option value="positive">Pozytywne</option>
-                                                                <option value="negative">Negatywne</option>
-                                                                <option value="neutral">Neutralne</option>
-                                                            </select>
-                                                        </div>
-                                                    </div>
-                                                    {filteredAnalyses.length === 0 ? (
-                                                        <p className="text-gray-500 text-xs">Brak analiz newsowych</p>
-                                                    ) : (
-                                                        <div className="space-y-2">
-                                                            {filteredAnalyses.map((analysis, idx) => (
-                                                                <div
-                                                                    key={idx}
-                                                                    className="border border-gray-200 dark:border-gray-700 rounded-lg p-3 hover:shadow-md transition-shadow relative"
+                                        <>
+                                            <CollapsibleSection title="Analizy newsowe" count={filteredAnalyses.length} defaultExpanded={true}>
+                                                <div className="space-y-4">
+                                                    <div>
+                                                        <div className="flex items-center justify-between mb-2">
+                                                            <div className="flex items-center gap-2">
+                                                                <label className="text-xs text-gray-600 dark:text-gray-400">Filtruj:</label>
+                                                                <select
+                                                                    value={filterImpact}
+                                                                    onChange={(e) => setFilterImpact(e.target.value)}
+                                                                    className="px-2 py-1 text-xs border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
                                                                 >
-                                                                    <button
-                                                                        onClick={() => markAsDuplicate(analysis.news_id)}
-                                                                        className="absolute top-1.5 right-1.5 w-6 h-6 flex items-center justify-center bg-red-500 hover:bg-red-600 text-white rounded-full text-sm font-bold transition-colors"
-                                                                        title="Oznacz jako duplikat"
+                                                                    <option value="all">Wszystkie</option>
+                                                                    <option value="positive">Pozytywne</option>
+                                                                    <option value="negative">Negatywne</option>
+                                                                    <option value="neutral">Neutralne</option>
+                                                                </select>
+                                                            </div>
+                                                        </div>
+                                                        {filteredAnalyses.length === 0 ? (
+                                                            <p className="text-gray-500 text-xs">Brak analiz newsowych</p>
+                                                        ) : (
+                                                            <div className="space-y-2">
+                                                                {filteredAnalyses.map((analysis, idx) => (
+                                                                    <div
+                                                                        key={idx}
+                                                                        className="border border-gray-200 dark:border-gray-700 rounded-lg p-3 hover:shadow-md transition-shadow relative"
                                                                     >
-                                                                        ✕
-                                                                    </button>
+                                                                        <button
+                                                                            onClick={() => markAsDuplicate(analysis.news_id)}
+                                                                            className="absolute top-1.5 right-1.5 w-6 h-6 flex items-center justify-center bg-red-500 hover:bg-red-600 text-white rounded-full text-sm font-bold transition-colors"
+                                                                            title="Oznacz jako duplikat"
+                                                                        >
+                                                                            ✕
+                                                                        </button>
 
-                                                                    <div className="flex items-start gap-3">
-                                                                        <div className="flex-shrink-0">
-                                                                            <div className={`w-2 h-16 ${getImpactColor(analysis.impact)} rounded`}></div>
-                                                                        </div>
-
-                                                                        <div className="flex-1 pr-8">
-                                                                            <div className="flex items-start justify-between mb-1.5">
-                                                                                <div className="flex-1">
-                                                                                    <h3 className="font-semibold text-sm text-gray-900 dark:text-white mb-0.5">
-                                                                                        {analysis.title}
-                                                                                    </h3>
-                                                                                    <div className="flex items-center gap-2 text-xs text-gray-500 dark:text-gray-400">
-                                                                                        <span>{analysis.date}</span>
-                                                                                        <span>•</span>
-                                                                                        <span>{analysis.source}</span>
-                                                                                        {analysis.url && (
-                                                                                            <>
-                                                                                                <span>•</span>
-                                                                                                <a
-                                                                                                    href={analysis.url}
-                                                                                                    target="_blank"
-                                                                                                    rel="noopener noreferrer"
-                                                                                                    className="text-blue-600 dark:text-blue-400 hover:underline"
-                                                                                                >
-                                                                                                    Link
-                                                                                                </a>
-                                                                                            </>
-                                                                                        )}
-                                                                                    </div>
-                                                                                </div>
+                                                                        <div className="flex items-start gap-3">
+                                                                            <div className="flex-shrink-0">
+                                                                                <div className={`w-2 h-16 ${getImpactColor(analysis.impact)} rounded`}></div>
                                                                             </div>
 
-                                                                            <div className="flex items-center gap-3 mb-2">
-                                                                                <div className="flex items-center gap-1.5">
-                                                                                    <span className="text-xs text-gray-600 dark:text-gray-400">Impact:</span>
-                                                                                    <span className={`font-bold text-sm ${getSentimentColor(analysis.impact)}`}>
-                                                                                        {analysis.impact > 0 ? '+' : ''}{Number(analysis.impact).toFixed(2)}
-                                                                                    </span>
+                                                                            <div className="flex-1 pr-8">
+                                                                                <div className="flex items-start justify-between mb-1.5">
+                                                                                    <div className="flex-1">
+                                                                                        <h3 className="font-semibold text-sm text-gray-900 dark:text-white mb-0.5">
+                                                                                            {analysis.title}
+                                                                                        </h3>
+                                                                                        <div className="flex items-center gap-2 text-xs text-gray-500 dark:text-gray-400">
+                                                                                            <span>{analysis.date}</span>
+                                                                                            <span>•</span>
+                                                                                            <span>{analysis.source}</span>
+                                                                                            {analysis.url && (
+                                                                                                <>
+                                                                                                    <span>•</span>
+                                                                                                    <a
+                                                                                                        href={analysis.url}
+                                                                                                        target="_blank"
+                                                                                                        rel="noopener noreferrer"
+                                                                                                        className="text-blue-600 dark:text-blue-400 hover:underline"
+                                                                                                    >
+                                                                                                        Link
+                                                                                                    </a>
+                                                                                                </>
+                                                                                            )}
+                                                                                        </div>
+                                                                                    </div>
                                                                                 </div>
-                                                                                <div className="flex items-center gap-1.5">
-                                                                                    <span className="text-xs text-gray-600 dark:text-gray-400">Confidence:</span>
-                                                                                    <span className="font-bold text-sm text-blue-600 dark:text-blue-400">
-                                                                                        {(Number(analysis.confidence) * 100).toFixed(0)}%
-                                                                                    </span>
-                                                                                </div>
-                                                                                {analysis.occasion && (
+
+                                                                                <div className="flex items-center gap-3 mb-2">
                                                                                     <div className="flex items-center gap-1.5">
-                                                                                        <span className="px-2 py-0.5 bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 text-xs rounded-full">
-                                                                                            {analysis.occasion}
+                                                                                        <span className="text-xs text-gray-600 dark:text-gray-400">Impact:</span>
+                                                                                        <span className={`font-bold text-sm ${getSentimentColor(analysis.impact)}`}>
+                                                                                            {analysis.impact > 0 ? '+' : ''}{Number(analysis.impact).toFixed(2)}
                                                                                         </span>
                                                                                     </div>
+                                                                                    <div className="flex items-center gap-1.5">
+                                                                                        <span className="text-xs text-gray-600 dark:text-gray-400">Confidence:</span>
+                                                                                        <span className="font-bold text-sm text-blue-600 dark:text-blue-400">
+                                                                                            {(Number(analysis.confidence) * 100).toFixed(0)}%
+                                                                                        </span>
+                                                                                    </div>
+                                                                                    {analysis.occasion && (
+                                                                                        <div className="flex items-center gap-1.5">
+                                                                                            <span className="px-2 py-0.5 bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 text-xs rounded-full">
+                                                                                                {analysis.occasion}
+                                                                                            </span>
+                                                                                        </div>
+                                                                                    )}
+                                                                                </div>
+
+                                                                                {analysis.summary && (
+                                                                                    <div
+                                                                                        className="text-xs text-gray-700 dark:text-gray-300 leading-relaxed"
+                                                                                        dangerouslySetInnerHTML={{ __html: analysis.summary }}
+                                                                                    />
                                                                                 )}
                                                                             </div>
-
-                                                                            {analysis.summary && (
-                                                                                <div
-                                                                                    className="text-xs text-gray-700 dark:text-gray-300 leading-relaxed"
-                                                                                    dangerouslySetInnerHTML={{ __html: analysis.summary }}
-                                                                                />
-                                                                            )}
                                                                         </div>
                                                                     </div>
-                                                                </div>
-                                                            ))}
-                                                        </div>
-                                                    )}
-                                                </div>
-
-                                                {brokerageAnalyses.length > 0 && (
-                                                    <div className="mt-4 pt-4 border-t border-gray-200 dark:border-gray-700">
-                                                        <h3 className="text-base font-semibold text-gray-900 dark:text-white mb-2">
-                                                            Rekomendacje domów maklerskich ({brokerageAnalyses.length})
-                                                        </h3>
-                                                        <div className="overflow-x-auto">
-                                                            <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
-                                                                <thead className="bg-gray-50 dark:bg-gray-700">
-                                                                    <tr>
-                                                                        <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">
-                                                                            Data
-                                                                        </th>
-                                                                        <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">
-                                                                            Dom maklerski
-                                                                        </th>
-                                                                        <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">
-                                                                            Rekomendacja
-                                                                        </th>
-                                                                        <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">
-                                                                            Cena obecna
-                                                                        </th>
-                                                                        <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">
-                                                                            Cena docelowa
-                                                                        </th>
-                                                                        <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">
-                                                                            Zmiana %
-                                                                        </th>
-                                                                        <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">
-                                                                            Upside %
-                                                                        </th>
-                                                                    </tr>
-                                                                </thead>
-                                                                <tbody className="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700">
-                                                                    {brokerageAnalyses.map((brokerage, idx) => (
-                                                                        <tr key={idx} className={getUpsideBg(brokerage.upside_percent)}>
-                                                                            <td className="px-3 py-2 whitespace-nowrap text-xs text-gray-700 dark:text-gray-300">
-                                                                                {brokerage.date}
-                                                                            </td>
-                                                                            <td className="px-3 py-2 text-xs text-gray-900 dark:text-white font-medium">
-                                                                                {brokerage.brokerage_house}
-                                                                            </td>
-                                                                            <td className={`px-3 py-2 whitespace-nowrap text-xs ${getRecommendationColor(brokerage.recommendation)}`}>
-                                                                                {brokerage.recommendation || '-'}
-                                                                            </td>
-                                                                            <td className="px-3 py-2 whitespace-nowrap text-xs text-gray-900 dark:text-white font-semibold">
-                                                                                {brokerage.current_price
-                                                                                    ? `${brokerage.current_price.toFixed(2)}`
-                                                                                    : (brokerage.price_old ? brokerage.price_old.toFixed(2) : '-')}
-                                                                            </td>
-                                                                            <td className="px-3 py-2 whitespace-nowrap text-xs text-gray-900 dark:text-white font-semibold">
-                                                                                {brokerage.price_new ? brokerage.price_new.toFixed(2) : '-'}
-                                                                            </td>
-                                                                            <td className={`px-3 py-2 whitespace-nowrap text-xs ${getUpsideColor(brokerage.price_change_percent)}`}>
-                                                                                {brokerage.price_change_percent !== null
-                                                                                    ? `${brokerage.price_change_percent > 0 ? '+' : ''}${brokerage.price_change_percent.toFixed(1)}%`
-                                                                                    : '-'}
-                                                                            </td>
-                                                                            <td className={`px-3 py-2 whitespace-nowrap text-xs ${getUpsideColor(brokerage.upside_percent)}`}>
-                                                                                {brokerage.upside_percent !== null
-                                                                                    ? `${brokerage.upside_percent > 0 ? '+' : ''}${brokerage.upside_percent.toFixed(1)}%`
-                                                                                    : '-'}
-                                                                            </td>
-                                                                        </tr>
-                                                                    ))}
-                                                                </tbody>
-                                                            </table>
-                                                        </div>
+                                                                ))}
+                                                            </div>
+                                                        )}
                                                     </div>
+                                                </div>
+                                            </CollapsibleSection>
+
+                                            <CollapsibleSection title="Rekomendacje" count={brokerageAnalyses.length} defaultExpanded={false}>
+                                                {brokerageAnalyses.length > 0 ? (
+                                                    <div className="overflow-x-auto">
+                                                        <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
+                                                            <thead className="bg-gray-50 dark:bg-gray-700">
+                                                                <tr>
+                                                                    <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">
+                                                                        Data
+                                                                    </th>
+                                                                    <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">
+                                                                        Dom maklerski
+                                                                    </th>
+                                                                    <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">
+                                                                        Rekomendacja
+                                                                    </th>
+                                                                    <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">
+                                                                        Cena obecna
+                                                                    </th>
+                                                                    <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">
+                                                                        Cena docelowa
+                                                                    </th>
+                                                                    <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">
+                                                                        Zmiana %
+                                                                    </th>
+                                                                    <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">
+                                                                        Upside %
+                                                                    </th>
+                                                                </tr>
+                                                            </thead>
+                                                            <tbody className="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700">
+                                                                {brokerageAnalyses.map((brokerage, idx) => (
+                                                                    <tr key={idx} className={getUpsideBg(brokerage.upside_percent)}>
+                                                                        <td className="px-3 py-2 whitespace-nowrap text-xs text-gray-700 dark:text-gray-300">
+                                                                            {brokerage.date}
+                                                                        </td>
+                                                                        <td className="px-3 py-2 text-xs text-gray-900 dark:text-white font-medium">
+                                                                            {brokerage.brokerage_house}
+                                                                        </td>
+                                                                        <td className={`px-3 py-2 whitespace-nowrap text-xs ${getRecommendationColor(brokerage.recommendation)}`}>
+                                                                            {brokerage.recommendation || '-'}
+                                                                        </td>
+                                                                        <td className="px-3 py-2 whitespace-nowrap text-xs text-gray-900 dark:text-white font-semibold">
+                                                                            {brokerage.current_price
+                                                                                ? `${brokerage.current_price.toFixed(2)}`
+                                                                                : (brokerage.price_old ? brokerage.price_old.toFixed(2) : '-')}
+                                                                        </td>
+                                                                        <td className="px-3 py-2 whitespace-nowrap text-xs text-gray-900 dark:text-white font-semibold">
+                                                                            {brokerage.price_new ? brokerage.price_new.toFixed(2) : '-'}
+                                                                        </td>
+                                                                        <td className={`px-3 py-2 whitespace-nowrap text-xs ${getUpsideColor(brokerage.price_change_percent)}`}>
+                                                                            {brokerage.price_change_percent !== null
+                                                                                ? `${brokerage.price_change_percent > 0 ? '+' : ''}${brokerage.price_change_percent.toFixed(1)}%`
+                                                                                : '-'}
+                                                                        </td>
+                                                                        <td className={`px-3 py-2 whitespace-nowrap text-xs ${getUpsideColor(brokerage.upside_percent)}`}>
+                                                                            {brokerage.upside_percent !== null
+                                                                                ? `${brokerage.upside_percent > 0 ? '+' : ''}${brokerage.upside_percent.toFixed(1)}%`
+                                                                                : '-'}
+                                                                        </td>
+                                                                    </tr>
+                                                                ))}
+                                                            </tbody>
+                                                        </table>
+                                                    </div>
+                                                ) : (
+                                                    <p className="text-gray-500 text-xs">Brak rekomendacji</p>
                                                 )}
-                                            </div>
-                                        </div>
+                                            </CollapsibleSection>
+                                        </>
                                     )}
                                 </div>
                             )}

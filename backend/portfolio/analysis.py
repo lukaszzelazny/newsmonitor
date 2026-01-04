@@ -7,7 +7,7 @@ from datetime import timedelta
 import math
 
 # Import models using absolute path to avoid conflicts
-from backend.database import Portfolio, Asset, TransactionType, Transaction
+from backend.database import Portfolio, Asset, TransactionType, Transaction, Ticker
 from backend.tools.price_fetcher import get_current_price, get_current_prices, get_historical_prices_for_tickers, get_currency_for_ticker, fx_symbol_to_pln, _fetch_fx_series, get_dividends_for_tickers
 
 
@@ -582,6 +582,10 @@ def calculate_portfolio_overview(session: Session, portfolio_id: int, roi_series
         hist_start_short = end_date - timedelta(days=10)
         hist = get_historical_prices_for_tickers(tickers, hist_start_short, end_date, session=session)
         live_prices_map = get_current_prices(tickers)
+        
+        # Fetch company names
+        ticker_objs = session.query(Ticker.ticker, Ticker.company_name).filter(Ticker.ticker.in_(tickers)).all()
+        company_names = {t.ticker: t.company_name for t in ticker_objs}
 
         def last_and_prev_price(tkr):
             if tkr not in hist or not hist[tkr]:
@@ -645,6 +649,7 @@ def calculate_portfolio_overview(session: Session, portfolio_id: int, roi_series
             
             assets_list.append({
                 'ticker': tkr,
+                'company_name': company_names.get(tkr),
                 'quantity': float(qty),
                 'avg_purchase_price': float(metrics['avg_price_org']),
                 'current_price': float(price_pln),

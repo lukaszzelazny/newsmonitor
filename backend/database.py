@@ -4,7 +4,7 @@ import os
 from sqlalchemy import create_engine, Column, Integer, String, DateTime, Date, Index, \
     ForeignKey, Float, Enum, UniqueConstraint, Boolean, text
 from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import sessionmaker, relationship
+from sqlalchemy.orm import sessionmaker, relationship, backref
 from datetime import datetime, date as date_type
 from typing import Optional
 from sqlalchemy.sql import func
@@ -78,7 +78,7 @@ class TickerNote(Base):
     created_at = Column(DateTime, default=datetime.now, nullable=False)
     updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now, nullable=False)
 
-    ticker_ref = relationship('Ticker', backref='notes')
+    ticker_ref = relationship('Ticker', backref=backref('notes', cascade='all, delete-orphan'))
 
     def __repr__(self):
         return f"<TickerNote(id={self.id}, ticker='{self.ticker}')>"
@@ -442,3 +442,33 @@ class AssetPriceHistory(Base):
 
     def __repr__(self):
         return f"<AssetPriceHistory(asset_id={self.asset_id}, date='{self.date}', close={self.close})>"
+
+
+class FundamentalAnalysis(Base):
+    """Fundamental analysis indicators for a ticker."""
+    __tablename__ = 'fundamental_analysis'
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    ticker = Column(String(32), ForeignKey('tickers.ticker', ondelete='CASCADE'), nullable=False)
+    date = Column(DateTime, default=datetime.now, nullable=False)
+    
+    # Indicators
+    eps = Column(Float, nullable=True)
+    eps_forward = Column(Float, nullable=True)
+    pe_trailing = Column(Float, nullable=True)
+    pe_forward = Column(Float, nullable=True)
+    revenue = Column(Float, nullable=True)
+    market_cap = Column(Float, nullable=True)
+    ebitda = Column(Float, nullable=True)
+    cash_flow = Column(Float, nullable=True)
+    profit_margin = Column(Float, nullable=True)
+    
+    # Growth & Forward
+    revenue_growth = Column(Float, nullable=True)
+    earnings_growth = Column(Float, nullable=True)
+    peg_ratio = Column(Float, nullable=True)
+
+    ticker_ref = relationship('Ticker', backref='fundamental_analyses')
+
+    def __repr__(self):
+        return f"<FundamentalAnalysis(id={self.id}, ticker='{self.ticker}', date='{self.date}')>"
