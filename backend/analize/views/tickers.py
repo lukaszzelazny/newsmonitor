@@ -36,8 +36,18 @@ def fetch_fundamental_data(ticker):
         cash_flow = info.get('freeCashflow')
         profit_margin = info.get('profitMargins')
         
-        # Save current data to DB
+        # Save current data to DB (Delete existing for today to prevent duplicates, then Insert)
         with engine.connect() as conn:
+             today = datetime.now().date()
+             
+             # Delete existing record for today
+             delete_query = text(f"""
+                DELETE FROM {schema}.fundamental_analysis 
+                WHERE ticker = :ticker AND date::date = :today
+             """)
+             conn.execute(delete_query, {'ticker': ticker, 'today': today})
+             
+             # Insert new record
              insert_query = text(f"""
                 INSERT INTO {schema}.fundamental_analysis 
                 (ticker, date, eps, eps_forward, pe_trailing, pe_forward, revenue, revenue_growth, earnings_growth, peg_ratio, market_cap, ebitda, cash_flow, profit_margin)
@@ -134,49 +144,30 @@ def fetch_fundamental_data(ticker):
                                 pe_trailing_hist = close_price_pln / eps_hist
 
                         with engine.connect() as conn:
-                            # Check existence
-                            check_query = text(f"""
-                                SELECT id FROM {schema}.fundamental_analysis 
+                            # Delete existing for this date to prevent duplicates
+                            delete_query = text(f"""
+                                DELETE FROM {schema}.fundamental_analysis 
                                 WHERE ticker = :ticker AND date::date = :date
                             """)
-                            existing_id = conn.execute(check_query, {'ticker': ticker, 'date': date_val}).fetchone()
+                            conn.execute(delete_query, {'ticker': ticker, 'date': date_val})
                             
-                            if existing_id:
-                                update_query = text(f"""
-                                    UPDATE {schema}.fundamental_analysis
-                                    SET eps = :eps, pe_trailing = :pe_trailing, 
-                                        revenue = :revenue, market_cap = :market_cap,
-                                        ebitda = :ebitda, cash_flow = :cash_flow,
-                                        profit_margin = :profit_margin
-                                    WHERE id = :id
-                                """)
-                                conn.execute(update_query, {
-                                    'id': existing_id[0],
-                                    'eps': eps_hist,
-                                    'pe_trailing': pe_trailing_hist,
-                                    'revenue': rev,
-                                    'market_cap': market_cap_hist,
-                                    'ebitda': ebitda_hist,
-                                    'cash_flow': cf_hist,
-                                    'profit_margin': profit_margin_hist
-                                })
-                            else:
-                                insert_query = text(f"""
-                                    INSERT INTO {schema}.fundamental_analysis 
-                                    (ticker, date, eps, pe_trailing, revenue, market_cap, ebitda, cash_flow, profit_margin)
-                                    VALUES (:ticker, :date, :eps, :pe_trailing, :revenue, :market_cap, :ebitda, :cash_flow, :profit_margin)
-                                """)
-                                conn.execute(insert_query, {
-                                    'ticker': ticker,
-                                    'date': date_val,
-                                    'eps': eps_hist,
-                                    'pe_trailing': pe_trailing_hist,
-                                    'revenue': rev,
-                                    'market_cap': market_cap_hist,
-                                    'ebitda': ebitda_hist,
-                                    'cash_flow': cf_hist,
-                                    'profit_margin': profit_margin_hist
-                                })
+                            # Insert
+                            insert_query = text(f"""
+                                INSERT INTO {schema}.fundamental_analysis 
+                                (ticker, date, eps, pe_trailing, revenue, market_cap, ebitda, cash_flow, profit_margin)
+                                VALUES (:ticker, :date, :eps, :pe_trailing, :revenue, :market_cap, :ebitda, :cash_flow, :profit_margin)
+                            """)
+                            conn.execute(insert_query, {
+                                'ticker': ticker,
+                                'date': date_val,
+                                'eps': eps_hist,
+                                'pe_trailing': pe_trailing_hist,
+                                'revenue': rev,
+                                'market_cap': market_cap_hist,
+                                'ebitda': ebitda_hist,
+                                'cash_flow': cf_hist,
+                                'profit_margin': profit_margin_hist
+                            })
                             conn.commit()
 
                     except Exception as e:

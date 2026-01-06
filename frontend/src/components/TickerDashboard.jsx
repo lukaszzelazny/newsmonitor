@@ -10,6 +10,35 @@ import PortfolioView from './PortfolioView';
 import RecommendationsView from './RecommendationsView';
 import { useTheme } from '../context/ThemeContext';
 
+const CollapsibleSection = ({ title, children, defaultExpanded = true, count = null }) => {
+    const [isExpanded, setIsExpanded] = useState(defaultExpanded);
+    return (
+        <div className="bg-white dark:bg-gray-800 rounded-lg shadow overflow-hidden mb-4">
+            <button 
+                onClick={() => setIsExpanded(!isExpanded)}
+                className="w-full px-4 py-3 bg-gray-50 dark:bg-gray-700 flex items-center justify-between text-left focus:outline-none hover:bg-gray-100 dark:hover:bg-gray-600 transition-colors"
+            >
+                <div className="flex items-center gap-2">
+                    <span className="font-semibold text-gray-900 dark:text-white">{title}</span>
+                    {count !== null && (
+                         <span className="text-xs bg-gray-200 dark:bg-gray-600 px-2 py-0.5 rounded-full text-gray-700 dark:text-gray-200">
+                             {count}
+                         </span>
+                    )}
+                </div>
+                <span className="text-gray-500 dark:text-gray-400 text-sm">
+                    {isExpanded ? '▲ Zwiń' : '▼ Rozwiń'}
+                </span>
+            </button>
+            {isExpanded && (
+                <div className="p-4 border-t border-gray-200 dark:border-gray-700">
+                    {children}
+                </div>
+            )}
+        </div>
+    );
+};
+
 export default function TickerDashboard() {
     const { theme, toggleTheme } = useTheme();
     const [showAddTickerModal, setShowAddTickerModal] = useState(false);
@@ -112,34 +141,6 @@ export default function TickerDashboard() {
              console.error(e);
              showNotification('Błąd sieci', 'error');
         }
-    };
-    const CollapsibleSection = ({ title, children, defaultExpanded = true, count = null }) => {
-        const [isExpanded, setIsExpanded] = useState(defaultExpanded);
-        return (
-            <div className="bg-white dark:bg-gray-800 rounded-lg shadow overflow-hidden mb-4">
-                <button 
-                    onClick={() => setIsExpanded(!isExpanded)}
-                    className="w-full px-4 py-3 bg-gray-50 dark:bg-gray-700 flex items-center justify-between text-left focus:outline-none hover:bg-gray-100 dark:hover:bg-gray-600 transition-colors"
-                >
-                    <div className="flex items-center gap-2">
-                        <span className="font-semibold text-gray-900 dark:text-white">{title}</span>
-                        {count !== null && (
-                             <span className="text-xs bg-gray-200 dark:bg-gray-600 px-2 py-0.5 rounded-full text-gray-700 dark:text-gray-200">
-                                 {count}
-                             </span>
-                        )}
-                    </div>
-                    <span className="text-gray-500 dark:text-gray-400 text-sm">
-                        {isExpanded ? '▲ Zwiń' : '▼ Rozwiń'}
-                    </span>
-                </button>
-                {isExpanded && (
-                    <div className="p-4 border-t border-gray-200 dark:border-gray-700">
-                        {children}
-                    </div>
-                )}
-            </div>
-        );
     };
 
     useEffect(() => {
