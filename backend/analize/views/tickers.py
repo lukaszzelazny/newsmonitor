@@ -867,11 +867,12 @@ def delete_note(note_id):
 
 @tickers_bp.route('/api/tickers/<ticker>/update', methods=['POST'])
 def update_ticker_details(ticker):
-    """Endpoint do aktualizacji szczegółów tickera (nazwa, sektor)"""
+    """Endpoint do aktualizacji szczegółów tickera (nazwa, sektor, scrape_url)"""
     try:
         data = request.get_json()
         company_name = data.get('company_name')
         sector = data.get('sector')
+        scrape_url = data.get('scrape_url')
         
         # We allow partial updates
         
@@ -890,6 +891,10 @@ def update_ticker_details(ticker):
             if sector is not None:
                 updates.append("sector = :sector")
                 params['sector'] = sector
+            
+            if scrape_url is not None:
+                updates.append("scrape_url = :scrape_url")
+                params['scrape_url'] = scrape_url
                 
             if not updates:
                 return jsonify({'success': True, 'message': 'Nothing to update'})
@@ -903,3 +908,74 @@ def update_ticker_details(ticker):
     except Exception as e:
         print(f"Error updating ticker details: {e}")
         return jsonify({'error': str(e)}), 500
+
+@tickers_bp.route('/api/analyze_as_contract', methods=['POST'])
+def analyze_as_contract():
+    """Endpoint do ręcznego wymuszenia analizy newsa jako kontrakt"""
+    try:
+        data = request.get_json()
+        news_id = data.get('news_id')
+        ticker = data.get('ticker')
+        
+        if not news_id:
+            return jsonify({'error': 'Missing news_id'}), 400
+            
+        db = Database()
+        
+        # Uruchom analizę z flagą force_contract=True
+        # Używamy mode='id' dla konkretnego artykułu
+        from backend.ai.ai_analist import analyze_articles
+        result = analyze_articles(db, mode='id', article_id=news_id, skip_relevance_check=True, force_contract=True, forced_ticker=ticker)
+        
+        db.close()
+        
+        return jsonify(result)
+        
+    except Exception as e:
+        print(f"Error analyzing as contract: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+
+@tickers_bp.route('/api/contracts/<ticker>')
+def get_contracts(ticker):
+    """Endpoint zwracający listę kontraktów dla tickera"""
+    
+    # Resolve ticker to match DB format (e.g. COG -> COG.PL)
+    resolved_ticker = resolve_db_ticker(engine, schema, ticker)
+
+    query = text(f"""
+    SELECT 
+        c.date,
+        c.contract_value,
+        c.contract_summary,
+        c.investment_relevance,
+        c.key_risks
+    FROM {schema}.contracts c
+    JOIN {schema}.analysis_result ar ON c.analysis_id = ar.id
+    JOIN {schema}.news_articles na ON ar.news_id = na.id
+    WHERE c.ticker = :ticker
+    AND na.id NOT IN (SELECT news_id FROM {schema}.news_not_analyzed WHERE reason = 'duplicate')
+    ORDER BY c.date DESC
+    """)
+
+    with engine.connect() as conn:
+        result = conn.execute(query, {'ticker': resolved_ticker})
+        contracts = []
+        for row in result:
+            key_risks = []
+            try:
+                if row[4]:
+                    key_risks = json.loads(row[4])
+            except:
+                pass
+                
+            contracts.append({
+                'date': row[0].strftime('%Y-%m-%d') if row[0] else None,
+                'contract_value': row[1],
+                'contract_summary': row[2],
+                'investment_relevance': row[3],
+                'key_risks': key_risks
+            })
+
+    return jsonify(contracts)

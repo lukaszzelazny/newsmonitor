@@ -63,6 +63,7 @@ class Ticker(Base):
     in_portfolio = Column(Integer, default=0, nullable=False)  # 0 = nie, 1 = tak
     is_favorite = Column(Boolean, default=False, nullable=True) # Observed tickers
     exchange = Column(String(50), default='GPW', nullable=False)
+    scrape_url = Column(String(500), nullable=True) # Custom scraping URL
 
     def __repr__(self):
         return f"<Ticker(ticker='{self.ticker}')>"
@@ -144,6 +145,27 @@ class BrokerageAnalysis(Base):
 
     def __repr__(self):
         return f"<BrokerageAnalysis(id={self.id}, brokerage_house='{self.brokerage_house}', ticker='{self.ticker}')>"
+
+
+class Contract(Base):
+    """Details about a new contract found in news."""
+    __tablename__ = 'contracts'
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    analysis_id = Column(Integer, ForeignKey('analysis_result.id', ondelete='CASCADE'), nullable=False)
+    ticker = Column(String(32), ForeignKey('tickers.ticker', ondelete='CASCADE'), nullable=False)
+    contract_value = Column(String, nullable=True)
+    contract_summary = Column(String, nullable=True)
+    investment_relevance = Column(String, nullable=True)
+    key_risks = Column(String, nullable=True)  # Stored as JSON string or text
+    date = Column(Date, nullable=False)
+
+    analysis = relationship('AnalysisResult', backref=backref('contract', uselist=False))
+    ticker_ref = relationship('Ticker', backref='contracts')
+
+    def __repr__(self):
+        return f"<Contract(id={self.id}, ticker='{self.ticker}', value='{self.contract_value}')>"
+
 
 class NewsNotAnalyzed(Base):
     __tablename__ = 'news_not_analyzed'

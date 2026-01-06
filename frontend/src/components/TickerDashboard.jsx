@@ -48,7 +48,9 @@ export default function TickerDashboard() {
     const [brokerageAnalyses, setBrokerageAnalyses] = useState([]);
     const [priceHistory, setPriceHistory] = useState([]);
     const [fundamentalData, setFundamentalData] = useState([]);
+    const [contracts, setContracts] = useState([]);
     const [loading, setLoading] = useState(false);
+    const [loadingContracts, setLoadingContracts] = useState(false);
     const [loadingChart, setLoadingChart] = useState(false);
     const [loadingFundamental, setLoadingFundamental] = useState(false);
     const [loadingPrices, setLoadingPrices] = useState(false);
@@ -86,7 +88,7 @@ export default function TickerDashboard() {
     const notificationTimeout = useRef(null);
 
     const [isEditingDetails, setIsEditingDetails] = useState(false);
-    const [editForm, setEditForm] = useState({ company_name: '', sector: '' });
+    const [editForm, setEditForm] = useState({ company_name: '', sector: '', scrape_url: '' });
 
     const showNotification = (message, type = 'success') => {
         setNotification({ message, type });
@@ -113,7 +115,8 @@ export default function TickerDashboard() {
     const handleEditClick = () => {
         setEditForm({
             company_name: selectedTicker.company_name || '',
-            sector: selectedTicker.sector || ''
+            sector: selectedTicker.sector || '',
+            scrape_url: selectedTicker.scrape_url || ''
         });
         setIsEditingDetails(true);
     };
@@ -146,15 +149,6 @@ export default function TickerDashboard() {
     useEffect(() => {
         fetchTickers();
     }, [days]);
-
-    useEffect(() => {
-        if (selectedTicker) {
-            fetchAnalyses(selectedTicker.ticker);
-            fetchBrokerageAnalyses(selectedTicker.ticker);
-            fetchPriceHistory(selectedTicker.ticker);
-            fetchFundamentalData(selectedTicker.ticker);
-        }
-    }, [selectedTicker, days]);
 
     const fetchTickers = async () => {
         try {
@@ -213,6 +207,30 @@ export default function TickerDashboard() {
             setFundamentalData([]);
         }
     };
+
+    const fetchContracts = async (ticker) => {
+        setLoadingContracts(true);
+        try {
+            const response = await fetch(`/api/contracts/${ticker}`);
+            const data = await response.json();
+            setContracts(data);
+        } catch (error) {
+            console.error('Error fetching contracts:', error);
+            setContracts([]);
+        } finally {
+            setLoadingContracts(false);
+        }
+    };
+
+    useEffect(() => {
+        if (selectedTicker) {
+            fetchAnalyses(selectedTicker.ticker);
+            fetchBrokerageAnalyses(selectedTicker.ticker);
+            fetchPriceHistory(selectedTicker.ticker);
+            fetchFundamentalData(selectedTicker.ticker);
+            fetchContracts(selectedTicker.ticker);
+        }
+    }, [selectedTicker, days]);
 
     const handleFetchFundamental = async () => {
         if (!selectedTicker) return;
@@ -681,6 +699,17 @@ export default function TickerDashboard() {
                                                                 placeholder="Sektor"
                                                                 className="px-2 py-1 border rounded text-sm dark:bg-gray-700 dark:text-white dark:border-gray-600"
                                                             />
+                                                        </div>
+                                                        <div className="flex gap-2">
+                                                            <input 
+                                                                type="text" 
+                                                                value={editForm.scrape_url}
+                                                                onChange={(e) => setEditForm({...editForm, scrape_url: e.target.value})}
+                                                                placeholder="URL do scrapowania (opcjonalnie)"
+                                                                className="px-2 py-1 border rounded text-sm dark:bg-gray-700 dark:text-white dark:border-gray-600 w-full"
+                                                            />
+                                                        </div>
+                                                        <div className="flex gap-2">
                                                             <button onClick={handleSaveDetails} className="bg-green-600 text-white px-3 py-1 rounded text-sm hover:bg-green-700">Zapisz</button>
                                                             <button onClick={() => setIsEditingDetails(false)} className="bg-gray-400 text-white px-3 py-1 rounded text-sm hover:bg-gray-500">Anuluj</button>
                                                         </div>
@@ -796,6 +825,53 @@ export default function TickerDashboard() {
                                         <TechnicalAnalysis ticker={selectedTicker.ticker} />
                                     </CollapsibleSection>
 
+                                    <CollapsibleSection title="Kontrakty" count={contracts.length} defaultExpanded={false}>
+                                        <div className="overflow-x-auto">
+                                            <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
+                                                <thead className="bg-gray-50 dark:bg-gray-700">
+                                                    <tr>
+                                                        <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">Data</th>
+                                                        <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">Wartość</th>
+                                                        <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">Podsumowanie</th>
+                                                        <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">Znaczenie</th>
+                                                        <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">Ryzyka</th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody className="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700">
+                                                    {loadingContracts ? (
+                                                        <tr>
+                                                            <td colSpan="5" className="px-3 py-4 text-center text-sm text-gray-500 dark:text-gray-400">
+                                                                Ładowanie kontraktów...
+                                                            </td>
+                                                        </tr>
+                                                    ) : contracts.length === 0 ? (
+                                                        <tr>
+                                                            <td colSpan="5" className="px-3 py-4 text-center text-sm text-gray-500 dark:text-gray-400">
+                                                                Brak wykrytych kontraktów.
+                                                            </td>
+                                                        </tr>
+                                                    ) : (
+                                                        contracts.map((contract, idx) => (
+                                                            <tr key={idx} className="hover:bg-gray-50 dark:hover:bg-gray-750">
+                                                                <td className="px-3 py-2 whitespace-nowrap text-xs text-gray-700 dark:text-gray-300 align-top">{contract.date}</td>
+                                                                <td className="px-3 py-2 text-xs text-gray-900 dark:text-white font-medium align-top">{contract.contract_value || '-'}</td>
+                                                                <td className="px-3 py-2 text-xs text-gray-700 dark:text-gray-300 align-top">{contract.contract_summary}</td>
+                                                                <td className="px-3 py-2 text-xs text-gray-700 dark:text-gray-300 align-top">{contract.investment_relevance}</td>
+                                                                <td className="px-3 py-2 text-xs text-gray-700 dark:text-gray-300 align-top">
+                                                                    <ul className="list-disc list-inside">
+                                                                        {contract.key_risks && contract.key_risks.map((risk, rIdx) => (
+                                                                            <li key={rIdx}>{risk}</li>
+                                                                        ))}
+                                                                    </ul>
+                                                                </td>
+                                                            </tr>
+                                                        ))
+                                                    )}
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                    </CollapsibleSection>
+
                                     <CollapsibleSection title="Analiza Fundamentalna" defaultExpanded={false}>
                                         <div className="flex justify-end mb-4">
                                             <button 
@@ -890,13 +966,42 @@ export default function TickerDashboard() {
                                                                         key={idx}
                                                                         className="border border-gray-200 dark:border-gray-700 rounded-lg p-3 hover:shadow-md transition-shadow relative"
                                                                     >
-                                                                        <button
-                                                                            onClick={() => markAsDuplicate(analysis.news_id)}
-                                                                            className="absolute top-1.5 right-1.5 w-6 h-6 flex items-center justify-center bg-red-500 hover:bg-red-600 text-white rounded-full text-sm font-bold transition-colors"
-                                                                            title="Oznacz jako duplikat"
-                                                                        >
-                                                                            ✕
-                                                                        </button>
+                                                                        <div className="absolute top-1.5 right-1.5 flex gap-2">
+                                                                            <button
+                                                                                onClick={async () => {
+                                                                                    if (confirm('Czy na pewno chcesz przeanalizować ten news jako kontrakt?')) {
+                                                                                        try {
+                                                                                            const response = await fetch('/api/analyze_as_contract', {
+                                                                                                method: 'POST',
+                                                                                                headers: { 'Content-Type': 'application/json' },
+                                                                                                body: JSON.stringify({ news_id: analysis.news_id, ticker: selectedTicker.ticker })
+                                                                                            });
+                                                                                            const data = await response.json();
+                                                                                            if (response.ok) {
+                                                                                                showNotification('Zlecono analizę kontraktu. Odśwież widok.', 'success');
+                                                                                                fetchAnalyses(selectedTicker.ticker);
+                                                                                                fetchContracts(selectedTicker.ticker);
+                                                                                            } else {
+                                                                                                showNotification(`Błąd: ${data.error}`, 'error');
+                                                                                            }
+                                                                                        } catch (e) {
+                                                                                            showNotification('Błąd sieci', 'error');
+                                                                                        }
+                                                                                    }
+                                                                                }}
+                                                                                className="px-2 py-0.5 bg-purple-500 hover:bg-purple-600 text-white rounded text-xs font-medium transition-colors"
+                                                                                title="Przeanalizuj jako kontrakt"
+                                                                            >
+                                                                                Umowa
+                                                                            </button>
+                                                                            <button
+                                                                                onClick={() => markAsDuplicate(analysis.news_id)}
+                                                                                className="w-6 h-6 flex items-center justify-center bg-red-500 hover:bg-red-600 text-white rounded-full text-sm font-bold transition-colors"
+                                                                                title="Oznacz jako duplikat"
+                                                                            >
+                                                                                ✕
+                                                                            </button>
+                                                                        </div>
 
                                                                         <div className="flex items-start gap-3">
                                                                             <div className="flex-shrink-0">

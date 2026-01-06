@@ -1,7 +1,7 @@
 """Module for reusable scraping actions."""
 
 from backend.config import Config
-from backend.database import Database, Portfolio
+from backend.database import Database, Portfolio, Ticker
 from backend.scraper import Scraper
 from backend.scraper.providers.strefa_investorow_provider import StrefaInwestorowProvider
 from backend.portfolio.importer import XtbImporter
@@ -21,20 +21,40 @@ def run_ticker_scraper(ticker: str, page_from: int = 0, page_to: int = 4):
     """
     # config = Config()
     db = Database()
-    company_name = db.get_company_name_by_ticker(ticker)
+    
+    # Get ticker object to check for scrape_url
+    session = db.Session()
+    ticker_obj = session.query(Ticker).filter(Ticker.ticker == ticker).first()
+    
+    company_name = None
+    scrape_url = None
+    
+    if ticker_obj:
+        company_name = ticker_obj.company_name
+        scrape_url = ticker_obj.scrape_url
+    
+    session.close()
 
     if not company_name:
         db.close()
         return {"error": f"Ticker '{ticker}' not found in the database."}
 
-    provider = StrefaInwestorowProvider()
+    if scrape_url:
+        print(f"Using custom scrape URL for {ticker}: {scrape_url}")
+        provider = StrefaInwestorowProvider(base_url=scrape_url)
+    else:
+        provider = StrefaInwestorowProvider()
+        
     scraper = Scraper(db)
     
     try:
-        stats = scraper.scrape_ticker(provider, company_name, page_from, page_to)
+        # Pass scrape_url to indicate we are using a specific URL (implies we might want to relax name filtering)
+        stats = scraper.scrape_ticker(provider, company_name, page_from, page_to, use_custom_url=bool(scrape_url))
         scraper.print_summary()
         return stats
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         return {"error": f"An error occurred: {e}"}
     finally:
         db.close()

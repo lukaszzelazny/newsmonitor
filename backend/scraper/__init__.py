@@ -281,7 +281,7 @@ class Scraper:
         print(f"\nFinished at: {datetime.now()}")
         print(f"{'='*60}")
 
-    def scrape_ticker(self, provider: BaseProvider, company_name: str, page_from: int = 0, page_to: int = 4) -> dict:
+    def scrape_ticker(self, provider: BaseProvider, company_name: str, page_from: int = 0, page_to: int = 4, use_custom_url: bool = False) -> dict:
         """
         Scrape articles for a specific company.
         """
@@ -291,6 +291,7 @@ class Scraper:
         print(f"Scraping for: {simple_company_name} (Original: {company_name})")
         print(f"Provider: {provider.name}")
         print(f"Page range: {page_from} to {page_to}")
+        print(f"Using Custom URL: {use_custom_url}")
         print(f"{'='*60}")
 
         total_articles = 0
@@ -316,17 +317,32 @@ class Scraper:
                     # Use regex with word boundaries for precise matching
                     pattern = r'\b' + re.escape(simple_company_name.lower()) + r'\b'
                     
-                    title_match = re.search(pattern, article.title.lower())
+                    is_match = False
                     
-                    # Fetch content once
-                    if not article.content:
-                        article.content = provider.clean_content(provider.get_article_content(article))
+                    # If using custom URL, we assume all articles are relevant, but we might still check name if needed.
+                    # However, users usually set custom URL to a ticker-specific page (e.g. news for a specific stock).
+                    # So we can be more lenient or skip name check.
+                    if use_custom_url:
+                        is_match = True
+                        print(f"  → Matched (Custom URL): {article.title[:60]}")
+                    else:
+                        title_match = re.search(pattern, article.title.lower())
+                        
+                        # Fetch content once
+                        if not article.content:
+                            article.content = provider.clean_content(provider.get_article_content(article))
 
-                    content_match = None
-                    if article.content:
-                        content_match = re.search(pattern, article.content.lower())
+                        content_match = None
+                        if article.content:
+                            content_match = re.search(pattern, article.content.lower())
+                            
+                        if title_match or content_match:
+                            is_match = True
 
-                    if title_match or content_match:
+                    if is_match:
+                        # Fetch content if not fetched yet
+                        if not article.content:
+                            article.content = provider.clean_content(provider.get_article_content(article))
                         # 1. Check for negative keywords
                         has_negative, keyword = contains_pattern(NEGATIVE_KEYWORDS, article.title, article.content or "")
                         if has_negative:

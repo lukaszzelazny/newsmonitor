@@ -142,6 +142,26 @@
   "negative_keywords": [
     "Komunikat Giełdy Papierów Wartościowych", "GPW: komunikat", "DZIEŃ NA GPW", "Kalendarium rynku"
   ],
+  "new_contract": [
+    "podpisała umowę",
+    "zawarła umowę",
+    "warunkowa umowa",
+    "kontrakt o wartości",
+    "zamówienie o wartości",
+    "umowa sprzedaży",
+    "umowa dostawy",
+    "umowa wykonawcza",
+    "list intencyjny",
+    "LOI",
+    "memorandum of understanding",
+    "sprzedaż praw do projektu",
+    "sprzedaż aktywów",
+    "backlog",
+    "portfel zamówień",
+    "zlecenie",
+    "pozyskała kontrakt",
+    "największy kontrakt"
+  ],
   "tenders_and_contracts": [
     "najkorzystniejsza oferta",
     "złożyła najkorzystniejszą ofertę",
@@ -208,4 +228,3 @@
     "Skrót wiadomości"
   ]
 }
-

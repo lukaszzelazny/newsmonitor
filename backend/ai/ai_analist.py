@@ -5,10 +5,11 @@ from openai import OpenAI
 from dotenv import load_dotenv
 from collections import defaultdict
 from backend.database import Database, NewsArticle, AnalysisResult, TickerSentiment, Ticker, \
-    SectorSentiment, BrokerageAnalysis, NewsNotAnalyzed
+    SectorSentiment, BrokerageAnalysis, NewsNotAnalyzed, Contract
 from backend.tools.normalizer import get_normalizer
 from sklearn.metrics.pairwise import cosine_similarity
 from sqlalchemy import text
+from datetime import datetime, date as date_type
 
 normalizer = get_normalizer()
 
@@ -36,6 +37,7 @@ RELEVANT_PATTERNS = load_patterns(name="revelant_patterns")
 # Nieistotne wzorce
 IRRELEVANT_PATTERNS = load_patterns(name="irrevelant_patterns")
 NEGATIVE_KEYWORDS = load_patterns(name="negative_keywords")
+CONTRACT_PATTERNS = load_patterns(name="new_contract")
 
 NEWS_SUMMARY_PATTERN = load_patterns(name="summary_patterns")
 
@@ -203,6 +205,63 @@ def save_not_analyzed(db: Database, news_id: int, reason: str, relevance_score: 
     finally:
         session.close()
 
+PROMPT_CONTRACT_V1 = """
+Jesteś analitykiem giełdowym.
+Twoim zadaniem jest **zrozumienie i podsumowanie informacji o kontrakcie / umowie** zawartej przez spółkę.
+
+Na tym etapie:
+- NIE znasz kapitalizacji spółki,
+- NIE znasz historycznych danych,
+- NIE porównujesz do skali biznesu.
+
+Skupiasz się WYŁĄCZNIE na treści newsa.
+
+---
+
+## CO MASZ ZROBIĆ
+
+1. Ustal, czy news faktycznie dotyczy:
+   - kontraktu,
+   - umowy,
+   - sprzedaży aktywów,
+   - projektu generującego przyszłe przychody.
+
+2. Wyodrębnij:
+   - kwotę kontraktu (jeśli podana),
+   - charakter umowy,
+   - czy jest warunkowa.
+
+3. Odpowiedz na pytania:
+   - Czego dotyczy kontrakt?
+   - Czy dotyczy core działalności spółki?
+   - Czy potencjalnie wpływa na przyszłe przychody?
+
+4. Zidentyfikuj ryzyka:
+   - warunki zawieszające,
+   - brak gwarancji realizacji,
+   - niepewny harmonogram.
+
+---
+
+## OUTPUT – ZWRÓĆ WYŁĄCZNIE POPRAWNY JSON
+
+{
+  "is_contract_news": true,
+  "typ": "Spółka",
+  "contract_value": "<kwota + waluta lub null>",
+  "contract_summary": "1–2 zdania: czego dotyczy umowa",
+  "investment_relevance": "krótkie wyjaśnienie dlaczego to może (lub nie musi) mieć znaczenie dla inwestora",
+  "key_risks": [
+    "krótkie hasła, max 3"
+  ],
+  "related_tickers": ["<TICKER>"], 
+  "ticker_impact": <liczba - zazwyczaj pozytywna dla kontraktu, np. 0.3 do 0.8>,
+  "confidence": <liczba 0-1>,
+  "occasion": "contract",
+  "reason": "Podpisanie znaczącej umowy."
+}
+Zwróć uwagę, aby related_tickers zawierało ticker spółki której dotyczy kontrakt (z kontekstu newsa).
+"""
 
 PROMPT_NEWS = """
 Jesteś doświadczonym analitykiem giełdowym.
@@ -455,19 +514,24 @@ def analyze_summary(headline, lead):
     )
     return response.choices[0].message.content
 
-def analyze_news(headline, lead):
+def analyze_news(headline, lead, is_contract=False):
     """
     Analizuje pojedynczy news za pomocą OpenAI API.
 
     Args:
         headline: Tytuł artykułu
         lead: Treść/lead artykułu
+        is_contract: Czy użyć promptu dla kontraktów
 
     Returns:
         JSON string z wynikiem analizy
     """
     ticker_context = normalizer.get_prompt_context()
-    prompt = PROMPT_NEWS.format(headline=headline, lead=lead, ticker_context=ticker_context)
+    
+    if is_contract:
+        prompt = f"News:\n{headline}\n{lead}\n\n{PROMPT_CONTRACT_V1}"
+    else:
+        prompt = PROMPT_NEWS.format(headline=headline, lead=lead, ticker_context=ticker_context)
 
     response = client.chat.completions.create(
         model="gpt-4o",  # Zaktualizowana nazwa modelu
@@ -545,7 +609,7 @@ def is_article_analyzed(db: Database, article_id: int) -> bool:
         session.close()
 
 
-def _save_single_analysis(session, news_id: int, analysis_data: dict, analysis_result_id: int):
+def _save_single_analysis(session, news_id: int, analysis_data: dict, analysis_result_id: int, forced_ticker: str = None):
     """
     Pomocnicza funkcja do zapisu pojedynczej analizy.
 
@@ -554,9 +618,19 @@ def _save_single_analysis(session, news_id: int, analysis_data: dict, analysis_r
         news_id: ID artykułu
         analysis_data: Dict z danymi analizy
         analysis_result_id: ID utworzonego rekordu AnalysisResult
+        forced_ticker: Opcjonalny ticker wymuszony z zewnątrz
     """
     # Pobierz pola z JSON
     related_tickers_raw = analysis_data.get('related_tickers', [])
+    
+    # Jeśli wymuszono ticker i nie ma go w wynikach AI, dodaj go
+    if forced_ticker:
+        normalized_forced, _ = normalizer.normalize(forced_ticker)
+        if normalized_forced not in [normalizer.normalize(t)[0] for t in related_tickers_raw]:
+            related_tickers_raw.append(forced_ticker)
+            print(f"DEBUG: Added forced ticker: {forced_ticker}")
+
+    print(f"DEBUG: related_tickers_raw from AI (plus forced): {related_tickers_raw}")
     # Normalizuj tickery
     related_tickers = []
     for ticker_raw in related_tickers_raw:
@@ -646,8 +720,43 @@ def _save_single_analysis(session, news_id: int, analysis_data: dict, analysis_r
         )
         session.add(brokerage_analysis)
 
+    # Obsługa kontraktów
+    is_contract = analysis_data.get('is_contract_news')
+    print(f"DEBUG: Checking contract save. is_contract_news={is_contract}, related_tickers={related_tickers}")
+    
+    if is_contract:
+        ticker_for_contract = related_tickers[0] if related_tickers else None
+        
+        # Jeśli brak tickera z AI, spróbuj pobrać z istniejących powiązań newsa (jeśli to re-analiza)
+        if not ticker_for_contract and news_id:
+             # Try to find associated ticker from previous analyses if any? 
+             # Or check text content for ticker pattern again?
+             pass
 
-def save_analysis_results(db: Database, news_id: int, analysis_json: str):
+        if ticker_for_contract:
+            print(f"DEBUG: Dodaję Contract details dla {ticker_for_contract}")
+            contract = Contract(
+                analysis_id=analysis_result_id,
+                ticker=ticker_for_contract,
+                contract_value=analysis_data.get('contract_value'),
+                contract_summary=analysis_data.get('contract_summary'),
+                investment_relevance=analysis_data.get('investment_relevance'),
+                key_risks=json.dumps(analysis_data.get('key_risks', []), ensure_ascii=False),
+                date=datetime.now().date() # Domyślna data, zostanie nadpisana jeśli news_id jest poprawny
+            )
+            
+            # Pobierz datę newsa
+            if news_id:
+                news_obj = session.query(NewsArticle).get(news_id)
+                if news_obj and news_obj.date:
+                    contract.date = news_obj.date
+            
+            session.add(contract)
+        else:
+            print("DEBUG: Nie znaleziono tickera dla kontraktu - pomijam zapis Contract")
+
+
+def save_analysis_results(db: Database, news_id: int, analysis_json: str, forced_ticker: str = None):
     """
     Zapisuje wyniki analizy do bazy danych.
     Obsługuje zarówno pojedynczą analizę (obiekt JSON), jak i listę analiz (array JSON).
@@ -656,6 +765,7 @@ def save_analysis_results(db: Database, news_id: int, analysis_json: str):
         db: Instancja Database
         news_id: ID artykułu
         analysis_json: JSON string z wynikiem analizy (obiekt lub array)
+        forced_ticker: Opcjonalny ticker wymuszony przez użytkownika
 
     Returns:
         ID utworzonego rekordu AnalysisResult (dla pojedynczej analizy)
@@ -770,7 +880,8 @@ def cleanJson(analysis_json: str) -> str:
 
 
 def analyze_articles(db: Database, mode: str = 'unanalyzed', article_id: int = None,
-                     relevance_threshold: float = 0.50, telegram=None, skip_relevance_check: bool = False):
+                     relevance_threshold: float = 0.50, telegram=None, skip_relevance_check: bool = False,
+                     force_contract: bool = False, forced_ticker: str = None):
     """
     Główna funkcja do analizy artykułów z wstępną filtracją istotności.
 
@@ -781,6 +892,8 @@ def analyze_articles(db: Database, mode: str = 'unanalyzed', article_id: int = N
         relevance_threshold: Próg istotności dla embeddings (0-1)
         telegram: Instancja Telegram do wysyłania powiadomień
         skip_relevance_check: Jeśli True, pomija sprawdzanie wzorców i od razu analizuje przez AI
+        force_contract: Jeśli True, wymusza analizę jako kontrakt
+        forced_ticker: Wymuszony ticker (np. przy ręcznej analizie)
 
     Returns:
         Dict z informacją o przetworzonych artykułach
@@ -818,8 +931,8 @@ def analyze_articles(db: Database, mode: str = 'unanalyzed', article_id: int = N
         try:
             print(f"\n=== Przetwarzam artykuł ID={article.id}: {article.title[:50]}...")
 
-            # Sprawdź czy artykuł już został przeanalizowany
-            if is_article_analyzed(db, article.id):
+            # Sprawdź czy artykuł już został przeanalizowany (chyba że wymuszamy analizę kontraktu)
+            if not force_contract and is_article_analyzed(db, article.id):
                 print(
                     f"⊘ Artykuł ID={article.id} został już wcześniej przeanalizowany - pomijam")
                 results.append({
@@ -885,9 +998,30 @@ def analyze_articles(db: Database, mode: str = 'unanalyzed', article_id: int = N
                     })
                     continue
 
+            # Sprawdź czy to kontrakt (tylko jeśli nie podsumowanie)
+            is_contract = force_contract
+            if not has_summary and not is_contract:
+                # Embedding dla tytułu
+                if not hasattr(is_news_relevant, '_contract_cache'):
+                    print("Generuję embeddingi wzorców kontraktów...")
+                    contract_patterns = CONTRACT_PATTERNS or []
+                    if not contract_patterns:
+                        print("⚠ Ostrzeżenie: Brak wzorców kontraktów w patterns.json")
+                    is_news_relevant._contract_cache = [
+                        get_embedding(pattern) for pattern in contract_patterns if pattern
+                    ]
+                
+                if is_news_relevant._contract_cache:
+                    title_embedding = get_embedding(article.title)
+                    contract_score = calculate_relevance_score(title_embedding, is_news_relevant._contract_cache)
+                    
+                    if contract_score > 0.65: # Próg dla kontraktów
+                        is_contract = True
+                        print(f"    ⭐ Wykryto potencjalny kontrakt (score: {contract_score:.3f})")
+
             # Analizuj artykuł (tylko jeśli jest istotny lub skip_relevance_check=True)
             step_num = "[2/2]" if skip_relevance_check else "[2/3]"
-            print(f"{step_num} Wysyłam zapytanie do OpenAI...")
+            print(f"{step_num} Wysyłam zapytanie do OpenAI... (Contract: {is_contract})")
             if has_summary:
                 analysis_json = analyze_summary(article.title, article.content or "")
                 analysis_datas = json.loads(cleanJson(analysis_json))
@@ -914,7 +1048,7 @@ def analyze_articles(db: Database, mode: str = 'unanalyzed', article_id: int = N
                                                    )
 
             else:
-                analysis_json = analyze_news(article.title, article.content or "")
+                analysis_json = analyze_news(article.title, article.content or "", is_contract=is_contract)
                 analysis_data = json.loads(cleanJson(analysis_json))
                 tickers = analysis_data.get('related_tickers', [])
                 sector_impact = analysis_data.get('sector_impact')
@@ -939,7 +1073,7 @@ def analyze_articles(db: Database, mode: str = 'unanalyzed', article_id: int = N
             step_num = "[2/2]" if skip_relevance_check else "[3/3]"
             print(f"{step_num} Zapisuję wyniki do bazy danych...")
 
-            analysis_id = save_analysis_results(db, article.id, analysis_json)
+            analysis_id = save_analysis_results(db, article.id, analysis_json, forced_ticker=forced_ticker)
             print(f"✓ Pomyślnie zapisano analizę (analysis_id={analysis_id})")
 
             results.append({

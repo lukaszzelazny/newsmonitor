@@ -141,12 +141,19 @@ export default function PriceChart({ ticker, priceHistory, brokerageAnalyses, an
                 if (news.impact > 0.2) { color = '#10b981'; shape = 'arrowUp'; }
                 else if (news.impact < -0.2) { color = '#ef5350'; shape = 'arrowDown'; }
 
+                let text = 'News';
+                if (news.occasion === 'contract') {
+                    text = 'Contract';
+                    shape = 'square';
+                    color = '#8b5cf6'; // purple
+                }
+
                 markers.push({
                     time: news.date,
                     position: news.impact > 0 ? 'belowBar' : 'aboveBar',
                     color: color,
                     shape: shape,
-                    text: 'News',
+                    text: text,
                     id: news.news_id
                 });
             });
