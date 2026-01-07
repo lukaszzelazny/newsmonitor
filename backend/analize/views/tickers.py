@@ -413,29 +413,40 @@ def get_analyses(ticker):
     ORDER BY na.date DESC, ts.impact DESC
     """)
 
-    # --- New logic to exclude contracts ---
-    # First, get all news_ids that are linked to contracts for the given ticker
-    # We want to hide ALL analyses for a news item if it has been identified as a contract
-    get_contract_news_ids_query = text(f"""
-        SELECT ar.news_id 
+    # --- New logic to exclude duplicate news for contracts ---
+    # If a news item is identified as a contract, we want to return ONLY the contract analysis,
+    # and filter out the generic "news" analysis for the same news_id.
+    
+    get_contract_info_query = text(f"""
+        SELECT ar.news_id, c.analysis_id
         FROM {schema}.contracts c
         JOIN {schema}.analysis_result ar ON c.analysis_id = ar.id
         WHERE c.ticker = :ticker
     """)
+    
     contract_news_ids = set()
+    contract_analysis_ids = set()
+    
     with engine.connect() as conn:
-        result = conn.execute(get_contract_news_ids_query, {'ticker': resolved_ticker})
+        result = conn.execute(get_contract_info_query, {'ticker': resolved_ticker})
         for row in result:
             contract_news_ids.add(row[0])
+            contract_analysis_ids.add(row[1])
 
     with engine.connect() as conn:
         result = conn.execute(query, {'ticker': resolved_ticker})
         analyses = []
         for row in result:
-            # Exclude if the news item is associated with a contract
-            if row[0] in contract_news_ids:
-                continue
-
+            news_id = row[0]
+            analysis_id = row[1]
+            
+            # If this news is a contract
+            if news_id in contract_news_ids:
+                # If this analysis is NOT the contract analysis, skip it (it's the duplicate/old generic news)
+                if analysis_id not in contract_analysis_ids:
+                    continue
+                # If it IS the contract analysis, keep it (so it shows on chart)
+            
             analyses.append({
                 'news_id': row[0],
                 'analysis_id': row[1],

@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { createChart, ColorType } from 'lightweight-charts';
 import { useTheme } from '../context/ThemeContext';
 
-export default function PriceChart({ ticker, priceHistory, brokerageAnalyses, analyses, onNewsClick, showNews: propShowNews = true, onToggleNews, showVolume: propShowVolume = false, onToggleVolume, showTransactions: propShowTransactions = true, onToggleTransactions }) {
+export default function PriceChart({ ticker, priceHistory, brokerageAnalyses, analyses, onNewsClick, showNews: propShowNews = true, onToggleNews, showVolume: propShowVolume = false, onToggleVolume, showTransactions: propShowTransactions = true, onToggleTransactions, showContracts: propShowContracts = true, onToggleContracts }) {
     const { theme } = useTheme();
     const chartContainerRef = useRef(null);
     const chartRef = useRef(null);
@@ -10,6 +10,7 @@ export default function PriceChart({ ticker, priceHistory, brokerageAnalyses, an
     const [chartType, setChartType] = useState('candlestick');
     const [showVolume, setShowVolume] = useState(propShowVolume);
     const [showNews, setShowNews] = useState(propShowNews);
+    const [showContracts, setShowContracts] = useState(propShowContracts);
     const [showTransactions, setShowTransactions] = useState(propShowTransactions);
     const [transactions, setTransactions] = useState([]);
 
@@ -133,34 +134,49 @@ export default function PriceChart({ ticker, priceHistory, brokerageAnalyses, an
         // keep reference to main series so we can update markers without full chart recreation
         mainSeriesRef.current = mainSeries;
 
+        const markers = [];
         if (showNews && analyses && analyses.length > 0) {
-            const markers = [];
             analyses.forEach(news => {
-                let color = isDark ? '#9ca3af' : '#9ca3af';
+                if (news.occasion === 'contract') return;
+
+                let color = '#9ca3af';
                 let shape = 'circle';
                 if (news.impact > 0.2) { color = '#10b981'; shape = 'arrowUp'; }
                 else if (news.impact < -0.2) { color = '#ef5350'; shape = 'arrowDown'; }
-
-                let text = 'News';
-                if (news.occasion === 'contract') {
-                    text = 'Contract';
-                    shape = 'square';
-                    color = '#8b5cf6'; // purple
-                }
 
                 markers.push({
                     time: news.date,
                     position: news.impact > 0 ? 'belowBar' : 'aboveBar',
                     color: color,
                     shape: shape,
-                    text: text,
+                    text: 'News',
                     id: news.news_id
                 });
             });
-            markers.sort((a, b) => new Date(a.time) - new Date(b.time));
-            mainSeries.setMarkers(markers);
-        } else {
-            try { mainSeries.setMarkers([]); } catch (e) { /* ignore if series not ready */ }
+        }
+        
+        if (showContracts && analyses && analyses.length > 0) {
+             analyses.forEach(news => {
+                if (news.occasion === 'contract') {
+                    markers.push({
+                        time: news.date,
+                        position: 'belowBar',
+                        color: '#3b82f6', // blue
+                        shape: 'square',
+                        text: 'Contract',
+                        id: `contract-${news.news_id}`
+                    });
+                }
+            });
+        }
+
+        if (markers.length > 0) {
+            try {
+                markers.sort((a, b) => new Date(a.time) - new Date(b.time));
+                mainSeries.setMarkers(markers);
+            } catch (e) {
+                console.debug('Failed to set markers on series:', e);
+            }
         }
 
         const latestBrokerage = brokerageAnalyses?.find(b => b.price_new);
@@ -303,27 +319,46 @@ export default function PriceChart({ ticker, priceHistory, brokerageAnalyses, an
         const chart = chartRef.current;
         if (!series) return;
 
+        const markers = [];
         if (showNews && analyses && analyses.length > 0) {
-            try {
-                const markers = [];
-                analyses.forEach(news => {
-                    let color = '#9ca3af';
-                    let shape = 'circle';
-                    if (news.impact > 0.2) { color = '#10b981'; shape = 'arrowUp'; }
-                    else if (news.impact < -0.2) { color = '#ef5350'; shape = 'arrowDown'; }
+            analyses.forEach(news => {
+                if (news.occasion === 'contract') return;
 
+                let color = '#9ca3af';
+                let shape = 'circle';
+                if (news.impact > 0.2) { color = '#10b981'; shape = 'arrowUp'; }
+                else if (news.impact < -0.2) { color = '#ef5350'; shape = 'arrowDown'; }
+
+                markers.push({
+                    time: news.date,
+                    position: news.impact > 0 ? 'belowBar' : 'aboveBar',
+                    color: color,
+                    shape: shape,
+                    text: 'News',
+                    id: news.news_id
+                });
+            });
+        }
+        
+        if (showContracts && analyses && analyses.length > 0) {
+             analyses.forEach(news => {
+                if (news.occasion === 'contract') {
                     markers.push({
                         time: news.date,
-                        position: news.impact > 0 ? 'belowBar' : 'aboveBar',
-                        color: color,
-                        shape: shape,
-                        text: 'News',
-                        id: news.news_id
+                        position: 'belowBar',
+                        color: '#3b82f6', // blue
+                        shape: 'square',
+                        text: 'Contract',
+                        id: `contract-${news.news_id}`
                     });
-                });
+                }
+            });
+        }
+
+        if (markers.length > 0) {
+            try {
                 markers.sort((a, b) => new Date(a.time) - new Date(b.time));
                 series.setMarkers(markers);
-                // ensure timeScale updates so markers become visible
                 try { chart?.timeScale()?.fitContent?.(); } catch (e) { /* ignore */ }
             } catch (e) {
                 console.debug('Failed to set markers on series:', e);
@@ -332,7 +367,7 @@ export default function PriceChart({ ticker, priceHistory, brokerageAnalyses, an
             try { series.setMarkers([]); } catch (e) { /* ignore */ }
             try { chart?.timeScale()?.fitContent?.(); } catch (e) { /* ignore */ }
         }
-    }, [showNews, analyses]);
+    }, [showNews, showContracts, analyses]);
 
 
     if (!priceHistory || priceHistory.length === 0) {
@@ -445,6 +480,15 @@ export default function PriceChart({ ticker, priceHistory, brokerageAnalyses, an
                        className="cursor-pointer w-3 h-3 accent-blue-600"
                    />
                    <span className="text-gray-600 dark:text-gray-400 font-medium">Newsy</span>
+               </label>
+               <label className="flex items-center gap-1 cursor-pointer bg-gray-100 dark:bg-gray-700 px-2 py-1 rounded hover:bg-gray-200 dark:hover:bg-gray-600 ml-2 transition-colors">
+                   <input 
+                       type="checkbox" 
+                       checked={showContracts} 
+                       onChange={(e) => { const v = e.target.checked; setShowContracts(v); try { onToggleContracts && onToggleContracts(v); } catch (err) {} }} 
+                       className="cursor-pointer w-3 h-3 accent-blue-600"
+                   />
+                   <span className="text-gray-600 dark:text-gray-400 font-medium">Kontrakty</span>
                </label>
                <label className="flex items-center gap-1 cursor-pointer bg-gray-100 dark:bg-gray-700 px-2 py-1 rounded hover:bg-gray-200 dark:hover:bg-gray-600 ml-2 transition-colors">
                    <input

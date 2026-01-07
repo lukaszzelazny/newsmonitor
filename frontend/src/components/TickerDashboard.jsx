@@ -82,6 +82,14 @@ export default function TickerDashboard() {
             return true;
         }
     });
+    const [showContracts, setShowContracts] = useState(() => {
+        try {
+            const v = localStorage.getItem('pricechart_showContracts');
+            return v === null ? true : v === 'true';
+        } catch (e) {
+            return true;
+        }
+    });
     const [viewMode, setViewMode] = useState('tickers'); // 'tickers', 'calendar', 'rejected', 'portfolio', 'recommendations'
     const [scrapingTicker, setScrapingTicker] = useState(null);
     const [notification, setNotification] = useState(null);
@@ -337,6 +345,16 @@ export default function TickerDashboard() {
     }, [viewMode, sortedTickers]);
 
     const filteredAnalyses = analyses.filter(a => {
+        if (a.occasion === 'contract') return false; // Hide contracts from this list
+        if (filterImpact === 'all') return true;
+        if (filterImpact === 'positive') return a.impact > 0.05;
+        if (filterImpact === 'negative') return a.impact < -0.05;
+        if (filterImpact === 'neutral') return Math.abs(a.impact) <= 0.05;
+        return true;
+    });
+
+    const chartAnalyses = analyses.filter(a => {
+        // Include contracts in chart data
         if (filterImpact === 'all') return true;
         if (filterImpact === 'positive') return a.impact > 0.05;
         if (filterImpact === 'negative') return a.impact < -0.05;
@@ -807,9 +825,11 @@ export default function TickerDashboard() {
                                             ticker={selectedTicker.ticker}
                                             priceHistory={priceHistory}
                                             brokerageAnalyses={brokerageAnalyses}
-                                            analyses={filteredAnalyses}
+                                            analyses={chartAnalyses}
                                             showNews={showNews}
                                             onToggleNews={(v) => { setShowNews(v); try { localStorage.setItem('pricechart_showNews', String(v)); } catch (e) {} }}
+                                            showContracts={showContracts}
+                                            onToggleContracts={(v) => { setShowContracts(v); try { localStorage.setItem('pricechart_showContracts', String(v)); } catch (e) {} }}
                                             showVolume={showVolume}
                                             onToggleVolume={(v) => { setShowVolume(v); try { localStorage.setItem('pricechart_showVolume', String(v)); } catch (e) {} }}
                                             showTransactions={showTransactions}
