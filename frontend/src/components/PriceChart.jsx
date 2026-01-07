@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { createChart, ColorType } from 'lightweight-charts';
 import { useTheme } from '../context/ThemeContext';
 
-export default function PriceChart({ ticker, priceHistory, brokerageAnalyses, analyses, onNewsClick, showNews: propShowNews = true, onToggleNews, showVolume: propShowVolume = false, onToggleVolume, showTransactions: propShowTransactions = true, onToggleTransactions, showContracts: propShowContracts = true, onToggleContracts }) {
+export default function PriceChart({ ticker, priceHistory, brokerageAnalyses, analyses, onNewsClick, showNews: propShowNews = true, onToggleNews, showVolume: propShowVolume = false, onToggleVolume, showTransactions: propShowTransactions = true, onToggleTransactions, showContracts: propShowContracts = true, onToggleContracts, chartDays, onChartDaysChange }) {
     const { theme } = useTheme();
     const chartContainerRef = useRef(null);
     const chartRef = useRef(null);
@@ -463,6 +463,21 @@ export default function PriceChart({ ticker, priceHistory, brokerageAnalyses, an
                >
                    Linia
                </button>
+               <div className="flex items-center gap-1 cursor-pointer bg-gray-100 dark:bg-gray-700 px-2 py-1 rounded hover:bg-gray-200 dark:hover:bg-gray-600 ml-2 transition-colors">
+                    <label className="text-xs text-gray-600 dark:text-gray-400">Okres:</label>
+                    <select
+                        value={chartDays}
+                        onChange={(e) => onChartDaysChange(Number(e.target.value))}
+                        className="bg-transparent border-none text-xs text-gray-600 dark:text-gray-400 focus:outline-none"
+                    >
+                        <option value="30">1 miesiąc</option>
+                        <option value="90">3 miesiące</option>
+                        <option value="180">6 miesięcy</option>
+                        <option value="365">1 rok</option>
+                        <option value="730">2 lata</option>
+                        <option value="1095">3 lata</option>
+                    </select>
+               </div>
                <label className="flex items-center gap-1 cursor-pointer bg-gray-100 dark:bg-gray-700 px-2 py-1 rounded hover:bg-gray-200 dark:hover:bg-gray-600 ml-2 transition-colors">
                    <input 
                        type="checkbox" 

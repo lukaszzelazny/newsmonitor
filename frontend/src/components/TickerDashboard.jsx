@@ -55,7 +55,8 @@ export default function TickerDashboard() {
     const [loadingFundamental, setLoadingFundamental] = useState(false);
     const [loadingPrices, setLoadingPrices] = useState(false);
     const [searchTerm, setSearchTerm] = useState('');
-    const [days, setDays] = useState(365);
+    const [listDays, setListDays] = useState(30);
+    const [chartDays, setChartDays] = useState(365);
     const [filterImpact, setFilterImpact] = useState('all');
     const [showStats, setShowStats] = useState(true);
     const [showNews, setShowNews] = useState(() => {
@@ -137,7 +138,7 @@ export default function TickerDashboard() {
                 body: JSON.stringify(editForm)
             });
             if (res.ok) {
-                const response = await fetch(`/api/tickers?days=${days}`);
+                const response = await fetch(`/api/tickers?days=${listDays}`);
                 const data = await response.json();
                 setTickers(data);
                 const updated = data.find(t => t.ticker === selectedTicker.ticker);
@@ -154,56 +155,75 @@ export default function TickerDashboard() {
         }
     };
 
-    useEffect(() => {
-        fetchTickers();
-    }, [days]);
-
-    const fetchTickers = async () => {
+    const handleUpdatePrices = async () => {
+        if (!selectedTicker) return;
+        setLoadingPrices(true);
         try {
-            const response = await fetch(`/api/tickers?days=${days}`);
+            const response = await fetch(`/api/tickers/${selectedTicker.ticker}/sync_prices`, {
+                method: 'POST'
+            });
             const data = await response.json();
-            setTickers(data);
+            if (response.ok) {
+                showNotification(`Zaktualizowano ceny. Pobrano ${data.count} nowych notowań.`, 'success');
+                fetchPriceHistory(selectedTicker.ticker);
+            } else {
+                showNotification(`Błąd aktualizacji cen: ${data.message || 'Nieznany błąd'}`, 'error');
+            }
         } catch (error) {
-            console.error('Error fetching tickers:', error);
-        }
-    };
-
-    const fetchAnalyses = async (ticker) => {
-        setLoading(true);
-        try {
-            const response = await fetch(`/api/analyses/${ticker}?days=${days}`);
-            const data = await response.json();
-            setAnalyses(data);
-        } catch (error) {
-            console.error('Error fetching analyses:', error);
+            console.error('Error updating prices:', error);
+            showNotification('Błąd sieci podczas aktualizacji cen.', 'error');
         } finally {
-            setLoading(false);
+            setLoadingPrices(false);
         }
     };
 
-    const fetchBrokerageAnalyses = async (ticker) => {
+    const handleFetchFundamental = async () => {
+        if (!selectedTicker) return;
+        setLoadingFundamental(true);
         try {
-            const response = await fetch(`/api/brokerage/${ticker}?days=${days}`);
-            const data = await response.json();
-            setBrokerageAnalyses(data);
-        } catch (error) {
-            console.error('Error fetching brokerage analyses:', error);
-        }
-    };
+            // Step 1: POST to trigger the data fetch from Yahoo Finance and save to DB
+            const postResponse = await fetch(`/api/tickers/${selectedTicker.ticker}/fundamental`, {
+                method: 'POST'
+            });
+            const postData = await postResponse.json();
 
-    const fetchPriceHistory = async (ticker) => {
-        setLoadingChart(true);
-        try {
-            const response = await fetch(`/api/price_history/${ticker}?days=${days}`);
-            const data = await response.json();
-            setPriceHistory(data);
+            if (!postResponse.ok) {
+                throw new Error(postData.error || 'Failed to fetch and save fundamental data.');
+            }
+
+            // Step 2: GET to retrieve the (now updated) data from our DB
+            const getResponse = await fetch(`/api/tickers/${selectedTicker.ticker}/fundamental`);
+            const getData = await getResponse.json();
+
+            if (getResponse.ok) {
+                setFundamentalData(getData);
+                showNotification('Pobrano dane fundamentalne.', 'success');
+            } else {
+                 throw new Error(getData.error || 'Failed to retrieve fundamental data after fetching.');
+            }
+
         } catch (error) {
-            console.error('Error fetching price history:', error);
-            setPriceHistory([]);
+            console.error('Error with fundamental data:', error);
+            showNotification(`Błąd: ${error.message}`, 'error');
         } finally {
-            setLoadingChart(false);
+            setLoadingFundamental(false);
         }
     };
+
+    const formatLargeNumber = (num) => {
+        if (num === null || num === undefined) return '-';
+        if (num >= 1_000_000_000) {
+            return (num / 1_000_000_000).toFixed(2) + ' mld';
+        }
+        if (num >= 1_000_000) {
+            return (num / 1_000_000).toFixed(2) + ' mln';
+        }
+        if (num >= 1_000) {
+            return (num / 1_000).toFixed(2) + ' tys';
+        }
+        return num.toString();
+    };
+
 
     const fetchFundamentalData = async (ticker) => {
         try {
@@ -231,6 +251,10 @@ export default function TickerDashboard() {
     };
 
     useEffect(() => {
+        fetchTickers();
+    }, [listDays]);
+
+    useEffect(() => {
         if (selectedTicker) {
             fetchAnalyses(selectedTicker.ticker);
             fetchBrokerageAnalyses(selectedTicker.ticker);
@@ -238,57 +262,53 @@ export default function TickerDashboard() {
             fetchFundamentalData(selectedTicker.ticker);
             fetchContracts(selectedTicker.ticker);
         }
-    }, [selectedTicker, days]);
+    }, [selectedTicker, chartDays]);
 
-    const handleFetchFundamental = async () => {
-        if (!selectedTicker) return;
-        setLoadingFundamental(true);
+    const fetchTickers = async () => {
         try {
-            const response = await fetch(`/api/tickers/${selectedTicker.ticker}/fundamental`, {
-                method: 'POST'
-            });
-            if (response.ok) {
-                showNotification('Dane fundamentalne pobrane pomyślnie!', 'success');
-                fetchFundamentalData(selectedTicker.ticker);
-            } else {
-                showNotification('Błąd pobierania danych fundamentalnych', 'error');
-            }
-        } catch (error) {
-            console.error('Error fetching fundamental data:', error);
-            showNotification('Błąd sieci', 'error');
-        } finally {
-            setLoadingFundamental(false);
-        }
-    };
-
-    const handleUpdatePrices = async () => {
-        if (!selectedTicker) return;
-        setLoadingPrices(true);
-        try {
-            const response = await fetch(`/api/tickers/${selectedTicker.ticker}/sync_prices`, {
-                method: 'POST'
-            });
+            const response = await fetch(`/api/tickers?days=${listDays}`);
             const data = await response.json();
-            if (response.ok) {
-                showNotification(`Zaktualizowano ceny: ${data.count} nowych rekordów`, 'success');
-                fetchPriceHistory(selectedTicker.ticker); // Refresh chart
-            } else {
-                showNotification(`Błąd aktualizacji cen: ${data.error || 'Nieznany błąd'}`, 'error');
-            }
+            setTickers(data);
         } catch (error) {
-            console.error('Error updating prices:', error);
-            showNotification('Błąd sieci', 'error');
-        } finally {
-            setLoadingPrices(false);
+            console.error('Error fetching tickers:', error);
         }
     };
 
-    const formatLargeNumber = (num) => {
-        if (num === null || num === undefined) return '-';
-        if (Math.abs(num) >= 1.0e+9) return (num / 1.0e+9).toFixed(2) + ' B';
-        if (Math.abs(num) >= 1.0e+6) return (num / 1.0e+6).toFixed(2) + ' M';
-        if (Math.abs(num) >= 1.0e+3) return (num / 1.0e+3).toFixed(2) + ' K';
-        return num.toFixed(2);
+    const fetchAnalyses = async (ticker) => {
+        setLoading(true);
+        try {
+            const response = await fetch(`/api/analyses/${ticker}?days=${chartDays}`);
+            const data = await response.json();
+            setAnalyses(data);
+        } catch (error) {
+            console.error('Error fetching analyses:', error);
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    const fetchBrokerageAnalyses = async (ticker) => {
+        try {
+            const response = await fetch(`/api/brokerage/${ticker}?days=${chartDays}`);
+            const data = await response.json();
+            setBrokerageAnalyses(data);
+        } catch (error) {
+            console.error('Error fetching brokerage analyses:', error);
+        }
+    };
+
+    const fetchPriceHistory = async (ticker) => {
+        setLoadingChart(true);
+        try {
+            const response = await fetch(`/api/price_history/${ticker}?days=${chartDays}`);
+            const data = await response.json();
+            setPriceHistory(data);
+        } catch (error) {
+            console.error('Error fetching price history:', error);
+            setPriceHistory([]);
+        } finally {
+            setLoadingChart(false);
+        }
     };
 
     const markAsDuplicate = async (newsId) => {
@@ -499,20 +519,20 @@ export default function TickerDashboard() {
                                 </button>
                             </div>
                             <div className="flex items-center gap-2">
-                                <label className="text-xs text-gray-600 dark:text-gray-400">Okres:</label>
-                            <select
-                                value={days}
-                                onChange={(e) => setDays(Number(e.target.value))}
-                                className="px-2 py-1 text-sm border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
-                            >
-                                <option value="7">7 dni</option>
-                                <option value="14">14 dni</option>
-                                <option value="30">1 miesiąc</option>
-                                <option value="90">3 miesiące</option>
-                                <option value="180">6 miesięcy</option>
-                                <option value="365">1 rok</option>
-                            </select>
-                        </div>
+                                <label className="text-xs text-gray-600 dark:text-gray-400">Okres listy:</label>
+                                <select
+                                    value={listDays}
+                                    onChange={(e) => setListDays(Number(e.target.value))}
+                                    className="px-2 py-1 text-sm border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+                                >
+                                    <option value="30">1 miesiąc</option>
+                                    <option value="90">3 miesiące</option>
+                                    <option value="180">6 miesięcy</option>
+                                    <option value="365">1 rok</option>
+                                    <option value="730">2 lata</option>
+                                    <option value="1095">3 lata</option>
+                                </select>
+                            </div>
                     </div>
                 </div>
 
@@ -526,13 +546,13 @@ export default function TickerDashboard() {
                 )}
 
                 {viewMode === 'calendar' ? (
-                    <CalendarView days={days} onTickerSelect={handleTickerSelect} showNotification={showNotification} />
+                    <CalendarView days={listDays} onTickerSelect={handleTickerSelect} showNotification={showNotification} />
                 ) : viewMode === 'rejected' ? (
-                    <CalendarRejectedView days={days} />
+                    <CalendarRejectedView days={listDays} />
                 ) : viewMode === 'portfolio' ? (
-                    <PortfolioView days={days} />
+                    <PortfolioView days={listDays} />
                 ) : viewMode === 'recommendations' ? (
-                    <RecommendationsView days={days} onTickerSelect={handleTickerSelect} />
+                    <RecommendationsView days={listDays} onTickerSelect={handleTickerSelect} />
                 ) : (
                     <div className="grid grid-cols-12 gap-4">
                         <div className="col-span-3 bg-white dark:bg-gray-800 rounded-lg shadow p-3 sticky top-4 self-start" style={{ maxHeight: 'calc(100vh - 2rem)' }}>
@@ -696,69 +716,69 @@ export default function TickerDashboard() {
                             ) : (
                                 <div className="space-y-4">
                                     <div className={`p-3 rounded-lg shadow ${getSentimentBg(selectedTicker.avg_sentiment)}`}>
-                                        <div className="flex items-center justify-between">
-                                            <div className="flex-1">
-                                                {isEditingDetails ? (
-                                                    <div className="flex flex-col gap-2 max-w-md">
-                                                        <div className="flex gap-2">
-                                                            <input 
-                                                                type="text" 
-                                                                value={editForm.company_name}
-                                                                onChange={(e) => setEditForm({...editForm, company_name: e.target.value})}
-                                                                placeholder="Nazwa firmy"
-                                                                className="px-2 py-1 border rounded text-sm dark:bg-gray-700 dark:text-white dark:border-gray-600"
-                                                            />
-                                                        </div>
-                                                        <div className="flex gap-2">
-                                                            <input 
-                                                                type="text" 
-                                                                value={editForm.sector}
-                                                                onChange={(e) => setEditForm({...editForm, sector: e.target.value})}
-                                                                placeholder="Sektor"
-                                                                className="px-2 py-1 border rounded text-sm dark:bg-gray-700 dark:text-white dark:border-gray-600"
-                                                            />
-                                                        </div>
-                                                        <div className="flex gap-2">
-                                                            <input 
-                                                                type="text" 
-                                                                value={editForm.scrape_url}
-                                                                onChange={(e) => setEditForm({...editForm, scrape_url: e.target.value})}
-                                                                placeholder="URL do scrapowania (opcjonalnie)"
-                                                                className="px-2 py-1 border rounded text-sm dark:bg-gray-700 dark:text-white dark:border-gray-600 w-full"
-                                                            />
-                                                        </div>
-                                                        <div className="flex gap-2">
-                                                            <button onClick={handleSaveDetails} className="bg-green-600 text-white px-3 py-1 rounded text-sm hover:bg-green-700">Zapisz</button>
-                                                            <button onClick={() => setIsEditingDetails(false)} className="bg-gray-400 text-white px-3 py-1 rounded text-sm hover:bg-gray-500">Anuluj</button>
-                                                        </div>
+                                    <div className="flex items-center justify-between">
+                                        <div className="flex-1">
+                                            {isEditingDetails ? (
+                                                <div className="flex flex-col gap-2 max-w-md">
+                                                    <div className="flex gap-2">
+                                                        <input 
+                                                            type="text" 
+                                                            value={editForm.company_name}
+                                                            onChange={(e) => setEditForm({...editForm, company_name: e.target.value})}
+                                                            placeholder="Nazwa firmy"
+                                                            className="px-2 py-1 border rounded text-sm dark:bg-gray-700 dark:text-white dark:border-gray-600"
+                                                        />
                                                     </div>
-                                                ) : (
-                                                    <div className="group">
-                                                        <div className="flex items-center gap-2">
-                                                            <h2 className="text-xl font-bold text-gray-900 dark:text-white">
-                                                                {selectedTicker.ticker} - {selectedTicker.company_name || 'Brak nazwy'}
-                                                            </h2>
-                                                            <button 
-                                                                onClick={handleEditClick}
-                                                                className="opacity-0 group-hover:opacity-100 transition-opacity text-gray-400 hover:text-blue-500"
-                                                                title="Edytuj nazwę"
-                                                            >
-                                                                ✎
-                                                            </button>
-                                                        </div>
-                                                        <p className="text-sm text-gray-600 dark:text-gray-400">{selectedTicker.sector || 'Brak sektora'}</p>
+                                                    <div className="flex gap-2">
+                                                        <input 
+                                                            type="text" 
+                                                            value={editForm.sector}
+                                                            onChange={(e) => setEditForm({...editForm, sector: e.target.value})}
+                                                            placeholder="Sektor"
+                                                            className="px-2 py-1 border rounded text-sm dark:bg-gray-700 dark:text-white dark:border-gray-600"
+                                                        />
                                                     </div>
-                                                )}
+                                                    <div className="flex gap-2">
+                                                        <input 
+                                                            type="text" 
+                                                            value={editForm.scrape_url}
+                                                            onChange={(e) => setEditForm({...editForm, scrape_url: e.target.value})}
+                                                            placeholder="URL do scrapowania (opcjonalnie)"
+                                                            className="px-2 py-1 border rounded text-sm dark:bg-gray-700 dark:text-white dark:border-gray-600 w-full"
+                                                        />
+                                                    </div>
+                                                    <div className="flex gap-2">
+                                                        <button onClick={handleSaveDetails} className="bg-green-600 text-white px-3 py-1 rounded text-sm hover:bg-green-700">Zapisz</button>
+                                                        <button onClick={() => setIsEditingDetails(false)} className="bg-gray-400 text-white px-3 py-1 rounded text-sm hover:bg-gray-500">Anuluj</button>
+                                                    </div>
+                                                </div>
+                                            ) : (
+                                                <div className="group">
+                                                    <div className="flex items-center gap-2">
+                                                        <h2 className="text-xl font-bold text-gray-900 dark:text-white">
+                                                            {selectedTicker.ticker} - {selectedTicker.company_name || 'Brak nazwy'}
+                                                        </h2>
+                                                        <button 
+                                                            onClick={handleEditClick}
+                                                            className="opacity-0 group-hover:opacity-100 transition-opacity text-gray-400 hover:text-blue-500"
+                                                            title="Edytuj nazwę"
+                                                        >
+                                                            ✎
+                                                        </button>
+                                                    </div>
+                                                    <p className="text-sm text-gray-600 dark:text-gray-400">{selectedTicker.sector || 'Brak sektora'}</p>
+                                                </div>
+                                            )}
+                                        </div>
+                                        <div className="text-right">
+                                            <div className={`text-2xl font-bold ${getSentimentColor(selectedTicker.avg_sentiment)}`}>
+                                                {selectedTicker.avg_sentiment > 0 ? '+' : ''}{Number(selectedTicker.avg_sentiment).toFixed(2)}
                                             </div>
-                                            <div className="text-right">
-                                                <div className={`text-2xl font-bold ${getSentimentColor(selectedTicker.avg_sentiment)}`}>
-                                                    {selectedTicker.avg_sentiment > 0 ? '+' : ''}{Number(selectedTicker.avg_sentiment).toFixed(2)}
-                                                </div>
-                                                <div className="text-xs text-gray-600 dark:text-gray-400">
-                                                    Średni sentyment
-                                                </div>
+                                            <div className="text-xs text-gray-600 dark:text-gray-400">
+                                                Średni sentyment
                                             </div>
                                         </div>
+                                    </div>
                                     </div>
 
                                     {tickerStats && showStats && (
@@ -834,6 +854,8 @@ export default function TickerDashboard() {
                                             onToggleVolume={(v) => { setShowVolume(v); try { localStorage.setItem('pricechart_showVolume', String(v)); } catch (e) {} }}
                                             showTransactions={showTransactions}
                                             onToggleTransactions={(v) => { setShowTransactions(v); try { localStorage.setItem('pricechart_showTransactions', String(v)); } catch (e) {} }}
+                                            chartDays={chartDays}
+                                            onChartDaysChange={setChartDays}
                                         />
                                     )}
 

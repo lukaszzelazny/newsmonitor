@@ -362,7 +362,6 @@ def get_tickers():
         COALESCE(t.is_favorite, false) as is_favorite
     FROM {schema}.tickers t
     LEFT JOIN sentiment_stats s ON t.ticker = s.ticker
-    WHERE s.mentions > 0 OR t.in_portfolio = 1 OR t.is_favorite = true
     ORDER BY COALESCE(s.mentions, 0) DESC, t.ticker
     """)
 
