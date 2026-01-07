@@ -413,10 +413,29 @@ def get_analyses(ticker):
     ORDER BY na.date DESC, ts.impact DESC
     """)
 
+    # --- New logic to exclude contracts ---
+    # First, get all news_ids that are linked to contracts for the given ticker
+    # We want to hide ALL analyses for a news item if it has been identified as a contract
+    get_contract_news_ids_query = text(f"""
+        SELECT ar.news_id 
+        FROM {schema}.contracts c
+        JOIN {schema}.analysis_result ar ON c.analysis_id = ar.id
+        WHERE c.ticker = :ticker
+    """)
+    contract_news_ids = set()
+    with engine.connect() as conn:
+        result = conn.execute(get_contract_news_ids_query, {'ticker': resolved_ticker})
+        for row in result:
+            contract_news_ids.add(row[0])
+
     with engine.connect() as conn:
         result = conn.execute(query, {'ticker': resolved_ticker})
         analyses = []
         for row in result:
+            # Exclude if the news item is associated with a contract
+            if row[0] in contract_news_ids:
+                continue
+
             analyses.append({
                 'news_id': row[0],
                 'analysis_id': row[1],
