@@ -1,7 +1,7 @@
 import json
 from flask import Blueprint, jsonify, request
 from sqlalchemy import text
-from analize.utils import get_db_engine, get_current_price, parse_price, format_summary, resolve_db_ticker
+from backend.analize.utils import get_db_engine, get_current_price, parse_price, format_summary, resolve_db_ticker
 from backend.tools.price_fetcher import get_yf_symbol, get_currency_for_ticker, fx_symbol_to_pln, _fetch_fx_series
 import yfinance as yf
 from datetime import datetime, timedelta
@@ -336,33 +336,43 @@ def get_tickers():
     days = request.args.get('days', 30, type=int)
 
     query = text(f"""
-    WITH sentiment_stats AS (
+    WITH period_stats AS (
         SELECT
             ts.ticker,
-            COUNT(*) as mentions,
             AVG(ts.impact::numeric) as avg_sentiment,
-            AVG(ts.confidence::numeric) as avg_confidence,
-            MAX(na.date) as last_mention
+            AVG(ts.confidence::numeric) as avg_confidence
         FROM {schema}.ticker_sentiment ts
         JOIN {schema}.analysis_result ar ON ts.analysis_id = ar.id
         JOIN {schema}.news_articles na ON ar.news_id = na.id
         WHERE na.date >= CURRENT_DATE - INTERVAL '{days} days'
         AND na.id NOT IN (SELECT news_id FROM {schema}.news_not_analyzed WHERE reason = 'duplicate')
         GROUP BY ts.ticker
+    ),
+    total_stats AS (
+        SELECT
+            ts.ticker,
+            COUNT(*) as mentions,
+            MAX(na.date) as last_mention
+        FROM {schema}.ticker_sentiment ts
+        JOIN {schema}.analysis_result ar ON ts.analysis_id = ar.id
+        JOIN {schema}.news_articles na ON ar.news_id = na.id
+        WHERE na.id NOT IN (SELECT news_id FROM {schema}.news_not_analyzed WHERE reason = 'duplicate')
+        GROUP BY ts.ticker
     )
     SELECT
         t.ticker,
         t.company_name,
         t.sector,
-        COALESCE(s.mentions, 0) as mentions,
-        COALESCE(s.avg_sentiment, 0) as avg_sentiment,
-        COALESCE(s.avg_confidence, 0) as avg_confidence,
-        s.last_mention,
+        COALESCE(tot.mentions, 0) as mentions,
+        COALESCE(p.avg_sentiment, 0) as avg_sentiment,
+        COALESCE(p.avg_confidence, 0) as avg_confidence,
+        tot.last_mention,
         COALESCE(t.in_portfolio, 0) as in_portfolio,
         COALESCE(t.is_favorite, false) as is_favorite
     FROM {schema}.tickers t
-    LEFT JOIN sentiment_stats s ON t.ticker = s.ticker
-    ORDER BY COALESCE(s.mentions, 0) DESC, t.ticker
+    LEFT JOIN period_stats p ON t.ticker = p.ticker
+    LEFT JOIN total_stats tot ON t.ticker = tot.ticker
+    ORDER BY COALESCE(tot.mentions, 0) DESC, t.ticker
     """)
 
     with engine.connect() as conn:

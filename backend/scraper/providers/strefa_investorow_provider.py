@@ -24,7 +24,7 @@ class StrefaInwestorowProvider(BaseProvider):
         """Scrape articles from a specific page."""
         try:
             url = f"{self.base_url}?page={page}"
-            response = self.session.get(url, timeout=10)
+            response = self.session.get(url, timeout=30)
             response.raise_for_status()
 
             soup = BeautifulSoup(response.content, 'lxml')
@@ -101,7 +101,7 @@ class StrefaInwestorowProvider(BaseProvider):
     def get_article_content(self, article: NewsArticle) -> str:
         """Fetch the full content of an article."""
         try:
-            response = self.session.get(article.url, timeout=10)
+            response = self.session.get(article.url, timeout=30)
             response.raise_for_status()
 
             soup = BeautifulSoup(response.content, 'lxml')
@@ -341,7 +341,7 @@ class StrefaInwestorowProvider(BaseProvider):
         """
         try:
             url = f"{self.base_url}?page=0"
-            response = self.session.get(url, timeout=10)
+            response = self.session.get(url, timeout=30)
             response.raise_for_status()
 
             soup = BeautifulSoup(response.content, 'lxml')

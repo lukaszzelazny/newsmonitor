@@ -606,17 +606,18 @@ export default function TickerDashboard() {
                                         }
                                     };
 
-                                    const handleScrape = async (e) => {
+                                    const handleScrape = async (e, stopAtExisting = false) => {
                                         e.stopPropagation();
 
                                         setScrapingTicker(ticker.ticker);
-                                        showNotification(`Rozpoczynam scraping dla ${ticker.ticker}...`, 'success');
+                                        const modeText = stopAtExisting ? "(nowe)" : "(wszystkie)";
+                                        showNotification(`Rozpoczynam scraping ${modeText} dla ${ticker.ticker}...`, 'success');
 
                                         try {
                                             const response = await fetch('/api/scrape_ticker', {
                                                 method: 'POST',
                                                 headers: { 'Content-Type': 'application/json' },
-                                                body: JSON.stringify({ ticker: ticker.ticker })
+                                                body: JSON.stringify({ ticker: ticker.ticker, stop_at_existing: stopAtExisting })
                                             });
                                             const data = await response.json();
 
@@ -671,9 +672,24 @@ export default function TickerDashboard() {
                                                     <p className="text-xs text-gray-500 dark:text-gray-500">{ticker.sector || 'Brak sektora'}</p>
                                                 </div>
                                                 <div className="flex flex-col items-center gap-2 ml-2">
-                                                    <button onClick={handleScrape} disabled={scrapingTicker === ticker.ticker} className={`text-white px-2 py-1 rounded text-xs ${scrapingTicker === ticker.ticker ? 'bg-gray-400' : 'bg-blue-500'}`}>
-                                                        {scrapingTicker === ticker.ticker ? 'Scraping...' : 'Scrape'}
-                                                    </button>
+                                                    <div className="flex flex-col gap-1">
+                                                        <button 
+                                                            onClick={(e) => handleScrape(e, true)} 
+                                                            disabled={scrapingTicker === ticker.ticker} 
+                                                            className={`text-white px-2 py-1 rounded text-xs ${scrapingTicker === ticker.ticker ? 'bg-gray-400' : 'bg-blue-500'} hover:bg-blue-600 transition-colors`}
+                                                            title="Pobierz tylko nowe artykuły (zatrzymaj na istniejącym)"
+                                                        >
+                                                            {scrapingTicker === ticker.ticker ? '...' : 'Scrape'}
+                                                        </button>
+                                                        <button 
+                                                            onClick={(e) => handleScrape(e, false)} 
+                                                            disabled={scrapingTicker === ticker.ticker} 
+                                                            className={`text-white px-2 py-1 rounded text-xs ${scrapingTicker === ticker.ticker ? 'bg-gray-400' : 'bg-blue-800'} hover:bg-blue-900 transition-colors`}
+                                                            title="Pobierz wszystkie artykuły (pełny zakres)"
+                                                        >
+                                                            Scrape (all)
+                                                        </button>
+                                                    </div>
                                                     <div className="text-right">
                                                         <div className={`text-base font-bold ${getSentimentColor(ticker.avg_sentiment)}`}>
                                                             {ticker.avg_sentiment > 0 ? '+' : ''}{Number(ticker.avg_sentiment).toFixed(2)}

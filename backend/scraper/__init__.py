@@ -281,7 +281,7 @@ class Scraper:
         print(f"\nFinished at: {datetime.now()}")
         print(f"{'='*60}")
 
-    def scrape_ticker(self, provider: BaseProvider, company_name: str, page_from: int = 0, page_to: int = 4, use_custom_url: bool = False) -> dict:
+    def scrape_ticker(self, provider: BaseProvider, company_name: str, page_from: int = 0, page_to: int = 4, use_custom_url: bool = False, stop_at_existing: bool = False) -> dict:
         """
         Scrape articles for a specific company.
         """
@@ -292,18 +292,22 @@ class Scraper:
         print(f"Provider: {provider.name}")
         print(f"Page range: {page_from} to {page_to}")
         print(f"Using Custom URL: {use_custom_url}")
+        print(f"Stop at existing: {stop_at_existing}")
         print(f"{'='*60}")
 
         total_articles = 0
         new_articles = 0
         skipped_articles = 0
         found_articles = 0
+        should_stop = False
 
         try:
             total_pages = page_to - page_from + 1
             print(f"Total pages to scrape: {total_pages}")
 
             for page_num in range(page_from, page_to + 1):
+                if should_stop:
+                    break
                 print(f"\nProcessing page {page_num} ({page_num - page_from + 1}/{total_pages})...")
                 articles = provider.get_articles_for_page(page_num)
 
@@ -355,11 +359,18 @@ class Scraper:
                         # 2. Process the article if no negative keywords
                         existing_article = self.db.get_article_by_url(article.url)
                         if existing_article:
-                            skipped_articles += 1
-                            if not is_article_analyzed(self.db, existing_article.id):
-                                print(f"  → Re-analyzing existing article ID: {existing_article.id}")
+                            is_analyzed = is_article_analyzed(self.db, existing_article.id)
+                            
+                            if stop_at_existing and is_analyzed:
+                                print(f"  ✓ Stopping at existing ANALYZED article: {article.title[:60]}")
+                                should_stop = True
+                                break
+                            
+                            if not is_analyzed:
+                                print(f"  → Analyzing existing (unanalyzed) article ID: {existing_article.id}")
                                 analyze_articles(self.db, mode='id', article_id=existing_article.id, skip_relevance_check=True)
                             else:
+                                skipped_articles += 1
                                 print(f"  ✓ Skipped (already exists and analyzed): {article.title[:60]}")
                         else:  # New article
                             if article.content:

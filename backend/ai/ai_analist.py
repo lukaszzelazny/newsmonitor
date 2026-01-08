@@ -34,10 +34,25 @@ def load_patterns(filepath='patterns.json', name="relevant_patterns"):
 
 # Wzorcowe frazy dla różnych kategorii istotnych newsów
 RELEVANT_PATTERNS = load_patterns(name="revelant_patterns")
+TENDERS_PATTERNS = load_patterns(name="tenders_and_contracts")
+
+# Połącz wzorce istotne z przetargami dla ogólnej klasyfikacji istotności
+if RELEVANT_PATTERNS and TENDERS_PATTERNS:
+    RELEVANT_PATTERNS["tenders_and_contracts"] = TENDERS_PATTERNS
+
 # Nieistotne wzorce
 IRRELEVANT_PATTERNS = load_patterns(name="irrevelant_patterns")
 NEGATIVE_KEYWORDS = load_patterns(name="negative_keywords")
+
+# Wzorce dla szczegółowej analizy kontraktów (używane do wyboru PROMPT_CONTRACT_V1)
 CONTRACT_PATTERNS = load_patterns(name="new_contract")
+TENDERS_PATTERNS_FOR_CONTRACT = load_patterns(name="tenders_and_contracts")
+
+# Połącz obie listy wzorców dla detekcji kontraktów
+if CONTRACT_PATTERNS and TENDERS_PATTERNS_FOR_CONTRACT:
+    CONTRACT_PATTERNS.extend(TENDERS_PATTERNS_FOR_CONTRACT)
+elif TENDERS_PATTERNS_FOR_CONTRACT:
+    CONTRACT_PATTERNS = TENDERS_PATTERNS_FOR_CONTRACT
 
 NEWS_SUMMARY_PATTERN = load_patterns(name="summary_patterns")
 
@@ -175,6 +190,38 @@ def is_news_relevant(headline: str, lead: str, threshold: float = 0.65):
         return True, max_relevant_score, f"Kategoria: {best_category} (score: {max_relevant_score:.3f})"
 
     return False, max_relevant_score, f"{max_relevant_score:.3f} < {threshold}, {best_category}"
+
+
+def initialize_embeddings():
+    """Generuje wszystkie potrzebne embeddingi przy starcie."""
+    print("Inicjalizacja embeddingów...")
+    
+    # Cache dla relevant patterns
+    if not hasattr(is_news_relevant, '_relevant_cache'):
+        print("  Generuję embeddingi wzorców istotnych...")
+        is_news_relevant._relevant_cache = {}
+        if RELEVANT_PATTERNS:
+            for category, patterns in RELEVANT_PATTERNS.items():
+                is_news_relevant._relevant_cache[category] = [
+                    get_embedding(pattern) for pattern in patterns
+                ]
+            
+    # Cache dla irrelevant patterns
+    if not hasattr(is_news_relevant, '_irrelevant_cache'):
+        print("  Generuję embeddingi wzorców nieistotnych...")
+        is_news_relevant._irrelevant_cache = [
+            get_embedding(pattern) for pattern in IRRELEVANT_PATTERNS
+        ] if IRRELEVANT_PATTERNS else []
+        
+    # Cache dla contract patterns
+    if not hasattr(is_news_relevant, '_contract_cache'):
+        print("  Generuję embeddingi wzorców kontraktów...")
+        contract_patterns = CONTRACT_PATTERNS or []
+        is_news_relevant._contract_cache = [
+            get_embedding(pattern) for pattern in contract_patterns if pattern
+        ]
+        
+    print("Embeddingi zainicjalizowane.")
 
 
 def save_not_analyzed(db: Database, news_id: int, reason: str, relevance_score: float):
@@ -1015,7 +1062,7 @@ def analyze_articles(db: Database, mode: str = 'unanalyzed', article_id: int = N
                     title_embedding = get_embedding(article.title)
                     contract_score = calculate_relevance_score(title_embedding, is_news_relevant._contract_cache)
                     
-                    if contract_score > 0.65: # Próg dla kontraktów
+                    if contract_score > 0.50: # Próg dla kontraktów
                         is_contract = True
                         print(f"    ⭐ Wykryto potencjalny kontrakt (score: {contract_score:.3f})")
 

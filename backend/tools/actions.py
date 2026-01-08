@@ -7,7 +7,7 @@ from backend.scraper.providers.strefa_investorow_provider import StrefaInwestoro
 from backend.portfolio.importer import XtbImporter
 
 
-def run_ticker_scraper(ticker: str, page_from: int = 0, page_to: int = 4):
+def run_ticker_scraper(ticker: str, page_from: int = 0, page_to: int = 4, stop_at_existing: bool = False):
     """
     Runs the ticker scraping process for Strefa Inwestorow.
 
@@ -15,6 +15,7 @@ def run_ticker_scraper(ticker: str, page_from: int = 0, page_to: int = 4):
         ticker: The ticker symbol to scrape for.
         page_from: The starting page number.
         page_to: The ending page number.
+        stop_at_existing: Whether to stop scraping when an existing article is found.
     
     Returns:
         A dictionary with the scraping statistics.
@@ -49,9 +50,10 @@ def run_ticker_scraper(ticker: str, page_from: int = 0, page_to: int = 4):
     
     try:
         # Pass scrape_url to indicate we are using a specific URL (implies we might want to relax name filtering)
-        stats = scraper.scrape_ticker(provider, company_name, page_from, page_to, use_custom_url=bool(scrape_url))
+        stats = scraper.scrape_ticker(provider, company_name, page_from, page_to, use_custom_url=bool(scrape_url), stop_at_existing=stop_at_existing)
         scraper.print_summary()
         return stats
+
     except Exception as e:
         import traceback
         traceback.print_exc()

@@ -5,6 +5,7 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '.
 from flask import Flask, jsonify, request
 from flask_cors import CORS
 from backend.tools.actions import run_ticker_scraper
+from backend.ai.ai_analist import initialize_embeddings
 from backend.analize.utils import get_price_history, get_technical_analysis
 from backend.analize.views.tickers import tickers_bp
 from backend.analize.views.calendar import calendar_bp
@@ -55,11 +56,12 @@ def scrape_ticker_endpoint():
         ticker = data.get('ticker')
         page_from = data.get('page_from', 0)
         page_to = data.get('page_to', 4)
+        stop_at_existing = data.get('stop_at_existing', False)
 
         if not ticker:
             return jsonify({'error': 'Missing ticker'}), 400
 
-        stats = run_ticker_scraper(ticker, page_from, page_to)
+        stats = run_ticker_scraper(ticker, page_from, page_to, stop_at_existing)
 
         if "error" in stats:
             return jsonify(stats), 500
@@ -90,7 +92,14 @@ if __name__ == '__main__':
         except Exception as e:
             print(f"Failed to enable Database Mode: {e}", flush=True)
 
+    # Initialize embeddings
+    try:
+        initialize_embeddings()
+    except Exception as e:
+        print(f"Failed to initialize embeddings: {e}", flush=True)
+
     print("Uruchamiam backend API...", flush=True)
+
     port = int(os.environ.get('PORT', 5000))
     debug = os.environ.get('FLASK_DEBUG', 'True').lower() == 'true'
     print(f"Server running on http://0.0.0.0:{port} (debug={debug})", flush=True)
