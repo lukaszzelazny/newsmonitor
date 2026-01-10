@@ -97,6 +97,7 @@ export default function TickerDashboard() {
     const notificationTimeout = useRef(null);
 
     const [isEditingDetails, setIsEditingDetails] = useState(false);
+    const [savingDetails, setSavingDetails] = useState(false);
     const [editForm, setEditForm] = useState({ company_name: '', sector: '', scrape_url: '' });
 
     const showNotification = (message, type = 'success') => {
@@ -131,6 +132,7 @@ export default function TickerDashboard() {
     };
 
     const handleSaveDetails = async () => {
+        setSavingDetails(true);
         try {
             const res = await fetch(`/api/tickers/${selectedTicker.ticker}/update`, {
                 method: 'POST',
@@ -138,11 +140,15 @@ export default function TickerDashboard() {
                 body: JSON.stringify(editForm)
             });
             if (res.ok) {
-                const response = await fetch(`/api/tickers?days=${listDays}`);
-                const data = await response.json();
-                setTickers(data);
-                const updated = data.find(t => t.ticker === selectedTicker.ticker);
-                if (updated) setSelectedTicker(updated);
+                try {
+                    const response = await fetch(`/api/tickers?days=${listDays}`);
+                    const data = await response.json();
+                    setTickers(data);
+                    const updated = data.find(t => t.ticker === selectedTicker.ticker);
+                    if (updated) setSelectedTicker(updated);
+                } catch (refreshError) {
+                    console.error('Error refreshing tickers:', refreshError);
+                }
                 
                 setIsEditingDetails(false);
                 showNotification('Zaktualizowano dane tickera', 'success');
@@ -152,6 +158,8 @@ export default function TickerDashboard() {
         } catch (e) {
              console.error(e);
              showNotification('Błąd sieci', 'error');
+        } finally {
+            setSavingDetails(false);
         }
     };
 
@@ -557,13 +565,24 @@ export default function TickerDashboard() {
                     <div className="grid grid-cols-12 gap-4">
                         <div className="col-span-3 bg-white dark:bg-gray-800 rounded-lg shadow p-3 sticky top-4 self-start" style={{ maxHeight: 'calc(100vh - 2rem)' }}>
                             <div className="mb-3 flex gap-2">
-                                <input
-                                    type="text"
-                                    placeholder="Szukaj tickera..."
-                                    className="w-full px-3 py-1.5 text-sm border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white dark:bg-gray-700 text-gray-900 dark:text-white placeholder-gray-500 dark:placeholder-gray-400"
-                                    value={searchTerm}
-                                    onChange={(e) => setSearchTerm(e.target.value)}
-                                />
+                                <div className="relative flex-grow">
+                                    <input
+                                        type="text"
+                                        placeholder="Szukaj tickera..."
+                                        className="w-full px-3 py-1.5 text-sm border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white dark:bg-gray-700 text-gray-900 dark:text-white placeholder-gray-500 dark:placeholder-gray-400 pr-8"
+                                        value={searchTerm}
+                                        onChange={(e) => setSearchTerm(e.target.value)}
+                                    />
+                                    {searchTerm && (
+                                        <button
+                                            onClick={() => setSearchTerm('')}
+                                            className="absolute right-2 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
+                                            title="Wyczyść wyszukiwanie"
+                                        >
+                                            ✕
+                                        </button>
+                                    )}
+                                </div>
                                 <button
                                     onClick={() => setShowAddTickerModal(true)}
                                     className="px-3 py-1.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-xl font-bold flex items-center justify-center"
@@ -764,8 +783,20 @@ export default function TickerDashboard() {
                                                         />
                                                     </div>
                                                     <div className="flex gap-2">
-                                                        <button onClick={handleSaveDetails} className="bg-green-600 text-white px-3 py-1 rounded text-sm hover:bg-green-700">Zapisz</button>
-                                                        <button onClick={() => setIsEditingDetails(false)} className="bg-gray-400 text-white px-3 py-1 rounded text-sm hover:bg-gray-500">Anuluj</button>
+                                                        <button 
+                                                            onClick={handleSaveDetails} 
+                                                            disabled={savingDetails}
+                                                            className={`bg-green-600 text-white px-3 py-1 rounded text-sm hover:bg-green-700 ${savingDetails ? 'opacity-50 cursor-not-allowed' : ''}`}
+                                                        >
+                                                            {savingDetails ? 'Zapisywanie...' : 'Zapisz'}
+                                                        </button>
+                                                        <button 
+                                                            onClick={() => setIsEditingDetails(false)} 
+                                                            disabled={savingDetails}
+                                                            className="bg-gray-400 text-white px-3 py-1 rounded text-sm hover:bg-gray-500"
+                                                        >
+                                                            Anuluj
+                                                        </button>
                                                     </div>
                                                 </div>
                                             ) : (

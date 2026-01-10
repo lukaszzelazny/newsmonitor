@@ -44,13 +44,24 @@ export default function TickerSelect({ analysisId, onSave, allTickers = [] }) {
         <div className="mt-2 p-2 border border-blue-200 dark:border-blue-900/50 bg-blue-50 dark:bg-blue-900/20 rounded-lg transition-colors">
             <p className="text-xs font-semibold text-blue-800 dark:text-blue-300 mb-2">Przypisz tickery do tej analizy:</p>
             <div className="flex items-center gap-2 mb-2">
-                <input
-                    type="text"
-                    placeholder="Szukaj tickera..."
-                    value={searchTerm}
-                    onChange={(e) => setSearchTerm(e.target.value)}
-                    className="flex-grow px-2 py-1 text-xs border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white rounded-md focus:ring-1 focus:ring-blue-500"
-                />
+                <div className="relative flex-grow">
+                    <input
+                        type="text"
+                        placeholder="Szukaj tickera..."
+                        value={searchTerm}
+                        onChange={(e) => setSearchTerm(e.target.value)}
+                        className="w-full px-2 py-1 text-xs border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white rounded-md focus:ring-1 focus:ring-blue-500 pr-8"
+                    />
+                    {searchTerm && (
+                        <button
+                            onClick={() => setSearchTerm('')}
+                            className="absolute right-2 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
+                            title="Wyczyść"
+                        >
+                            ✕
+                        </button>
+                    )}
+                </div>
                 <button onClick={toggleSelectAll} className="px-2 py-1 text-xs font-semibold text-white bg-blue-500 rounded-md hover:bg-blue-600 transition-colors">Zaznacz/Odznacz</button>
             </div>
             <div className="max-h-32 overflow-y-auto border dark:border-gray-600 bg-white dark:bg-gray-700 rounded p-1 text-xs mb-2 transition-colors">
