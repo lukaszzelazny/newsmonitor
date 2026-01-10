@@ -1,6 +1,6 @@
 from flask import Blueprint, jsonify, request
 from sqlalchemy import text
-from analize.utils import get_db_engine, parse_price
+from backend.analize.utils import get_db_engine, parse_price
 from backend.tools.price_fetcher import get_current_prices
 
 recommendations_bp = Blueprint('recommendations', __name__)

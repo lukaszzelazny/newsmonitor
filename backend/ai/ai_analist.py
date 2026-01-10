@@ -17,6 +17,11 @@ load_dotenv()
 
 client = OpenAI(api_key=os.getenv('OPENAI_API', ''))
 
+# Globalne cache dla embeddingów (zachowane między wywołaniami)
+_RELEVANT_CACHE = None
+_IRRELEVANT_CACHE = None
+_CONTRACT_CACHE = None
+
 def load_patterns(filepath='patterns.json', name="relevant_patterns"):
     """Wczytuje atrybut 'relevant_patterns' z pliku JSON"""
     try:
@@ -142,6 +147,8 @@ def is_news_relevant(headline: str, lead: str, threshold: float = 0.65):
     Returns:
         Tuple[bool, float, str] - (czy_istotny, score, powód)
     """
+    global _RELEVANT_CACHE, _IRRELEVANT_CACHE
+    
     # Połącz tytuł i lead
     full_text = f"{headline}. {lead}"
 
@@ -151,26 +158,28 @@ def is_news_relevant(headline: str, lead: str, threshold: float = 0.65):
         return False, 0.0, "Błąd generowania embeddingu"
 
     # Generuj embeddingi dla wzorców istotnych (cachowane w pamięci)
-    if not hasattr(is_news_relevant, '_relevant_cache'):
+    if _RELEVANT_CACHE is None:
         print("Generuję embeddingi wzorców istotnych...")
-        is_news_relevant._relevant_cache = {}
-        for category, patterns in RELEVANT_PATTERNS.items():
-            is_news_relevant._relevant_cache[category] = [
-                get_embedding(pattern) for pattern in patterns
-            ]
+        _RELEVANT_CACHE = {}
+        if RELEVANT_PATTERNS:
+            for category, patterns in RELEVANT_PATTERNS.items():
+                _RELEVANT_CACHE[category] = [
+                    get_embedding(pattern) for pattern in patterns
+                ]
 
     # Generuj embeddingi dla wzorców nieistotnych
-    if not hasattr(is_news_relevant, '_irrelevant_cache'):
+    if _IRRELEVANT_CACHE is None:
         print("Generuję embeddingi wzorców nieistotnych...")
-        is_news_relevant._irrelevant_cache = [
+        _IRRELEVANT_CACHE = [
             get_embedding(pattern) for pattern in IRRELEVANT_PATTERNS
-        ]
+        ] if IRRELEVANT_PATTERNS else []
 
     # Oblicz score dla kategorii istotnych
     category_scores = {}
-    for category, embeddings in is_news_relevant._relevant_cache.items():
-        score = calculate_relevance_score(news_embedding, embeddings)
-        category_scores[category] = score
+    if _RELEVANT_CACHE:
+        for category, embeddings in _RELEVANT_CACHE.items():
+            score = calculate_relevance_score(news_embedding, embeddings)
+            category_scores[category] = score
 
     max_relevant_score = max(category_scores.values()) if category_scores else 0.0
     best_category = max(category_scores,
@@ -179,7 +188,7 @@ def is_news_relevant(headline: str, lead: str, threshold: float = 0.65):
     # Oblicz score dla wzorców nieistotnych
     irrelevant_score = calculate_relevance_score(
         news_embedding,
-        is_news_relevant._irrelevant_cache
+        _IRRELEVANT_CACHE
     )
 
     # Decyzja
@@ -194,30 +203,32 @@ def is_news_relevant(headline: str, lead: str, threshold: float = 0.65):
 
 def initialize_embeddings():
     """Generuje wszystkie potrzebne embeddingi przy starcie."""
+    global _RELEVANT_CACHE, _IRRELEVANT_CACHE, _CONTRACT_CACHE
+    
     print("Inicjalizacja embeddingów...")
     
     # Cache dla relevant patterns
-    if not hasattr(is_news_relevant, '_relevant_cache'):
+    if _RELEVANT_CACHE is None:
         print("  Generuję embeddingi wzorców istotnych...")
-        is_news_relevant._relevant_cache = {}
+        _RELEVANT_CACHE = {}
         if RELEVANT_PATTERNS:
             for category, patterns in RELEVANT_PATTERNS.items():
-                is_news_relevant._relevant_cache[category] = [
+                _RELEVANT_CACHE[category] = [
                     get_embedding(pattern) for pattern in patterns
                 ]
             
     # Cache dla irrelevant patterns
-    if not hasattr(is_news_relevant, '_irrelevant_cache'):
+    if _IRRELEVANT_CACHE is None:
         print("  Generuję embeddingi wzorców nieistotnych...")
-        is_news_relevant._irrelevant_cache = [
+        _IRRELEVANT_CACHE = [
             get_embedding(pattern) for pattern in IRRELEVANT_PATTERNS
         ] if IRRELEVANT_PATTERNS else []
         
     # Cache dla contract patterns
-    if not hasattr(is_news_relevant, '_contract_cache'):
+    if _CONTRACT_CACHE is None:
         print("  Generuję embeddingi wzorców kontraktów...")
         contract_patterns = CONTRACT_PATTERNS or []
-        is_news_relevant._contract_cache = [
+        _CONTRACT_CACHE = [
             get_embedding(pattern) for pattern in contract_patterns if pattern
         ]
         
@@ -1049,18 +1060,19 @@ def analyze_articles(db: Database, mode: str = 'unanalyzed', article_id: int = N
             is_contract = force_contract
             if not has_summary and not is_contract:
                 # Embedding dla tytułu
-                if not hasattr(is_news_relevant, '_contract_cache'):
+                global _CONTRACT_CACHE
+                if _CONTRACT_CACHE is None:
                     print("Generuję embeddingi wzorców kontraktów...")
                     contract_patterns = CONTRACT_PATTERNS or []
                     if not contract_patterns:
                         print("⚠ Ostrzeżenie: Brak wzorców kontraktów w patterns.json")
-                    is_news_relevant._contract_cache = [
+                    _CONTRACT_CACHE = [
                         get_embedding(pattern) for pattern in contract_patterns if pattern
                     ]
                 
-                if is_news_relevant._contract_cache:
+                if _CONTRACT_CACHE:
                     title_embedding = get_embedding(article.title)
-                    contract_score = calculate_relevance_score(title_embedding, is_news_relevant._contract_cache)
+                    contract_score = calculate_relevance_score(title_embedding, _CONTRACT_CACHE)
                     
                     if contract_score > 0.50: # Próg dla kontraktów
                         is_contract = True

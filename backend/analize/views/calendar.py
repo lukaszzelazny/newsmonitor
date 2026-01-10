@@ -1,7 +1,7 @@
 import json
 from flask import Blueprint, jsonify, request
 from sqlalchemy import text
-from analize.utils import get_db_engine, format_summary
+from backend.analize.utils import get_db_engine, format_summary
 
 calendar_bp = Blueprint('calendar', __name__)
 engine, schema = get_db_engine()

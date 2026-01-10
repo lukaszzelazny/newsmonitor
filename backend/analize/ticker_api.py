@@ -92,11 +92,15 @@ if __name__ == '__main__':
         except Exception as e:
             print(f"Failed to enable Database Mode: {e}", flush=True)
 
-    # Initialize embeddings
-    try:
-        initialize_embeddings()
-    except Exception as e:
-        print(f"Failed to initialize embeddings: {e}", flush=True)
+    # Initialize embeddings only in the main process (not in reloader)
+    # WERKZEUG_RUN_MAIN is set to 'true' in the reloader subprocess
+    if os.environ.get('WERKZEUG_RUN_MAIN') != 'true':
+        try:
+            initialize_embeddings()
+        except Exception as e:
+            print(f"Failed to initialize embeddings: {e}", flush=True)
+    else:
+        print("Skipping embedding initialization in reloader process", flush=True)
 
     print("Uruchamiam backend API...", flush=True)
 
