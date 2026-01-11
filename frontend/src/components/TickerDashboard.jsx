@@ -961,7 +961,7 @@ export default function TickerDashboard() {
                                                         </tr>
                                                     ) : (
                                                         contracts.map((contract, idx) => (
-                                                            <tr key={idx} className="hover:bg-gray-50 dark:hover:bg-gray-750">
+                                                            <tr key={idx} className="hover:bg-gray-50 dark:hover:bg-gray-700">
                                                                 <td className="px-3 py-2 whitespace-nowrap text-xs text-gray-700 dark:text-gray-300 align-top">{contract.date}</td>
                                                                 <td className="px-3 py-2 text-xs text-gray-900 dark:text-white font-medium align-top">{contract.contract_value || '-'}</td>
                                                                 <td className="px-3 py-2 text-xs text-gray-700 dark:text-gray-300 align-top">{contract.contract_summary}</td>
@@ -996,19 +996,19 @@ export default function TickerDashboard() {
                                             <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
                                                 <thead className="bg-gray-50 dark:bg-gray-700">
                                                     <tr>
-                                                        <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">Data</th>
-                                                        <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">EPS</th>
-                                                        <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">EPS (Fwd)</th>
-                                                        <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">P/E (Trail)</th>
-                                                        <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">P/E (Fwd)</th>
-                                                        <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">PEG</th>
-                                                        <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">Rev Growth</th>
-                                                        <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">Earn Growth</th>
-                                                        <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">Revenue</th>
-                                                        <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">Market Cap</th>
-                                                        <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">EBITDA</th>
-                                                        <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">Cash Flow</th>
-                                                        <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">Profit Margin</th>
+                                                        <th title="Data publikacji danych" className="px-3 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider cursor-help">Data</th>
+                                                        <th title="Zysk na akcję (Earnings Per Share) - część zysku spółki przypadająca na jedną akcję" className="px-3 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider cursor-help">EPS</th>
+                                                        <th title="Prognozowany zysk na akcję (Forward Earnings Per Share)" className="px-3 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider cursor-help">EPS (Fwd)</th>
+                                                        <th title="Cena do zysku (Price to Earnings) - stosunek ceny akcji do zysku na akcję z ostatnich 12 miesięcy" className="px-3 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider cursor-help">P/E (Trail)</th>
+                                                        <th title="Prognozowana cena do zysku (Forward P/E) - stosunek ceny akcji do prognozowanego zysku na akcję" className="px-3 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider cursor-help">P/E (Fwd)</th>
+                                                        <th title="Cena do zysku do wzrostu (Price/Earnings to Growth) - P/E podzielone przez roczną stopę wzrostu zysków. <1 może sugerować niedowartościowanie" className="px-3 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider cursor-help">PEG</th>
+                                                        <th title="Wzrost przychodów (Revenue Growth) - procentowa zmiana przychodów r/r" className="px-3 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider cursor-help">Rev Growth</th>
+                                                        <th title="Wzrost zysków (Earnings Growth) - procentowa zmiana zysków r/r" className="px-3 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider cursor-help">Earn Growth</th>
+                                                        <th title="Przychody (Revenue) - całkowita kwota ze sprzedaży" className="px-3 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider cursor-help">Revenue</th>
+                                                        <th title="Kapitalizacja rynkowa (Market Cap) - całkowita wartość rynkowa wszystkich akcji spółki" className="px-3 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider cursor-help">Market Cap</th>
+                                                        <th title="Zysk przed odsetkami, opodatkowaniem, amortyzacją (EBITDA)" className="px-3 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider cursor-help">EBITDA</th>
+                                                        <th title="Przepływy pieniężne (Cash Flow) - różnica między wpływami a wypływami gotówki" className="px-3 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider cursor-help">Cash Flow</th>
+                                                        <th title="Marża zysku (Profit Margin) - stosunek zysku netto do przychodów" className="px-3 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider cursor-help">Profit Margin</th>
                                                     </tr>
                                                 </thead>
                                                 <tbody className="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700">
