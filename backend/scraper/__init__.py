@@ -281,7 +281,7 @@ class Scraper:
         print(f"\nFinished at: {datetime.now()}")
         print(f"{'='*60}")
 
-    def scrape_ticker(self, provider: BaseProvider, company_name: str, page_from: int = 0, page_to: int = 4, use_custom_url: bool = False, stop_at_existing: bool = False, scrape_type: str = 'all') -> dict:
+    def scrape_ticker(self, provider: BaseProvider, company_name: str, page_from: int = 0, page_to: int = 4, use_custom_url: bool = False, stop_at_existing: bool = False, scrape_type: str = 'all', ticker: str = None) -> dict:
         """
         Scrape articles for a specific company.
         """
@@ -371,6 +371,16 @@ class Scraper:
                         if existing_article:
                             is_analyzed = is_article_analyzed(self.db, existing_article.id)
                             
+                            # Check if we need to re-analyze potential contracts that were missed
+                            if scrape_type == 'contracts' and is_analyzed:
+                                if not self.db.has_contract(existing_article.id):
+                                    is_contract_potential, contract_score = is_potential_contract(existing_article.title)
+                                    if is_contract_potential:
+                                        print(f"  [!] Re-analyzing missed contract (score={contract_score:.4f}): {existing_article.title[:60]}")
+                                        analyze_articles(self.db, mode='id', article_id=existing_article.id, skip_relevance_check=True, force_contract=True, forced_ticker=ticker)
+                                        # Treat as handled
+                                        continue
+
                             if stop_at_existing and is_analyzed:
                                 print(f"  [OK] Stopping at existing ANALYZED article: {article.title[:60]}")
                                 should_stop = True

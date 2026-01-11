@@ -61,7 +61,7 @@ def run_ticker_scraper(ticker: str, page_from: int = 0, page_to: int = 4, stop_a
     try:
         # Pass scrape_url to indicate we are using a specific URL (implies we might want to relax name filtering)
         # Pass scrape_type detected from URL
-        stats = scraper.scrape_ticker(provider, company_name, page_from, page_to, use_custom_url=bool(scrape_url), stop_at_existing=stop_at_existing, scrape_type=scrape_type)
+        stats = scraper.scrape_ticker(provider, company_name, page_from, page_to, use_custom_url=bool(scrape_url), stop_at_existing=stop_at_existing, scrape_type=scrape_type, ticker=ticker)
         scraper.print_summary()
         return stats
 

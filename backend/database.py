@@ -268,6 +268,19 @@ class Database:
     Add these methods to your Database class in database.py
     """
 
+    def has_contract(self, news_id: int) -> bool:
+        """Check if an article is already linked to a contract."""
+        session = self.Session()
+        try:
+            # Contract is linked via AnalysisResult
+            # contracts -> analysis_result -> news_articles
+            result = session.query(Contract).join(AnalysisResult).filter(
+                AnalysisResult.news_id == news_id
+            ).first()
+            return result is not None
+        finally:
+            session.close()
+
     def exists_recommendation(self, external_id: str) -> bool:
         """
         Check if a recommendation already exists by external_id.
