@@ -135,6 +135,38 @@ def contains_pattern(pattern: list, title: str, content: str) -> tuple[bool, str
     return False, ""
 
 
+def is_potential_contract(text: str) -> tuple[bool, float]:
+    """
+    Sprawdza, czy tekst (np. tytuł) pasuje do wzorca kontraktu/umowy przy użyciu embeddings.
+    
+    Args:
+        text: Tekst do sprawdzenia
+        
+    Returns:
+        tuple[bool, float]: (True jeśli pasuje, score)
+    """
+    global _CONTRACT_CACHE
+    
+    if not text:
+        return False, 0.0
+        
+    if _CONTRACT_CACHE is None:
+        print("Generuję embeddingi wzorców kontraktów...")
+        contract_patterns = CONTRACT_PATTERNS or []
+        _CONTRACT_CACHE = [
+            get_embedding(pattern) for pattern in contract_patterns if pattern
+        ]
+    
+    if not _CONTRACT_CACHE:
+        return False, 0.0
+        
+    text_embedding = get_embedding(text)
+    if text_embedding is None:
+        return False, 0.0
+        
+    score = calculate_relevance_score(text_embedding, _CONTRACT_CACHE)
+    return score > 0.40, score
+
 def is_news_relevant(headline: str, lead: str, threshold: float = 0.65):
     """
     Sprawdza czy news jest istotny przy użyciu embeddings.
@@ -256,10 +288,10 @@ def save_not_analyzed(db: Database, news_id: int, reason: str, relevance_score: 
             {"news_id": news_id, "reason": reason, "relevance_score": relevance_score}
         )
         session.commit()
-        print(f"✓ Zapisano do news_not_analyzed: ID={news_id}, powód: {reason}")
+        print(f"[OK] Zapisano do news_not_analyzed: ID={news_id}, powód: {reason}")
     except Exception as e:
         session.rollback()
-        print(f"✗ Błąd zapisu do news_not_analyzed: {e}")
+        print(f"[X] Błąd zapisu do news_not_analyzed: {e}")
     finally:
         session.close()
 
@@ -992,7 +1024,7 @@ def analyze_articles(db: Database, mode: str = 'unanalyzed', article_id: int = N
             # Sprawdź czy artykuł już został przeanalizowany (chyba że wymuszamy analizę kontraktu)
             if not force_contract and is_article_analyzed(db, article.id):
                 print(
-                    f"⊘ Artykuł ID={article.id} został już wcześniej przeanalizowany - pomijam")
+                    f"[-] Artykuł ID={article.id} został już wcześniej przeanalizowany - pomijam")
                 results.append({
                     "article_id": article.id,
                     "title": article.title,
@@ -1014,7 +1046,7 @@ def analyze_articles(db: Database, mode: str = 'unanalyzed', article_id: int = N
                 has_negative, negative_keyword = contains_pattern(NEGATIVE_KEYWORDS, article.title, article.content or "")
                 if has_negative:
                     reason = f"Zawiera negatywne słowo kluczowe: '{negative_keyword}'"
-                    print(f"    ✗ Wykluczony: {reason}")
+                    print(f"    [X] Wykluczony: {reason}")
                     save_not_analyzed(db, article.id, reason, 0.0)
                     results.append({
                         "article_id": article.id,
@@ -1065,7 +1097,7 @@ def analyze_articles(db: Database, mode: str = 'unanalyzed', article_id: int = N
                     print("Generuję embeddingi wzorców kontraktów...")
                     contract_patterns = CONTRACT_PATTERNS or []
                     if not contract_patterns:
-                        print("⚠ Ostrzeżenie: Brak wzorców kontraktów w patterns.json")
+                        print("WARNING: Brak wzorców kontraktów w patterns.json")
                     _CONTRACT_CACHE = [
                         get_embedding(pattern) for pattern in contract_patterns if pattern
                     ]
@@ -1076,7 +1108,7 @@ def analyze_articles(db: Database, mode: str = 'unanalyzed', article_id: int = N
                     
                     if contract_score > 0.50: # Próg dla kontraktów
                         is_contract = True
-                        print(f"    ⭐ Wykryto potencjalny kontrakt (score: {contract_score:.3f})")
+                        print(f"    [*] Wykryto potencjalny kontrakt (score: {contract_score:.3f})")
 
             # Analizuj artykuł (tylko jeśli jest istotny lub skip_relevance_check=True)
             step_num = "[2/2]" if skip_relevance_check else "[2/3]"
@@ -1133,7 +1165,7 @@ def analyze_articles(db: Database, mode: str = 'unanalyzed', article_id: int = N
             print(f"{step_num} Zapisuję wyniki do bazy danych...")
 
             analysis_id = save_analysis_results(db, article.id, analysis_json, forced_ticker=forced_ticker)
-            print(f"✓ Pomyślnie zapisano analizę (analysis_id={analysis_id})")
+            print(f"[OK] Pomyślnie zapisano analizę (analysis_id={analysis_id})")
 
             results.append({
                 "article_id": article.id,
@@ -1143,7 +1175,7 @@ def analyze_articles(db: Database, mode: str = 'unanalyzed', article_id: int = N
                 "relevance_score": relevance_score
             })
         except Exception as e:
-            print(f"✗ BŁĄD podczas analizy artykułu ID={article.id}, json={analysis_json}: {str(e)}")
+            print(f"[X] BŁĄD podczas analizy artykułu ID={article.id}, json={analysis_json}: {str(e)}")
             import traceback
             traceback.print_exc()
             results.append({

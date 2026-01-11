@@ -4,6 +4,7 @@ from backend.config import Config
 from backend.database import Database, Portfolio, Ticker
 from backend.scraper import Scraper
 from backend.scraper.providers.strefa_investorow_provider import StrefaInwestorowProvider
+from backend.scraper.providers.pap_espi_provider import PapEspiProvider
 from backend.portfolio.importer import XtbImporter
 
 
@@ -40,9 +41,18 @@ def run_ticker_scraper(ticker: str, page_from: int = 0, page_to: int = 4, stop_a
         db.close()
         return {"error": f"Ticker '{ticker}' not found in the database."}
 
+    scrape_type = 'all'
+
     if scrape_url:
         print(f"Using custom scrape URL for {ticker}: {scrape_url}")
-        provider = StrefaInwestorowProvider(base_url=scrape_url)
+        
+        # Auto-detect provider and type
+        if 'pap.pl' in scrape_url or 'espi' in scrape_url:
+             print("Detected PAP ESPI URL -> Using PapEspiProvider and Contracts mode")
+             provider = PapEspiProvider(base_url=scrape_url)
+             scrape_type = 'contracts'
+        else:
+             provider = StrefaInwestorowProvider(base_url=scrape_url)
     else:
         provider = StrefaInwestorowProvider()
         
@@ -50,7 +60,8 @@ def run_ticker_scraper(ticker: str, page_from: int = 0, page_to: int = 4, stop_a
     
     try:
         # Pass scrape_url to indicate we are using a specific URL (implies we might want to relax name filtering)
-        stats = scraper.scrape_ticker(provider, company_name, page_from, page_to, use_custom_url=bool(scrape_url), stop_at_existing=stop_at_existing)
+        # Pass scrape_type detected from URL
+        stats = scraper.scrape_ticker(provider, company_name, page_from, page_to, use_custom_url=bool(scrape_url), stop_at_existing=stop_at_existing, scrape_type=scrape_type)
         scraper.print_summary()
         return stats
 

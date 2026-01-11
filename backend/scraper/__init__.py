@@ -5,7 +5,7 @@ from typing import List, Optional
 from datetime import date, datetime
 from .providers import BaseProvider, NewsArticle
 from backend.database import Database
-from backend.ai.ai_analist import analyze_articles, is_article_analyzed, contains_pattern, NEGATIVE_KEYWORDS, save_not_analyzed
+from backend.ai.ai_analist import analyze_articles, is_article_analyzed, contains_pattern, NEGATIVE_KEYWORDS, save_not_analyzed, is_potential_contract
 
 
 class Scraper:
@@ -62,11 +62,11 @@ class Scraper:
                     # Check if already exists
                     if self.db.exists(article.url):
                         skipped_articles += 1
-                        print(f"  ✓ Skipped (already exists): {article.title[:60]}")
+                        print(f"  [OK] Skipped (already exists): {article.title[:60]}")
                         continue
 
                     # Fetch article content and date
-                    print(f"  → Fetching: {article.title[:60]}")
+                    print(f"  -> Fetching: {article.title[:60]}")
                     article.content = provider.clean_content(provider.get_article_content(article))
 
                     if article.content:
@@ -74,12 +74,12 @@ class Scraper:
                         self.db.add_article(article)
                         new_articles += 1
                         date_str = f" ({article.date})" if article.date else ""
-                        print(f"    ✓ Saved{date_str}")
+                        print(f"    [OK] Saved{date_str}")
                     else:
-                        print(f"    ✗ Failed to fetch content")
+                        print(f"    [X] Failed to fetch content")
 
         except Exception as e:
-            print(f"\n✗ Error scraping from {provider.name}: {e}")
+            print(f"\n[X] Error scraping from {provider.name}: {e}")
             self.errors.append(f"{provider.name}: {str(e)}")
 
         stats = {
@@ -115,7 +115,7 @@ class Scraper:
             html = provider.fetch_page(0)
 
             if not html:
-                print("✗ Failed to fetch recommendations page")
+                print("[X] Failed to fetch recommendations page")
                 return {
                     'provider': provider.name,
                     'total_recommendations': 0,
@@ -147,11 +147,11 @@ class Scraper:
                 # Check if already exists
                 if self.db.exists_recommendation(external_id):
                     skipped_recommendations += 1
-                    print(f"  ✓ Skipped (already exists): {rec_data['title'][:60]}")
+                    print(f"  [OK] Skipped (already exists): {rec_data['title'][:60]}")
                     continue
 
                 # Save to database
-                print(f"  → Processing: {rec_data['title'][:60]}")
+                print(f"  -> Processing: {rec_data['title'][:60]}")
 
                 try:
                     self.telegram.send_brokerage_alert(brokerage_house=rec_data.get('brokerage_house'),
@@ -164,15 +164,15 @@ class Scraper:
                     rec_id = self.db.add_recommendation(rec_data)
                     if rec_id:
                         new_recommendations += 1
-                        print(f"    ✓ Saved (ID: {rec_id})")
+                        print(f"    [OK] Saved (ID: {rec_id})")
                     else:
-                        print(f"    ✗ Failed to save")
+                        print(f"    [X] Failed to save")
                 except Exception as e:
-                    print(f"    ✗ Error saving: {e}")
+                    print(f"    [X] Error saving: {e}")
                     self.errors.append(f"Recommendation {rec_data['title']}: {str(e)}")
 
         except Exception as e:
-            print(f"\n✗ Error scraping recommendations: {e}")
+            print(f"\n[X] Error scraping recommendations: {e}")
             self.errors.append(f"{provider.name}: {str(e)}")
 
         stats = {
@@ -218,7 +218,7 @@ class Scraper:
                         continue
 
                     # Fetch content and infer date
-                    print(f"  → Fetching: {article.title[:60]}")
+                    print(f"  -> Fetching: {article.title[:60]}")
                     article.content = provider.get_article_content(article)
                     if article.date:
                         page_dates.append(article.date)
@@ -227,10 +227,10 @@ class Scraper:
                     if article.content and article.date and (start_date <= article.date <= end_date):
                         self.db.add_article(article)
                         new_articles += 1
-                        print(f"    ✓ Saved ({article.date})")
+                        print(f"    [OK] Saved ({article.date})")
                     else:
                         skipped_articles += 1
-                        print(f"    ✓ Skipped (out of range or no content/date: {article.date})")
+                        print(f"    [OK] Skipped (out of range or no content/date: {article.date})")
 
                 # Early stop: if the newest on page is older than start_date, remaining pages will be older
                 if page_dates:
@@ -240,7 +240,7 @@ class Scraper:
                         break
 
         except Exception as e:
-            print(f"\n✗ Error scraping from {provider.name}: {e}")
+            print(f"\n[X] Error scraping from {provider.name}: {e}")
             self.errors.append(f"{provider.name}: {str(e)}")
 
         stats = {
@@ -281,7 +281,7 @@ class Scraper:
         print(f"\nFinished at: {datetime.now()}")
         print(f"{'='*60}")
 
-    def scrape_ticker(self, provider: BaseProvider, company_name: str, page_from: int = 0, page_to: int = 4, use_custom_url: bool = False, stop_at_existing: bool = False) -> dict:
+    def scrape_ticker(self, provider: BaseProvider, company_name: str, page_from: int = 0, page_to: int = 4, use_custom_url: bool = False, stop_at_existing: bool = False, scrape_type: str = 'all') -> dict:
         """
         Scrape articles for a specific company.
         """
@@ -293,6 +293,7 @@ class Scraper:
         print(f"Page range: {page_from} to {page_to}")
         print(f"Using Custom URL: {use_custom_url}")
         print(f"Stop at existing: {stop_at_existing}")
+        print(f"Scrape Type: {scrape_type}")
         print(f"{'='*60}")
 
         total_articles = 0
@@ -328,7 +329,7 @@ class Scraper:
                     # So we can be more lenient or skip name check.
                     if use_custom_url:
                         is_match = True
-                        print(f"  → Matched (Custom URL): {article.title[:60]}")
+                        print(f"  -> Matched (Custom URL): {article.title[:60]}")
                     else:
                         title_match = re.search(pattern, article.title.lower())
                         
@@ -344,6 +345,15 @@ class Scraper:
                             is_match = True
 
                     if is_match:
+                        # 0. Check scrape_type logic
+                        if scrape_type == 'contracts':
+                            is_contract_potential, contract_score = is_potential_contract(article.title)
+                            if not is_contract_potential:
+                                print(f"  - Skipped (not a contract, score={contract_score:.4f}): {article.title[:60]}")
+                                continue
+                            else:
+                                print(f"  + Potential contract found (score={contract_score:.4f}): {article.title[:60]}")
+
                         # Fetch content if not fetched yet
                         if not article.content:
                             article.content = provider.clean_content(provider.get_article_content(article))
@@ -362,31 +372,31 @@ class Scraper:
                             is_analyzed = is_article_analyzed(self.db, existing_article.id)
                             
                             if stop_at_existing and is_analyzed:
-                                print(f"  ✓ Stopping at existing ANALYZED article: {article.title[:60]}")
+                                print(f"  [OK] Stopping at existing ANALYZED article: {article.title[:60]}")
                                 should_stop = True
                                 break
                             
                             if not is_analyzed:
-                                print(f"  → Analyzing existing (unanalyzed) article ID: {existing_article.id}")
+                                print(f"  -> Analyzing existing (unanalyzed) article ID: {existing_article.id}")
                                 analyze_articles(self.db, mode='id', article_id=existing_article.id, skip_relevance_check=True)
                             else:
                                 skipped_articles += 1
-                                print(f"  ✓ Skipped (already exists and analyzed): {article.title[:60]}")
+                                print(f"  [OK] Skipped (already exists and analyzed): {article.title[:60]}")
                         else:  # New article
                             if article.content:
                                 db_article = self.db.add_article(article)
                                 new_articles += 1
                                 date_str = f" ({article.date})" if article.date else ""
-                                print(f"    ✓ Saved{date_str} with ID: {db_article.id}")
+                                print(f"    [OK] Saved{date_str} with ID: {db_article.id}")
                                 
                                 # Trigger AI analysis
-                                print(f"    → Triggering AI analysis for article ID: {db_article.id}")
+                                print(f"    -> Triggering AI analysis for article ID: {db_article.id}")
                                 analyze_articles(self.db, mode='id', article_id=db_article.id, skip_relevance_check=True)
                             else:
-                                print(f"    ✗ Failed to fetch content for new article")
+                                print(f"    [X] Failed to fetch content for new article")
 
         except Exception as e:
-            print(f"\n✗ Error scraping for {company_name}: {e}")
+            print(f"\n[X] Error scraping for {company_name}: {e}")
             self.errors.append(f"{company_name}: {str(e)}")
 
         stats = {

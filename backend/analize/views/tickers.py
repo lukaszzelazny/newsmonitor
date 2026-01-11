@@ -368,7 +368,8 @@ def get_tickers():
         COALESCE(p.avg_confidence, 0) as avg_confidence,
         tot.last_mention,
         COALESCE(t.in_portfolio, 0) as in_portfolio,
-        COALESCE(t.is_favorite, false) as is_favorite
+        COALESCE(t.is_favorite, false) as is_favorite,
+        t.scrape_url
     FROM {schema}.tickers t
     LEFT JOIN period_stats p ON t.ticker = p.ticker
     LEFT JOIN total_stats tot ON t.ticker = tot.ticker
@@ -388,7 +389,8 @@ def get_tickers():
                 'avg_confidence': float(row[5]) if row[5] else 0,
                 'last_mention': row[6].strftime('%Y-%m-%d') if row[6] else None,
                 'in_portfolio': bool(row[7]) if row[7] else False,
-                'is_favorite': bool(row[8]) if row[8] else False
+                'is_favorite': bool(row[8]) if row[8] else False,
+                'scrape_url': row[9]
             })
 
     return jsonify(tickers_data)

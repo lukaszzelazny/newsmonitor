@@ -99,6 +99,16 @@ export default function TickerDashboard() {
     const [isEditingDetails, setIsEditingDetails] = useState(false);
     const [savingDetails, setSavingDetails] = useState(false);
     const [editForm, setEditForm] = useState({ company_name: '', sector: '', scrape_url: '' });
+    const [scrapeType, setScrapeType] = useState('all');
+    const [stopAtExisting, setStopAtExisting] = useState(true);
+
+    useEffect(() => {
+        if (editForm.scrape_url && (editForm.scrape_url.includes('pap.pl') || editForm.scrape_url.includes('espi'))) {
+            setScrapeType('contracts');
+        } else {
+            setScrapeType('all');
+        }
+    }, [editForm.scrape_url]);
 
     const showNotification = (message, type = 'success') => {
         setNotification({ message, type });
@@ -182,6 +192,34 @@ export default function TickerDashboard() {
             showNotification('Błąd sieci podczas aktualizacji cen.', 'error');
         } finally {
             setLoadingPrices(false);
+        }
+    };
+
+    const handleScrapeSelected = async () => {
+        if (!selectedTicker) return;
+        
+        setScrapingTicker(selectedTicker.ticker);
+        const modeText = stopAtExisting ? "(nowe)" : "(wszystkie)";
+        showNotification(`Rozpoczynam scraping ${modeText} dla ${selectedTicker.ticker}...`, 'success');
+
+        try {
+            const response = await fetch('/api/scrape_ticker', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ ticker: selectedTicker.ticker, stop_at_existing: stopAtExisting })
+            });
+            const data = await response.json();
+
+            if (response.ok) {
+                showNotification(`Scraping dla ${selectedTicker.ticker} zakończony! Nowe artykuły: ${data.new_articles}`, 'success');
+                fetchAnalyses(selectedTicker.ticker);
+            } else {
+                showNotification(`Błąd podczas scrapingu ${selectedTicker.ticker}: ${data.error}`, 'error');
+            }
+        } catch (error) {
+            showNotification(`Błąd sieci podczas scrapingu ${selectedTicker.ticker}.`, 'error');
+        } finally {
+            setScrapingTicker(null);
         }
     };
 
@@ -625,34 +663,6 @@ export default function TickerDashboard() {
                                         }
                                     };
 
-                                    const handleScrape = async (e, stopAtExisting = false) => {
-                                        e.stopPropagation();
-
-                                        setScrapingTicker(ticker.ticker);
-                                        const modeText = stopAtExisting ? "(nowe)" : "(wszystkie)";
-                                        showNotification(`Rozpoczynam scraping ${modeText} dla ${ticker.ticker}...`, 'success');
-
-                                        try {
-                                            const response = await fetch('/api/scrape_ticker', {
-                                                method: 'POST',
-                                                headers: { 'Content-Type': 'application/json' },
-                                                body: JSON.stringify({ ticker: ticker.ticker, stop_at_existing: stopAtExisting })
-                                            });
-                                            const data = await response.json();
-
-                                            if (response.ok) {
-                                                showNotification(`Scraping dla ${ticker.ticker} zakończony! Nowe artykuły: ${data.new_articles}`, 'success');
-                                                fetchAnalyses(ticker.ticker);
-                                            } else {
-                                                showNotification(`Błąd podczas scrapingu ${ticker.ticker}: ${data.error}`, 'error');
-                                            }
-                                        } catch (error) {
-                                            showNotification(`Błąd sieci podczas scrapingu ${ticker.ticker}.`, 'error');
-                                        } finally {
-                                            setScrapingTicker(null);
-                                        }
-                                    };
-
                                     return (
                                         <div
                                             key={ticker.ticker}
@@ -691,24 +701,6 @@ export default function TickerDashboard() {
                                                     <p className="text-xs text-gray-500 dark:text-gray-500">{ticker.sector || 'Brak sektora'}</p>
                                                 </div>
                                                 <div className="flex flex-col items-center gap-2 ml-2">
-                                                    <div className="flex flex-col gap-1">
-                                                        <button 
-                                                            onClick={(e) => handleScrape(e, true)} 
-                                                            disabled={scrapingTicker === ticker.ticker} 
-                                                            className={`text-white px-2 py-1 rounded text-xs ${scrapingTicker === ticker.ticker ? 'bg-gray-400' : 'bg-blue-500'} hover:bg-blue-600 transition-colors`}
-                                                            title="Pobierz tylko nowe artykuły (zatrzymaj na istniejącym)"
-                                                        >
-                                                            {scrapingTicker === ticker.ticker ? '...' : 'Scrape'}
-                                                        </button>
-                                                        <button 
-                                                            onClick={(e) => handleScrape(e, false)} 
-                                                            disabled={scrapingTicker === ticker.ticker} 
-                                                            className={`text-white px-2 py-1 rounded text-xs ${scrapingTicker === ticker.ticker ? 'bg-gray-400' : 'bg-blue-800'} hover:bg-blue-900 transition-colors`}
-                                                            title="Pobierz wszystkie artykuły (pełny zakres)"
-                                                        >
-                                                            Scrape (all)
-                                                        </button>
-                                                    </div>
                                                     <div className="text-right">
                                                         <div className={`text-base font-bold ${getSentimentColor(ticker.avg_sentiment)}`}>
                                                             {ticker.avg_sentiment > 0 ? '+' : ''}{Number(ticker.avg_sentiment).toFixed(2)}
@@ -781,6 +773,27 @@ export default function TickerDashboard() {
                                                             placeholder="URL do scrapowania (opcjonalnie)"
                                                             className="px-2 py-1 border rounded text-sm dark:bg-gray-700 dark:text-white dark:border-gray-600 w-full"
                                                         />
+                                                        <select
+                                                            value={scrapeType}
+                                                            disabled={true}
+                                                            className="px-2 py-1 border rounded text-sm dark:bg-gray-700 dark:text-white dark:border-gray-600 bg-gray-100 dark:bg-gray-600 cursor-not-allowed"
+                                                            title="Typ scrapowania (wykrywany automatycznie na podstawie URL)"
+                                                        >
+                                                            <option value="all">Wszystkie</option>
+                                                            <option value="contracts">Umowy</option>
+                                                        </select>
+                                                    </div>
+                                                    <div className="flex gap-2 items-center">
+                                                        <input 
+                                                            type="checkbox" 
+                                                            checked={stopAtExisting} 
+                                                            onChange={(e) => setStopAtExisting(e.target.checked)}
+                                                            className="w-4 h-4 cursor-pointer accent-blue-600"
+                                                            id="stopAtExisting"
+                                                        />
+                                                        <label htmlFor="stopAtExisting" className="text-xs text-gray-700 dark:text-gray-300 cursor-pointer select-none">
+                                                            Zatrzymaj na istniejącym (tylko nowe)
+                                                        </label>
                                                     </div>
                                                     <div className="flex gap-2">
                                                         <button 
@@ -817,13 +830,20 @@ export default function TickerDashboard() {
                                                 </div>
                                             )}
                                         </div>
-                                        <div className="text-right">
+                                        <div className="text-right flex flex-col items-end">
                                             <div className={`text-2xl font-bold ${getSentimentColor(selectedTicker.avg_sentiment)}`}>
                                                 {selectedTicker.avg_sentiment > 0 ? '+' : ''}{Number(selectedTicker.avg_sentiment).toFixed(2)}
                                             </div>
                                             <div className="text-xs text-gray-600 dark:text-gray-400">
                                                 Średni sentyment
                                             </div>
+                                            <button 
+                                                onClick={handleScrapeSelected}
+                                                disabled={scrapingTicker === selectedTicker.ticker}
+                                                className={`mt-2 text-white px-3 py-1 rounded text-xs ${scrapingTicker === selectedTicker.ticker ? 'bg-gray-400' : 'bg-blue-600'} hover:bg-blue-700 transition-colors`}
+                                            >
+                                                {scrapingTicker === selectedTicker.ticker ? 'Scraping...' : 'Scrape'}
+                                            </button>
                                         </div>
                                     </div>
                                     </div>
