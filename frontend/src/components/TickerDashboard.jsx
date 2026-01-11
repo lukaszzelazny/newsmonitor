@@ -363,6 +363,10 @@ export default function TickerDashboard() {
         const updatedAnalyses = analyses.filter(a => a.news_id !== newsId);
         setAnalyses(updatedAnalyses);
 
+        const originalContracts = [...contracts];
+        const updatedContracts = contracts.filter(c => c.news_id !== newsId);
+        setContracts(updatedContracts);
+
         try {
             const response = await fetch('/api/mark_duplicate', {
                 method: 'POST',
@@ -371,15 +375,17 @@ export default function TickerDashboard() {
             });
 
             if (response.ok) {
-                showNotification('News oznaczony jako duplikat.', 'success');
+                showNotification('Wpis oznaczony jako duplikat.', 'success');
                 fetchTickers(); // Odśwież statystyki tickerów
             } else {
                 setAnalyses(originalAnalyses); // Revert on failure
-                showNotification('Błąd przy oznaczaniu newsa jako duplikat.', 'error');
+                setContracts(originalContracts);
+                showNotification('Błąd przy oznaczaniu jako duplikat.', 'error');
             }
         } catch (error) {
             console.error('Error marking as duplicate:', error);
             setAnalyses(originalAnalyses); // Revert on error
+            setContracts(originalContracts);
             showNotification('Błąd sieci przy oznaczaniu jako duplikat.', 'error');
         }
     };
@@ -944,18 +950,19 @@ export default function TickerDashboard() {
                                                         <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">Podsumowanie</th>
                                                         <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">Znaczenie</th>
                                                         <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">Ryzyka</th>
+                                                        <th className="px-3 py-2 text-right text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">Akcje</th>
                                                     </tr>
                                                 </thead>
                                                 <tbody className="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700">
                                                     {loadingContracts ? (
                                                         <tr>
-                                                            <td colSpan="5" className="px-3 py-4 text-center text-sm text-gray-500 dark:text-gray-400">
+                                                            <td colSpan="6" className="px-3 py-4 text-center text-sm text-gray-500 dark:text-gray-400">
                                                                 Ładowanie kontraktów...
                                                             </td>
                                                         </tr>
                                                     ) : contracts.length === 0 ? (
                                                         <tr>
-                                                            <td colSpan="5" className="px-3 py-4 text-center text-sm text-gray-500 dark:text-gray-400">
+                                                            <td colSpan="6" className="px-3 py-4 text-center text-sm text-gray-500 dark:text-gray-400">
                                                                 Brak wykrytych kontraktów.
                                                             </td>
                                                         </tr>
@@ -972,6 +979,15 @@ export default function TickerDashboard() {
                                                                             <li key={rIdx}>{risk}</li>
                                                                         ))}
                                                                     </ul>
+                                                                </td>
+                                                                <td className="px-3 py-2 text-right text-xs font-medium align-top">
+                                                                    <button
+                                                                        onClick={() => markAsDuplicate(contract.news_id)}
+                                                                        className="w-6 h-6 inline-flex items-center justify-center bg-red-100 dark:bg-red-900/30 text-red-600 dark:text-red-400 hover:bg-red-200 dark:hover:bg-red-900/50 rounded-full transition-colors font-bold"
+                                                                        title="Oznacz jako duplikat / Ukryj"
+                                                                    >
+                                                                        ✕
+                                                                    </button>
                                                                 </td>
                                                             </tr>
                                                         ))
@@ -1020,7 +1036,7 @@ export default function TickerDashboard() {
                                                         </tr>
                                                     ) : (
                                                         fundamentalData.map((item, idx) => (
-                                                            <tr key={idx} className="hover:bg-gray-50 dark:hover:bg-gray-750">
+                                                            <tr key={idx} className="hover:bg-gray-50 dark:hover:bg-gray-700">
                                                                 <td className="px-3 py-2 whitespace-nowrap text-xs text-gray-700 dark:text-gray-300">{item.date}</td>
                                                                 <td className="px-3 py-2 whitespace-nowrap text-xs text-gray-900 dark:text-white font-medium">{item.eps !== null ? item.eps.toFixed(2) : '-'}</td>
                                                                 <td className="px-3 py-2 whitespace-nowrap text-xs text-gray-900 dark:text-white font-medium">{item.eps_forward !== null && item.eps_forward !== undefined ? item.eps_forward.toFixed(2) : '-'}</td>

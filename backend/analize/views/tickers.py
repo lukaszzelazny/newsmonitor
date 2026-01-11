@@ -991,7 +991,8 @@ def get_contracts(ticker):
         c.contract_value,
         c.contract_summary,
         c.investment_relevance,
-        c.key_risks
+        c.key_risks,
+        na.id as news_id
     FROM {schema}.contracts c
     JOIN {schema}.analysis_result ar ON c.analysis_id = ar.id
     JOIN {schema}.news_articles na ON ar.news_id = na.id
@@ -1016,7 +1017,8 @@ def get_contracts(ticker):
                 'contract_value': row[1],
                 'contract_summary': row[2],
                 'investment_relevance': row[3],
-                'key_risks': key_risks
+                'key_risks': key_risks,
+                'news_id': row[5]
             })
 
     return jsonify(contracts)
