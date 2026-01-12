@@ -28,7 +28,6 @@ app.register_blueprint(recommendations_bp)
 def get_price_history_endpoint(ticker):
     """Endpoint zwracający historię cen tickera"""
     days = request.args.get('days', 90, type=int)
-    print('check get_price_history_endpoint', flush=True)
     price_data = get_price_history(ticker, days)
     # print(jsonify(price_data)) # jsonify zwraca obiekt Response, nie string
     return jsonify(price_data)
