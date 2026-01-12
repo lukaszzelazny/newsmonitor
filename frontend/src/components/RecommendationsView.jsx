@@ -77,6 +77,11 @@ export default function RecommendationsView({ days, onTickerSelect }) {
         return 'bg-red-100 dark:bg-red-900/30';
     };
 
+    const formatSource = (source) => {
+        if (!source) return '';
+        return source.replace('_Rekomendacje', '').replace(/_/g, ' ');
+    };
+
     const filteredRecommendations = recommendations.filter(rec =>
         (rec.ticker && rec.ticker.toLowerCase().includes(searchTerm.toLowerCase())) ||
         (rec.brokerage_house && rec.brokerage_house.toLowerCase().includes(searchTerm.toLowerCase())) ||
@@ -227,13 +232,18 @@ export default function RecommendationsView({ days, onTickerSelect }) {
                                             </div>
                                         </td>
                                         <td className="px-3 py-2 text-xs text-gray-900 dark:text-white font-medium">
-                                            {rec.brokerage_house}
+                                            <div>{rec.brokerage_house}</div>
+                                            {rec.source && (
+                                                <div className="text-[10px] text-gray-500 dark:text-gray-400 font-normal">
+                                                    {formatSource(rec.source)}
+                                                </div>
+                                            )}
                                             {rec.url && (
                                                 <a 
                                                     href={rec.url} 
                                                     target="_blank" 
                                                     rel="noopener noreferrer" 
-                                                    className="ml-2 text-blue-600 dark:text-blue-400 hover:underline"
+                                                    className="text-blue-600 dark:text-blue-400 hover:underline block mt-0.5"
                                                     onClick={(e) => e.stopPropagation()}
                                                 >
                                                     Link

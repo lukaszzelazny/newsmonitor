@@ -25,6 +25,7 @@ def get_all_recommendations():
             ba.ticker,
             na.date,
             na.url,
+            na.source,
             t.company_name
         FROM {schema}.brokerage_analysis ba
         JOIN {schema}.analysis_result ar ON ba.analysis_id = ar.id
@@ -96,8 +97,9 @@ def get_all_recommendations():
                 'recommendation': row[5],
                 'comment': row[6],
                 'ticker': ticker,
-                'company_name': row[10],
+                'company_name': row[11],
                 'url': row[9],
+                'source': row[10],
                 'current_price': current_price,
                 'price_change_percent': price_change_percent,
                 'upside_percent': upside_percent

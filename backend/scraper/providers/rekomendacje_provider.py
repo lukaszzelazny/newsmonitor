@@ -168,10 +168,22 @@ class RekomendacjeProvider(BaseProvider):
             date_str = cols[7].get_text(strip=True)
             pub_date = self._parse_date(date_str)
 
+            # Column 8: Raport (Report link)
+            report_url = self.base_url
+            if len(cols) > 8:
+                report_cell = cols[8]
+                report_link = report_cell.find('a')
+                if report_link and report_link.has_attr('href'):
+                    href = report_link['href']
+                    if href.startswith('/'):
+                        report_url = "https://strefainwestorow.pl" + href
+                    else:
+                        report_url = href
+
             # Create recommendation dictionary
             return {
                 'title': f"{company_name} - Rekomendacja {brokerage_house}",
-                'url': self.base_url,
+                'url': report_url,
                 'published_date': pub_date,
                 'source': self.name,
                 'external_id': self._generate_external_id(date_str, ticker, brokerage_house),

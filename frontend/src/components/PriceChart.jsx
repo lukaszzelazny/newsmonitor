@@ -7,6 +7,12 @@ export default function PriceChart({ ticker, priceHistory, brokerageAnalyses, an
     const chartContainerRef = useRef(null);
     const chartRef = useRef(null);
     const mainSeriesRef = useRef(null);
+    const onNewsClickRef = useRef(onNewsClick);
+    
+    useEffect(() => {
+        onNewsClickRef.current = onNewsClick;
+    }, [onNewsClick]);
+
     const [chartType, setChartType] = useState('candlestick');
     const [showVolume, setShowVolume] = useState(propShowVolume);
     const [showNews, setShowNews] = useState(propShowNews);
@@ -193,6 +199,46 @@ export default function PriceChart({ ticker, priceHistory, brokerageAnalyses, an
         }
 
         chart.timeScale().fitContent();
+
+        const handleChartClick = (param) => {
+            if (!param) return;
+
+            // 1. Try to handle marker click directly
+            if (param.hoveredMarkerId) {
+                if (onNewsClickRef.current) {
+                    onNewsClickRef.current(param.hoveredMarkerId);
+                }
+                return;
+            }
+
+            // 2. Fallback: Check for news on the clicked date (bar)
+            if (param.time && analyses && analyses.length > 0) {
+                const dateStr = typeof param.time === 'string' 
+                    ? param.time 
+                    : (param.time.year 
+                        ? `${param.time.year}-${String(param.time.month).padStart(2, '0')}-${String(param.time.day).padStart(2, '0')}` 
+                        : String(param.time));
+
+                // Find news for this date (excluding contracts for now, to focus on news)
+                const matchingNews = analyses.filter(a => a.date === dateStr && a.occasion !== 'contract');
+                
+                if (matchingNews.length > 0) {
+                    // Sort by impact (absolute) to prioritize important news? Or just pick first?
+                    // Let's pick the one with highest impact
+                    matchingNews.sort((a, b) => Math.abs(b.impact) - Math.abs(a.impact));
+                    
+                    if (onNewsClickRef.current) {
+                        onNewsClickRef.current(matchingNews[0].news_id);
+                    }
+                }
+            }
+        };
+
+        try {
+            chart.subscribeClick(handleChartClick);
+        } catch (e) {
+            console.debug('Failed to subscribe to chart clicks:', e);
+        }
 
         const overlay = document.createElement('div');
         overlay.style.position = 'absolute';

@@ -499,6 +499,11 @@ export default function TickerDashboard() {
         return 'bg-red-600 dark:bg-red-500';
     };
 
+    const formatSource = (source) => {
+        if (!source) return '';
+        return source.replace('_Rekomendacje', '').replace(/_/g, ' ');
+    };
+
     const tickerStats = selectedTicker ? {
         totalNews: analyses.length,
         positiveNews: analyses.filter(a => a.impact > 0.05).length,
@@ -507,6 +512,31 @@ export default function TickerDashboard() {
         avgImpact: analyses.length > 0 ? (analyses.reduce((sum, a) => sum + a.impact, 0) / analyses.length) : 0,
         avgConfidence: analyses.length > 0 ? (analyses.reduce((sum, a) => sum + a.confidence, 0) / analyses.length) : 0
     } : null;
+
+    const handleChartNewsClick = (newsId) => {
+        // Obsługa kliknięcia w news na wykresie
+        // ID może być liczbą (news_id) lub stringiem "contract-{id}"
+        let elementId;
+        if (String(newsId).startsWith('contract-')) {
+            // Dla kontraktów na razie pomijamy automatyczne rozwijanie sekcji
+            // Zakładamy, że user mówi głównie o newsach
+            return; 
+        } else {
+            elementId = `news-item-${newsId}`;
+        }
+
+        const element = document.getElementById(elementId);
+        if (element) {
+            element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            // Efekt podświetlenia
+            element.classList.add('ring-2', 'ring-blue-500', 'bg-blue-50', 'dark:bg-blue-900/20');
+            setTimeout(() => {
+                element.classList.remove('ring-2', 'ring-blue-500', 'bg-blue-50', 'dark:bg-blue-900/20');
+            }, 3000);
+        } else {
+            console.log('Nie znaleziono elementu o ID:', elementId);
+        }
+    };
 
     return (
         <div className="min-h-screen bg-white dark:bg-gray-900 p-4 transition-colors duration-200">
@@ -919,6 +949,7 @@ export default function TickerDashboard() {
                                             priceHistory={priceHistory}
                                             brokerageAnalyses={brokerageAnalyses}
                                             analyses={chartAnalyses}
+                                            onNewsClick={handleChartNewsClick}
                                             showNews={showNews}
                                             onToggleNews={(v) => { setShowNews(v); try { localStorage.setItem('pricechart_showNews', String(v)); } catch (e) {} }}
                                             showContracts={showContracts}
@@ -1089,7 +1120,8 @@ export default function TickerDashboard() {
                                                                 {filteredAnalyses.map((analysis, idx) => (
                                                                     <div
                                                                         key={idx}
-                                                                        className="border border-gray-200 dark:border-gray-700 rounded-lg p-3 hover:shadow-md transition-shadow relative"
+                                                                        id={`news-item-${analysis.news_id}`}
+                                                                        className="border border-gray-200 dark:border-gray-700 rounded-lg p-3 hover:shadow-md transition-shadow relative transition-colors duration-500"
                                                                     >
                                                                         <div className="absolute top-1.5 right-1.5 flex gap-2">
                                                                             <button
@@ -1234,7 +1266,23 @@ export default function TickerDashboard() {
                                                                             {brokerage.date}
                                                                         </td>
                                                                         <td className="px-3 py-2 text-xs text-gray-900 dark:text-white font-medium">
-                                                                            {brokerage.brokerage_house}
+                                                                            <div>{brokerage.brokerage_house}</div>
+                                                                            {brokerage.source && (
+                                                                                <div className="text-[10px] text-gray-500 dark:text-gray-400 font-normal">
+                                                                                    {formatSource(brokerage.source)}
+                                                                                </div>
+                                                                            )}
+                                                                            {brokerage.url && (
+                                                                                <a
+                                                                                    href={brokerage.url}
+                                                                                    target="_blank"
+                                                                                    rel="noopener noreferrer"
+                                                                                    className="text-blue-600 dark:text-blue-400 hover:underline block mt-0.5"
+                                                                                    onClick={(e) => e.stopPropagation()}
+                                                                                >
+                                                                                    Link
+                                                                                </a>
+                                                                            )}
                                                                         </td>
                                                                         <td className={`px-3 py-2 whitespace-nowrap text-xs ${getRecommendationColor(brokerage.recommendation)}`}>
                                                                             {brokerage.recommendation || '-'}

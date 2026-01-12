@@ -491,7 +491,9 @@ def get_brokerage_analyses(ticker):
         ba.price_new,
         ba.price_recommendation,
         ba.price_comment,
-        na.date
+        na.date,
+        na.url,
+        na.source
     FROM {schema}.brokerage_analysis ba
     JOIN {schema}.analysis_result ar ON ba.analysis_id = ar.id
     LEFT JOIN {schema}.news_articles na ON ar.news_id = na.id
@@ -532,6 +534,8 @@ def get_brokerage_analyses(ticker):
                 'date': row[0].strftime('%Y-%m-%d') if row[0] else (
                     row[6].strftime('%Y-%m-%d') if row[6] else None),
                 'brokerage_house': brokerage_house,
+                'url': row[7],
+                'source': row[8],
                 'price_old': price_old,
                 'price_new': price_new,
                 'current_price': current_price,
