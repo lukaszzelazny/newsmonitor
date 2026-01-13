@@ -159,6 +159,25 @@ export default function PortfolioView({ days }) {
         }
     };
 
+    const handleUpdatePrices = async () => {
+        setLoading(true);
+        try {
+            const res = await fetch('/api/portfolio/update_prices', { 
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({}) 
+            });
+            if (!res.ok) throw new Error('Update failed');
+            const data = await res.json();
+            // alert(data.message); // Opcjonalne powiadomienie
+            fetchData();
+        } catch (e) {
+            console.error('Error updating prices:', e);
+            alert('Błąd aktualizacji cen');
+            setLoading(false);
+        }
+    };
+
     useEffect(() => {
             if (!chartContainerRef.current || !roiSeries || roiSeries.length === 0) return;
 
@@ -413,12 +432,22 @@ export default function PortfolioView({ days }) {
             
             <div className="flex justify-between items-center">
                 <h2 className="text-xl font-bold text-gray-800 dark:text-white">Moje Portfolio</h2>
-                <button 
-                    onClick={() => setIsAddModalOpen(true)}
-                    className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 shadow flex items-center gap-2 transition-colors"
-                >
-                    <span>+</span> Dodaj Transakcję
-                </button>
+                <div className="flex gap-2">
+                    <button 
+                        onClick={handleUpdatePrices}
+                        className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 shadow flex items-center gap-2 transition-colors"
+                        disabled={loading}
+                        title="Aktualizuj ceny aktywów w portfelu"
+                    >
+                        <span>↻</span> Aktualizuj ceny
+                    </button>
+                    <button 
+                        onClick={() => setIsAddModalOpen(true)}
+                        className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 shadow flex items-center gap-2 transition-colors"
+                    >
+                        <span>+</span> Dodaj Transakcję
+                    </button>
+                </div>
             </div>
 
             <div className="flex space-x-1 bg-gray-100 dark:bg-gray-700 p-1 rounded-lg overflow-x-auto mb-4">

@@ -4,6 +4,11 @@ import os
 from backend.database import Database, Portfolio, Asset, Transaction, TransactionType
 from backend.portfolio.analysis import calculate_portfolio_overview, calculate_roi_over_time, calculate_portfolio_value_over_time, calculate_monthly_profit, calculate_dividend_stats
 from backend.utils import clean_nan_in_data
+from backend.database import AssetPriceHistory
+from backend.tools.price_fetcher import get_yf_symbol, get_currency_for_ticker, fx_symbol_to_pln, _fetch_fx_series
+import yfinance as yf
+import pandas as pd
+from datetime import datetime, timedelta
 
 portfolio_bp = Blueprint('portfolio', __name__)
 
@@ -437,6 +442,122 @@ def delete_transaction(tx_id):
     except Exception as e:
         session.rollback()
         print(f"Error deleting transaction: {e}")
+        return jsonify({'error': str(e)}), 500
+    finally:
+        session.close()
+
+
+@portfolio_bp.route('/api/portfolio/update_prices', methods=['POST'])
+def update_portfolio_prices():
+    """
+    Updates prices for all assets currently held in the portfolio.
+    """
+    db = Database()
+    session = db.Session()
+    try:
+        # Get portfolio
+        name = request.json.get('name') if request.json else None
+        portfolio = _get_portfolio(session, name)
+        
+        if not portfolio:
+            return jsonify({'error': 'Portfolio not found'}), 404
+
+        # Identify assets held
+        overview = calculate_portfolio_overview(session, portfolio.id)
+        
+        if not overview or 'assets' not in overview:
+             return jsonify({'message': 'No assets in portfolio'}), 200
+
+        assets_to_update = []
+        for a in overview['assets']:
+             if a['quantity'] > 0: # Only held assets
+                 assets_to_update.append(a['ticker'])
+        
+        updated_count = 0
+        
+        for ticker in assets_to_update:
+            try:
+                asset = session.query(Asset).filter_by(ticker=ticker).first()
+                if not asset: continue
+                
+                yf_symbol = get_yf_symbol(ticker)
+                
+                # Fetch last 7 days to cover weekends/holidays
+                end_date = datetime.now()
+                start_date = end_date - timedelta(days=7)
+                
+                df = yf.download(yf_symbol, start=start_date, end=end_date, progress=False, threads=False)
+                
+                if df is not None and not df.empty:
+                    # Convert to PLN
+                    currency = get_currency_for_ticker(yf_symbol)
+                    if currency != 'PLN':
+                         fx_ticker = fx_symbol_to_pln(currency)
+                         if fx_ticker:
+                             fx_series_map = _fetch_fx_series([currency], start_date.date(), end_date.date())
+                             fx_series = fx_series_map.get(fx_ticker)
+                             if fx_series is not None and not fx_series.empty:
+                                  # Align and multiply
+                                  if df.index.tz is not None: df.index = df.index.tz_localize(None)
+                                  if fx_series.index.tz is not None: fx_series.index = fx_series.index.tz_localize(None)
+                                  
+                                  aligned_fx = fx_series.reindex(df.index).ffill().bfill()
+                                  
+                                  cols = ['Open', 'High', 'Low', 'Close', 'Adj Close']
+                                  for col in cols:
+                                      if col in df.columns:
+                                          df[col] = df[col] * aligned_fx.values
+                    
+                    # Save to DB
+                    for date_idx, row in df.iterrows():
+                        date_val = date_idx.date()
+                        existing = session.query(AssetPriceHistory).filter(
+                            AssetPriceHistory.asset_id == asset.id,
+                            AssetPriceHistory.date == date_val
+                        ).first()
+                        
+                        # Handle potential missing/nan values
+                        close_val = float(row['Close'])
+                        if pd.isna(close_val): continue
+                        
+                        open_val = float(row['Open']) if 'Open' in row and not pd.isna(row['Open']) else None
+                        high_val = float(row['High']) if 'High' in row and not pd.isna(row['High']) else None
+                        low_val = float(row['Low']) if 'Low' in row and not pd.isna(row['Low']) else None
+                        vol_val = float(row['Volume']) if 'Volume' in row and not pd.isna(row['Volume']) else None
+                        
+                        if existing:
+                            existing.close = close_val
+                            if open_val is not None: existing.open = open_val
+                            if high_val is not None: existing.high = high_val
+                            if low_val is not None: existing.low = low_val
+                            if vol_val is not None: existing.volume = vol_val
+                            existing.adjusted_close = close_val
+                        else:
+                            new_rec = AssetPriceHistory(
+                                asset_id=asset.id,
+                                date=date_val,
+                                close=close_val,
+                                open=open_val,
+                                high=high_val,
+                                low=low_val,
+                                volume=vol_val,
+                                adjusted_close=close_val
+                            )
+                            session.add(new_rec)
+                    
+                    updated_count += 1
+                    session.commit()
+                    
+            except Exception as e:
+                print(f"Error updating {ticker}: {e}")
+                session.rollback()
+
+        return jsonify({'message': f'Zaktualizowano ceny dla {updated_count} aktywów', 'count': updated_count})
+
+    except Exception as e:
+        print(f"Error in update_portfolio_prices: {e}")
+        import traceback
+        traceback.print_exc()
         return jsonify({'error': str(e)}), 500
     finally:
         session.close()
