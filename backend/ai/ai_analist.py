@@ -1,7 +1,7 @@
 import os
 import json
 import numpy as np
-from openai import OpenAI
+from openai import OpenAI, RateLimitError
 from dotenv import load_dotenv
 from collections import defaultdict
 from backend.database import Database, NewsArticle, AnalysisResult, TickerSentiment, Ticker, \
@@ -21,6 +21,7 @@ client = OpenAI(api_key=os.getenv('OPENAI_API', ''))
 _RELEVANT_CACHE = None
 _IRRELEVANT_CACHE = None
 _CONTRACT_CACHE = None
+_QUOTA_EXCEEDED = False
 
 def load_patterns(filepath='patterns.json', name="relevant_patterns"):
     """Wczytuje atrybut 'relevant_patterns' z pliku JSON"""
@@ -61,7 +62,7 @@ elif TENDERS_PATTERNS_FOR_CONTRACT:
 
 NEWS_SUMMARY_PATTERN = load_patterns(name="summary_patterns")
 
-def get_embedding(text: str, model: str = "text-embedding-3-large"):
+def get_embedding(text: str, model: str = "text-embedding-3-small"):
     """
     Pobiera embedding dla danego tekstu.
 
@@ -72,6 +73,10 @@ def get_embedding(text: str, model: str = "text-embedding-3-large"):
     Returns:
         Lista float - wektor embedingu
     """
+    global _QUOTA_EXCEEDED
+    if _QUOTA_EXCEEDED:
+        return None
+
     text = text.replace("\n", " ").strip()
     if not text:
         return None
@@ -79,6 +84,13 @@ def get_embedding(text: str, model: str = "text-embedding-3-large"):
     try:
         response = client.embeddings.create(input=[text], model=model)
         return response.data[0].embedding
+    except RateLimitError as e:
+        if 'insufficient_quota' in str(e):
+            print(f"CRITICAL: Wyczerpano limit quota OpenAI. Wyłączam zapytania API.")
+            _QUOTA_EXCEEDED = True
+        else:
+            print(f"Błąd limitu API podczas generowania embeddingu: {e}")
+        return None
     except Exception as e:
         print(f"Błąd podczas generowania embeddingu: {e}")
         return None
@@ -238,6 +250,19 @@ def initialize_embeddings():
     global _RELEVANT_CACHE, _IRRELEVANT_CACHE, _CONTRACT_CACHE
     
     print("Inicjalizacja embeddingów...")
+    
+    # Sprawdź czy quota został wyczerpany
+    if _QUOTA_EXCEEDED:
+        print("  Quota OpenAI wyczerpany - pomijam generowanie embeddingów.")
+        # Ustaw puste cache, aby uniknąć przyszłych wywołań API
+        if _RELEVANT_CACHE is None:
+            _RELEVANT_CACHE = {}
+        if _IRRELEVANT_CACHE is None:
+            _IRRELEVANT_CACHE = []
+        if _CONTRACT_CACHE is None:
+            _CONTRACT_CACHE = []
+        print("  Embeddingi niedostępne - analiza AI będzie ograniczona.")
+        return
     
     # Cache dla relevant patterns
     if _RELEVANT_CACHE is None:
@@ -592,17 +617,30 @@ def analyze_summary(headline, lead):
     Returns:
         JSON string z listą analiz (array)
     """
+    global _QUOTA_EXCEEDED
+    if _QUOTA_EXCEEDED:
+        return "[]"
+
     news_summary_text = f"{headline}\n\n{lead}"
     ticker_context = normalizer.get_prompt_context()
     prompt = PROMPT_SUMMARY_FIXED.format(news_summary_text=news_summary_text, ticker_context=ticker_context)
 
-    response = client.chat.completions.create(
-        model="gpt-4o",
-        messages=[{"role": "user", "content": prompt}],
-        # UWAGA: Dla tablicy JSON nie używamy response_format
-        # bo wymusza to zwracanie obiektu, nie array
-    )
-    return response.choices[0].message.content
+    try:
+        response = client.chat.completions.create(
+            model="gpt-4o",
+            messages=[{"role": "user", "content": prompt}],
+            # UWAGA: Dla tablicy JSON nie używamy response_format
+            # bo wymusza to zwracanie obiektu, nie array
+        )
+        return response.choices[0].message.content
+    except RateLimitError as e:
+        if 'insufficient_quota' in str(e):
+            print(f"CRITICAL: Wyczerpano limit quota OpenAI.")
+            _QUOTA_EXCEEDED = True
+        return "[]"
+    except Exception as e:
+        print(f"Błąd podczas analizy summary: {e}")
+        return "[]"
 
 def analyze_news(headline, lead, is_contract=False):
     """
@@ -616,6 +654,10 @@ def analyze_news(headline, lead, is_contract=False):
     Returns:
         JSON string z wynikiem analizy
     """
+    global _QUOTA_EXCEEDED
+    if _QUOTA_EXCEEDED:
+        return "{}"
+
     ticker_context = normalizer.get_prompt_context()
     
     if is_contract:
@@ -623,12 +665,21 @@ def analyze_news(headline, lead, is_contract=False):
     else:
         prompt = PROMPT_NEWS.format(headline=headline, lead=lead, ticker_context=ticker_context)
 
-    response = client.chat.completions.create(
-        model="gpt-4o",  # Zaktualizowana nazwa modelu
-        messages=[{"role": "user", "content": prompt}],
-        response_format={"type": "json_object"}  # Wymuś JSON
-    )
-    return response.choices[0].message.content
+    try:
+        response = client.chat.completions.create(
+            model="gpt-4o",  # Zaktualizowana nazwa modelu
+            messages=[{"role": "user", "content": prompt}],
+            response_format={"type": "json_object"}  # Wymuś JSON
+        )
+        return response.choices[0].message.content
+    except RateLimitError as e:
+        if 'insufficient_quota' in str(e):
+            print(f"CRITICAL: Wyczerpano limit quota OpenAI.")
+            _QUOTA_EXCEEDED = True
+        return "{}"
+    except Exception as e:
+        print(f"Błąd podczas analizy newsa: {e}")
+        return "{}"
 
 
 def get_unanalyzed_articles(db: Database, exclude_not_analyzed: bool = True):
@@ -1021,6 +1072,10 @@ def analyze_articles(db: Database, mode: str = 'unanalyzed', article_id: int = N
         try:
             print(f"\n=== Przetwarzam artykuł ID={article.id}: {article.title[:50]}...")
 
+            if _QUOTA_EXCEEDED:
+                print("    [!] Pomijam artykuł - limit quota wyczerpany.")
+                break
+
             # Sprawdź czy artykuł już został przeanalizowany (chyba że wymuszamy analizę kontraktu)
             if not force_contract and is_article_analyzed(db, article.id):
                 print(
@@ -1115,6 +1170,11 @@ def analyze_articles(db: Database, mode: str = 'unanalyzed', article_id: int = N
             print(f"{step_num} Wysyłam zapytanie do OpenAI... (Contract: {is_contract})")
             if has_summary:
                 analysis_json = analyze_summary(article.title, article.content or "")
+                
+                if _QUOTA_EXCEEDED:
+                    print("    [!] Przerwano analizę z powodu braku quota.")
+                    break
+
                 analysis_datas = json.loads(cleanJson(analysis_json))
                 for analysis_data in analysis_datas:
                     tickers = analysis_data.get('related_tickers', [])
@@ -1140,6 +1200,11 @@ def analyze_articles(db: Database, mode: str = 'unanalyzed', article_id: int = N
 
             else:
                 analysis_json = analyze_news(article.title, article.content or "", is_contract=is_contract)
+                
+                if _QUOTA_EXCEEDED:
+                    print("    [!] Przerwano analizę z powodu braku quota.")
+                    break
+
                 analysis_data = json.loads(cleanJson(analysis_json))
                 tickers = analysis_data.get('related_tickers', [])
                 sector_impact = analysis_data.get('sector_impact')
