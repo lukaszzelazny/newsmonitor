@@ -632,7 +632,7 @@ export default function TickerDashboard() {
                 ) : viewMode === 'rejected' ? (
                     <CalendarRejectedView days={listDays} />
                 ) : viewMode === 'portfolio' ? (
-                    <PortfolioView days={listDays} />
+                                <PortfolioView days={listDays} onTickerSelect={handleTickerSelect} />
                 ) : viewMode === 'recommendations' ? (
                     <RecommendationsView days={listDays} onTickerSelect={handleTickerSelect} />
                 ) : (

@@ -4,7 +4,8 @@ import AddTransactionModal from './AddTransactionModal';
 import DividendDashboard from './DividendDashboard';
 import { useTheme } from '../context/ThemeContext';
 
-export default function PortfolioView({ days }) {
+export default function PortfolioView({ days, onTickerSelect }) {
+    // days is passed from parent but currently not used in this component
     const { theme } = useTheme();
     const [activeTab, setActiveTab] = useState('roi');
     const [overview, setOverview] = useState(null);
@@ -222,9 +223,9 @@ export default function PortfolioView({ days }) {
             bottomFillColor2: 'rgba(239, 68, 68, 0.28)',
         });
 
-        const data = roiSeries.map(d => ({ time: d.date, value: d.rate_of_return }));
-        data.sort((a, b) => new Date(a.time) - new Date(b.time));
-        series.setData(data);
+        const chartData = roiSeries.map(d => ({ time: d.date, value: d.rate_of_return }));
+        chartData.sort((a, b) => new Date(a.time) - new Date(b.time));
+        series.setData(chartData);
         chart.timeScale().fitContent();
 
         const handleResize = () => {
@@ -581,7 +582,7 @@ export default function PortfolioView({ days }) {
                                 </tr>
                             </thead>
                             <tbody className="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700">
-                                {sortedAssets.map((asset, idx) => (
+                                {sortedAssets.map((asset) => (
                                     <tr key={asset.ticker} className={`hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors ${asset.excluded ? 'bg-gray-100 dark:bg-gray-900 opacity-60' : ''}`}>
                                         <td className="px-3 py-2 text-center">
                                             <input 
@@ -592,7 +593,12 @@ export default function PortfolioView({ days }) {
                                             />
                                         </td>
                                         <td className="px-3 py-2 whitespace-nowrap font-bold text-gray-900 dark:text-white">
-                                            <div>{asset.ticker}</div>
+                                            <button 
+                                                onClick={() => onTickerSelect && onTickerSelect(asset.ticker)}
+                                                className="hover:text-blue-600 dark:hover:text-blue-400 hover:underline focus:outline-none cursor-pointer text-left"
+                                            >
+                                                <div>{asset.ticker}</div>
+                                            </button>
                                             {asset.company_name && asset.company_name !== asset.ticker && (
                                                 <div className="text-[10px] text-gray-500 font-normal truncate max-w-[150px]" title={asset.company_name}>
                                                     {asset.company_name}
@@ -734,10 +740,17 @@ export default function PortfolioView({ days }) {
                                 </tr>
                             </thead>
                             <tbody className="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700">
-                                {sortedHistoricalAssets
-                                    .map((asset, idx) => (
+                                    {sortedHistoricalAssets
+                                        .map((asset) => (
                                         <tr key={asset.ticker} className="hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors">
-                                            <td className="px-2 py-2 whitespace-nowrap font-bold text-gray-900 dark:text-white">{asset.ticker}</td>
+                                            <td className="px-2 py-2 whitespace-nowrap font-bold text-gray-900 dark:text-white">
+                                                <button 
+                                                    onClick={() => onTickerSelect && onTickerSelect(asset.ticker)}
+                                                    className="hover:text-blue-600 dark:hover:text-blue-400 hover:underline focus:outline-none cursor-pointer"
+                                                >
+                                                    {asset.ticker}
+                                                </button>
+                                            </td>
                                             <td className="px-2 py-2 whitespace-nowrap text-right text-gray-500 dark:text-gray-400">{fmt(asset.quantity_held, 4)}</td>
                                             <td className="px-2 py-2 whitespace-nowrap text-right text-gray-500 dark:text-gray-400">{fmt(asset.avg_purchase_price, 2)}</td>
                                             <td className="px-2 py-2 whitespace-nowrap text-right text-gray-900 dark:text-white font-medium">{fmt(asset.current_price, 2)}</td>
@@ -790,7 +803,14 @@ export default function PortfolioView({ days }) {
                                     <tr key={tx.id} className="hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors">
                                         <td className="px-3 py-2 whitespace-nowrap text-gray-900 dark:text-white">{tx.transaction_date}</td>
                                         <td className="px-3 py-2 whitespace-nowrap text-gray-700 dark:text-gray-300 font-semibold">{tx.transaction_type}</td>
-                                        <td className="px-3 py-2 whitespace-nowrap text-gray-900 dark:text-white font-bold">{tx.ticker}</td>
+                                        <td className="px-3 py-2 whitespace-nowrap text-gray-900 dark:text-white font-bold">
+                                            <button 
+                                                onClick={() => onTickerSelect && onTickerSelect(tx.ticker)}
+                                                className="hover:text-blue-600 dark:hover:text-blue-400 hover:underline focus:outline-none cursor-pointer"
+                                            >
+                                                {tx.ticker}
+                                            </button>
+                                        </td>
                                         <td className="px-3 py-2 whitespace-nowrap text-right text-gray-900 dark:text-white">{fmt(tx.quantity, 4)}</td>
                                         <td className="px-3 py-2 whitespace-nowrap text-right text-gray-900 dark:text-white">{fmt(tx.price, 2)}</td>
                                         <td className="px-3 py-2 whitespace-nowrap text-center">
