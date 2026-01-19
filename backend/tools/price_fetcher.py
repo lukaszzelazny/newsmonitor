@@ -186,7 +186,7 @@ _YF_LAST_CALL_TS = 0.0
 _YF_MIN_INTERVAL_SECONDS = 1.0  # minimum spacing between yf requests
 
 # Tickers that should never be fetched from Yahoo Finance (cash, invalid, delisted)
-_BLACKLISTED_TICKERS = {"PLN", "CASH", "USD", "EUR", "GBP", "CSPX", "ETFBW20TR"}  # add more as needed
+_BLACKLISTED_TICKERS = {"PLN", "CASH", "USD", "EUR", "GBP"}  # add more as needed
 
 def _should_fetch_ticker(ticker: str) -> bool:
     """
@@ -725,11 +725,14 @@ def _fetch_quotes_batch_via_api(yf_symbols: List[str]) -> Dict[str, float]:
 
     return results
 
-def get_current_prices(tickers: List[str]) -> Dict[str, float]:
+def get_current_prices(tickers: List[str], active_tickers: Optional[List[str]] = None) -> Dict[str, float]:
     """
     Fetches current prices for a list of tickers in batch, converted to PLN.
     It returns a dictionary {ticker: price_in_pln}.
     Tickers that fail to fetch are omitted from the result.
+    
+    If active_tickers is provided, only tickers present in active_tickers will be fetched
+    (others will be skipped, unless they already have prices in DB).
     """
     if not tickers:
         return {}
@@ -782,6 +785,13 @@ def get_current_prices(tickers: List[str]) -> Dict[str, float]:
     tickers_to_fetch = [t for t in tickers_to_fetch if _should_fetch_ticker(t)]
     if not tickers_to_fetch:
         return results
+    
+    # Apply active_tickers filter if provided
+    if active_tickers is not None:
+        active_set = set(active_tickers)
+        tickers_to_fetch = [t for t in tickers_to_fetch if t in active_set]
+        if not tickers_to_fetch:
+            return results
     
     # Batch API Fetch for remaining tickers
     

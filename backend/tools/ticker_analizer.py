@@ -13,7 +13,7 @@ RATING_LABELS = {
 
 def download_with_retry(tickers, period="1y", max_retries=3, delay=2):
     # Filter out blacklisted tickers (cash, invalid, delisted)
-    blacklisted = {"PLN", "CASH", "USD", "EUR", "GBP", "CSPX", "ETFBW20TR"}
+    blacklisted = {"PLN", "CASH", "USD", "EUR", "GBP"}
     if isinstance(tickers, str):
         tickers = [tickers]
     filtered = [t for t in tickers if t.upper() not in blacklisted]

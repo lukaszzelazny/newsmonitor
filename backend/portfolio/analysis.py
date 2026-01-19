@@ -140,8 +140,12 @@ def calculate_portfolio_return(session: Session, portfolio_id: int) -> dict:
         ticker = session.query(Asset.ticker).filter_by(id=asset_id).scalar()
         if ticker:
             tickers.append(ticker)
-            
-    price_map = get_current_prices(tickers) if tickers else {}
+    
+    # Get active holdings (quantity > 0) to filter tickers for price fetching
+    holdings = get_holdings(session, portfolio_id)
+    active_tickers = list(holdings.keys())
+    
+    price_map = get_current_prices(tickers, active_tickers=active_tickers) if tickers else {}
 
     total_cost_portfolio = 0
     total_realized_pnl_portfolio = 0
@@ -581,7 +585,9 @@ def calculate_portfolio_overview(session: Session, portfolio_id: int, roi_series
     if tickers:
         hist_start_short = end_date - timedelta(days=10)
         hist = get_historical_prices_for_tickers(tickers, hist_start_short, end_date, session=session)
-        live_prices_map = get_current_prices(tickers)
+        # Only fetch prices for tickers that are currently held (quantity > 0)
+        active_tickers = list(holdings.keys())
+        live_prices_map = get_current_prices(tickers, active_tickers=active_tickers)
         
         # Fetch company names
         ticker_objs = session.query(Ticker.ticker, Ticker.company_name).filter(Ticker.ticker.in_(tickers)).all()
@@ -935,7 +941,12 @@ def calculate_all_assets_summary(session: Session, portfolio_id: int):
         ticker = session.query(Asset.ticker).filter_by(id=asset_id).scalar()
         if ticker:
             tickers.append(ticker)
-    price_map = get_current_prices(tickers) if tickers else {}
+    
+    # Get active holdings (quantity > 0) to filter tickers for price fetching
+    holdings = get_holdings(session, portfolio_id)
+    active_tickers = list(holdings.keys())
+    
+    price_map = get_current_prices(tickers, active_tickers=active_tickers) if tickers else {}
 
     assets_summary = []
     for asset_id in asset_ids:
