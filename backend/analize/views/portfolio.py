@@ -486,7 +486,7 @@ def update_portfolio_prices():
                 end_date = datetime.now()
                 start_date = end_date - timedelta(days=7)
                 
-                df = yf.download(yf_symbol, start=start_date, end=end_date, progress=False, threads=False)
+                df = yf.download(yf_symbol, start=start_date, end=end_date, progress=False, threads=False, auto_adjust=True)
                 
                 if df is not None and not df.empty:
                     # Convert to PLN
@@ -517,13 +517,28 @@ def update_portfolio_prices():
                         ).first()
                         
                         # Handle potential missing/nan values
-                        close_val = float(row['Close'])
+                        # row['Close'] may be a Series with one element; extract scalar
+                        close_series = row['Close']
+                        if isinstance(close_series, pd.Series):
+                            close_val = float(close_series.iloc[0])
+                        else:
+                            close_val = float(close_series)
                         if pd.isna(close_val): continue
                         
-                        open_val = float(row['Open']) if 'Open' in row and not pd.isna(row['Open']) else None
-                        high_val = float(row['High']) if 'High' in row and not pd.isna(row['High']) else None
-                        low_val = float(row['Low']) if 'Low' in row and not pd.isna(row['Low']) else None
-                        vol_val = float(row['Volume']) if 'Volume' in row and not pd.isna(row['Volume']) else None
+                        # Helper to extract scalar from row column
+                        def get_scalar(col):
+                            if col not in row:
+                                return None
+                            val = row[col]
+                            if isinstance(val, pd.Series):
+                                return float(val.iloc[0]) if not pd.isna(val.iloc[0]) else None
+                            else:
+                                return float(val) if not pd.isna(val) else None
+                        
+                        open_val = get_scalar('Open')
+                        high_val = get_scalar('High')
+                        low_val = get_scalar('Low')
+                        vol_val = get_scalar('Volume')
                         
                         if existing:
                             existing.close = close_val

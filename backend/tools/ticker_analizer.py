@@ -12,10 +12,19 @@ RATING_LABELS = {
 
 
 def download_with_retry(tickers, period="1y", max_retries=3, delay=2):
+    # Filter out blacklisted tickers (cash, invalid, delisted)
+    blacklisted = {"PLN", "CASH", "USD", "EUR", "GBP", "CSPX", "ETFBW20TR"}
+    if isinstance(tickers, str):
+        tickers = [tickers]
+    filtered = [t for t in tickers if t.upper() not in blacklisted]
+    if not filtered:
+        # Return empty DataFrame to avoid errors
+        return pd.DataFrame()
+    
     for attempt in range(max_retries):
         try:
             # Avoid parallel requests to reduce Yahoo bans; hide progress
-            hist = yf.download(tickers, period=period, group_by="ticker", threads=False, progress=False)
+            hist = yf.download(filtered, period=period, group_by="ticker", threads=False, progress=False)
             return hist
         except Exception as e:
             print(f"Próba {attempt + 1} nie powiodła się: {e}")

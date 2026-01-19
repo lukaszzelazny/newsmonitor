@@ -185,6 +185,21 @@ _FX_SERIES_TTL_SECONDS = 3600.0
 _YF_LAST_CALL_TS = 0.0
 _YF_MIN_INTERVAL_SECONDS = 1.0  # minimum spacing between yf requests
 
+# Tickers that should never be fetched from Yahoo Finance (cash, invalid, delisted)
+_BLACKLISTED_TICKERS = {"PLN", "CASH", "USD", "EUR", "GBP", "CSPX", "ETFBW20TR"}  # add more as needed
+
+def _should_fetch_ticker(ticker: str) -> bool:
+    """
+    Returns False if ticker should not be fetched from external sources (Yahoo Finance).
+    Includes blacklisted tickers and possibly other logic.
+    """
+    # Normalize: uppercase, remove whitespace
+    t = ticker.strip().upper()
+    if t in _BLACKLISTED_TICKERS:
+        return False
+    # Additional logic can be added here (e.g., check if ticker ends with .PLN?)
+    return True
+
 _CRYPTO_MAP = {
     "BITCOIN": "BTC-USD",
     "ETHEREUM": "ETH-USD",
@@ -450,7 +465,7 @@ def _fetch_fx_series(currencies: List[str], start_date, end_date) -> Dict[str, p
     # Single batched download to limit requests (for missing ones)
     try:
         _throttle_yf()
-        data = yf.download(fx_needed, start=start_date, end=end_date, progress=False, threads=False)
+        data = yf.download(fx_needed, start=start_date, end=end_date, progress=False, threads=False, auto_adjust=True)
     except Exception:
         data = pd.DataFrame()
 
@@ -579,43 +594,7 @@ def get_current_price(ticker_symbol: str):
             if session:
                 session.close()
         
-        if price is not None:
-            # If price comes from DB, it is assumed to be in PLN (as per requirement)
-            return price
-        
-        # If not found in DB, return None (Database mode implies preferring DB)
-        # Try Stooq for Polish tickers
-        price = None
-        if ticker_symbol.endswith('.PL'):
-            # Use Stooq
-            clean_ticker = ticker_symbol.replace('.PL', '').lower()
-            url = f'https://stooq.pl/q/l/?s={clean_ticker}&f=sd2t2ohlcv&h&e=csv'
-            try:
-                import pandas as pd
-                df = pd.read_csv(url)
-                if not df.empty and 'Close' in df.columns:
-                    price = float(df['Close'].iloc[0])
-                    return price
-            except Exception:
-                pass
-        
-        # If still no price, try Yahoo Finance as fallback (especially for .PL tickers)
-        if price is None:
-            yf_symbol = get_yf_symbol(ticker_symbol)
-            try:
-                api_res = _fetch_quotes_batch_via_api([yf_symbol])
-                if yf_symbol in api_res:
-                    price = api_res[yf_symbol]
-                    # Convert to PLN if needed (YF returns price in original currency)
-                    currency = get_currency_for_ticker(yf_symbol)
-                    if currency != "PLN":
-                        fx_rate = _fetch_fx_rate_from_db_or_yf(currency)
-                        if fx_rate:
-                            price = price * float(fx_rate)
-                    return price
-            except Exception:
-                pass
-        
+        # In database mode, we ONLY return price from DB, no fallback to external sources
         return price
 
     # Non-database mode
@@ -675,10 +654,13 @@ def _fetch_quotes_batch_via_api(yf_symbols: List[str]) -> Dict[str, float]:
     """
     results = {}
 
+    # Filter out blacklisted tickers (e.g., PLN, CASH)
+    filtered_symbols = [s for s in yf_symbols if _should_fetch_ticker(s)]
+    
     # 1. Check cache first
     now_ts = time.time()
     pending: List[str] = []
-    for s in yf_symbols:
+    for s in filtered_symbols:
         cached = _QUOTE_CACHE.get(s)
         if cached and (now_ts - cached[1]) < _QUOTE_TTL_SECONDS:
             results[s] = cached[0]
@@ -789,6 +771,15 @@ def get_current_prices(tickers: List[str]) -> Dict[str, float]:
             if session:
                 session.close()
 
+    # In database mode, we should NOT fetch from external sources
+    if _DB_SESSION_FACTORY:
+        return results
+    
+    if not tickers_to_fetch:
+        return results
+    
+    # Filter out blacklisted tickers before fetching from YF
+    tickers_to_fetch = [t for t in tickers_to_fetch if _should_fetch_ticker(t)]
     if not tickers_to_fetch:
         return results
     
@@ -851,7 +842,7 @@ def get_current_prices(tickers: List[str]) -> Dict[str, float]:
     if missing_symbols:
         try:
             _throttle_yf()
-            data = yf.download(missing_symbols, period="5d", progress=False, threads=False)
+            data = yf.download(missing_symbols, period="5d", progress=False, threads=False, auto_adjust=True)
             if data is not None and not data.empty:
                 closes = data["Close"] if "Close" in data.columns else data
                 closes = _normalize_to_dataframe(closes)
@@ -1000,7 +991,7 @@ def get_price_history(ticker_symbol: str, days: int = 90):
                                 try:
                                     longer = max(180, days * 2)
                                     _throttle_yf()
-                                    alt = yf.download(yf_symbol, period=f"{longer}d", progress=False, threads=False)
+                                    alt = yf.download(yf_symbol, period=f"{longer}d", progress=False, threads=False, auto_adjust=True)
                                     if alt is not None and not alt.empty:
                                         df = alt
                                 except Exception:
@@ -1066,7 +1057,7 @@ def get_price_history(ticker_symbol: str, days: int = 90):
             try:
                 longer = max(180, days * 2)
                 _throttle_yf()
-                alt = yf.download(yf_symbol, period=f"{longer}d", progress=False, threads=False)
+                alt = yf.download(yf_symbol, period=f"{longer}d", progress=False, threads=False, auto_adjust=True)
                 if alt is not None and not alt.empty:
                     hist = alt
             except Exception:
@@ -1155,10 +1146,16 @@ def _get_historical_prices_cached(tickers_tuple, start_date, end_date):
     tickers = list(tickers_tuple)
     yf_symbols = [get_yf_symbol(t) for t in tickers]
     
+    # Filter out blacklisted tickers
+    filtered_pairs = [(t, sym) for t, sym in zip(tickers, yf_symbols) if _should_fetch_ticker(t)]
+    if not filtered_pairs:
+        return {}
+    filtered_tickers, filtered_yf_symbols = zip(*filtered_pairs)
+    
     # Prepare FX conversion series upfront
     # Use yf_symbol for currency detection to correctly handle resolved ambiguous tickers (e.g. SNT -> SNT.WA -> PLN)
     currency_by_ticker: Dict[str, str] = {}
-    for t, yf_sym in zip(tickers, yf_symbols):
+    for t, yf_sym in zip(filtered_tickers, filtered_yf_symbols):
         currency_by_ticker[t] = get_currency_for_ticker(yf_sym)
 
     unique_currencies = sorted({c for c in currency_by_ticker.values() if c != "PLN"})
@@ -1192,13 +1189,13 @@ def _get_historical_prices_cached(tickers_tuple, start_date, end_date):
     try:
         # Use threads=False to prevent bans
         _throttle_yf()
-        data = yf.download(yf_symbols, start=start_date, end=end_date, progress=False, threads=False)
+        data = yf.download(filtered_yf_symbols, start=start_date, end=end_date, progress=False, threads=False, auto_adjust=True)
         
         if not data.empty:
             prices = data["Close"]
             prices = _normalize_to_dataframe(prices)
 
-            for ticker, yf_symbol in zip(tickers, yf_symbols):
+            for ticker, yf_symbol in zip(filtered_tickers, filtered_yf_symbols):
                 series = None
                 if yf_symbol in prices.columns:
                     series = prices[yf_symbol].copy()
@@ -1314,7 +1311,7 @@ def get_ohlc_history_df(ticker_symbol: str, days: int = 365) -> pd.DataFrame:
                                 try:
                                     longer = max(180, days * 2)
                                     _throttle_yf()
-                                    alt = yf.download(yf_symbol, period=f"{longer}d", progress=False, threads=False)
+                                    alt = yf.download(yf_symbol, period=f"{longer}d", progress=False, threads=False, auto_adjust=True)
                                     if alt is not None and not alt.empty:
                                         df = alt
                                 except Exception:
@@ -1369,7 +1366,7 @@ def get_ohlc_history_df(ticker_symbol: str, days: int = 365) -> pd.DataFrame:
              try:
                 longer = max(180, days * 2)
                 _throttle_yf()
-                alt = yf.download(yf_symbol, period=f"{longer}d", progress=False, threads=False)
+                alt = yf.download(yf_symbol, period=f"{longer}d", progress=False, threads=False, auto_adjust=True)
                 if alt is not None and not alt.empty:
                     # Filter to requested days
                     start_ts = pd.Timestamp.now() - pd.Timedelta(days=days)
@@ -1467,7 +1464,7 @@ def get_dividends_for_tickers(tickers, start_date, end_date):
         # Use threads=False to avoid launching N parallel requests which triggers bans
         # yf.download by default uses threads=True (multiprocessing).
         _throttle_yf()
-        data = yf.download(yf_symbols, start=start_date, end=end_date, actions=True, progress=False, threads=False)
+        data = yf.download(yf_symbols, start=start_date, end=end_date, actions=True, progress=False, threads=False, auto_adjust=True)
         
         dividends_df = None
         
