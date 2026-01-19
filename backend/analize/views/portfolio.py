@@ -5,7 +5,7 @@ from backend.database import Database, Portfolio, Asset, Transaction, Transactio
 from backend.portfolio.analysis import calculate_portfolio_overview, calculate_roi_over_time, calculate_portfolio_value_over_time, calculate_monthly_profit, calculate_dividend_stats
 from backend.utils import clean_nan_in_data
 from backend.database import AssetPriceHistory
-from backend.tools.price_fetcher import get_yf_symbol, get_currency_for_ticker, fx_symbol_to_pln, _fetch_fx_series
+from backend.tools.price_fetcher import get_yf_symbol, get_currency_for_ticker, fx_symbol_to_pln, _fetch_fx_series, fetch_price_history_with_exchange
 import yfinance as yf
 import pandas as pd
 from datetime import datetime, timedelta
@@ -480,34 +480,10 @@ def update_portfolio_prices():
                 asset = session.query(Asset).filter_by(ticker=ticker).first()
                 if not asset: continue
                 
-                yf_symbol = get_yf_symbol(ticker)
-                
-                # Fetch last 7 days to cover weekends/holidays
-                end_date = datetime.now()
-                start_date = end_date - timedelta(days=7)
-                
-                df = yf.download(yf_symbol, start=start_date, end=end_date, progress=False, threads=False, auto_adjust=True)
+                # Use new function that respects exchange
+                df = fetch_price_history_with_exchange(ticker, days=7)
                 
                 if df is not None and not df.empty:
-                    # Convert to PLN
-                    currency = get_currency_for_ticker(yf_symbol)
-                    if currency != 'PLN':
-                         fx_ticker = fx_symbol_to_pln(currency)
-                         if fx_ticker:
-                             fx_series_map = _fetch_fx_series([currency], start_date.date(), end_date.date())
-                             fx_series = fx_series_map.get(fx_ticker)
-                             if fx_series is not None and not fx_series.empty:
-                                  # Align and multiply
-                                  if df.index.tz is not None: df.index = df.index.tz_localize(None)
-                                  if fx_series.index.tz is not None: fx_series.index = fx_series.index.tz_localize(None)
-                                  
-                                  aligned_fx = fx_series.reindex(df.index).ffill().bfill()
-                                  
-                                  cols = ['Open', 'High', 'Low', 'Close', 'Adj Close']
-                                  for col in cols:
-                                      if col in df.columns:
-                                          df[col] = df[col] * aligned_fx.values
-                    
                     # Save to DB
                     for date_idx, row in df.iterrows():
                         date_val = date_idx.date()
@@ -517,28 +493,13 @@ def update_portfolio_prices():
                         ).first()
                         
                         # Handle potential missing/nan values
-                        # row['Close'] may be a Series with one element; extract scalar
-                        close_series = row['Close']
-                        if isinstance(close_series, pd.Series):
-                            close_val = float(close_series.iloc[0])
-                        else:
-                            close_val = float(close_series)
+                        close_val = float(row['Close'])
                         if pd.isna(close_val): continue
                         
-                        # Helper to extract scalar from row column
-                        def get_scalar(col):
-                            if col not in row:
-                                return None
-                            val = row[col]
-                            if isinstance(val, pd.Series):
-                                return float(val.iloc[0]) if not pd.isna(val.iloc[0]) else None
-                            else:
-                                return float(val) if not pd.isna(val) else None
-                        
-                        open_val = get_scalar('Open')
-                        high_val = get_scalar('High')
-                        low_val = get_scalar('Low')
-                        vol_val = get_scalar('Volume')
+                        open_val = float(row['Open']) if 'Open' in row and not pd.isna(row['Open']) else None
+                        high_val = float(row['High']) if 'High' in row and not pd.isna(row['High']) else None
+                        low_val = float(row['Low']) if 'Low' in row and not pd.isna(row['Low']) else None
+                        vol_val = int(row['Volume']) if 'Volume' in row and not pd.isna(row['Volume']) else None
                         
                         if existing:
                             existing.close = close_val

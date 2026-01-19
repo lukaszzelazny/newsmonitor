@@ -92,6 +92,38 @@ def _find_asset_in_db(session: Session, ticker_symbol: str):
         
     return None
 
+def _get_exchange_for_ticker(session: Session, ticker_symbol: str) -> Optional[str]:
+    """
+    Returns exchange for given ticker (e.g., 'GPW', 'NewConnect', 'US').
+    Returns None if not found.
+    """
+    try:
+        from backend.database import Ticker
+        # Try exact match first
+        ticker_rec = session.query(Ticker).filter(Ticker.ticker == ticker_symbol).first()
+        if ticker_rec and ticker_rec.exchange:
+            return ticker_rec.exchange
+        # Try variations (similar to _find_asset_in_db)
+        if '.' not in ticker_symbol:
+            candidates = [f"{ticker_symbol}.PL", f"{ticker_symbol}.WA", f"{ticker_symbol}.US"]
+            for c in candidates:
+                ticker_rec = session.query(Ticker).filter(Ticker.ticker == c).first()
+                if ticker_rec and ticker_rec.exchange:
+                    return ticker_rec.exchange
+        if ticker_symbol.endswith('.WA'):
+            alt = ticker_symbol.replace('.WA', '.PL')
+            ticker_rec = session.query(Ticker).filter(Ticker.ticker == alt).first()
+            if ticker_rec and ticker_rec.exchange:
+                return ticker_rec.exchange
+        if ticker_symbol.endswith('.PL'):
+            alt = ticker_symbol.replace('.PL', '.WA')
+            ticker_rec = session.query(Ticker).filter(Ticker.ticker == alt).first()
+            if ticker_rec and ticker_rec.exchange:
+                return ticker_rec.exchange
+    except ImportError:
+        pass
+    return None
+
 def _get_or_create_asset(session: Session, ticker_symbol: str):
     """
     Finds an asset or creates it if it doesn't exist.
@@ -594,13 +626,123 @@ def get_current_price(ticker_symbol: str):
             if session:
                 session.close()
         
-        # In database mode, we ONLY return price from DB, no fallback to external sources
-        return price
+        # If price found in DB, return it
+        if price is not None:
+            return price
+        
+        # Fallback to Stooq for Polish tickers (GPW/NewConnect) even in database mode
+        # This ensures prices for tickers like SCW are available
+        # Determine if ticker is likely Polish
+        is_polish = False
+        t = ticker_symbol.upper()
+        if t.endswith('.PL') or t.endswith('.WA'):
+            is_polish = True
+        elif '.' not in t and len(t) <= 5:  # short ticker without suffix, likely Polish
+            # Check if exchange is GPW (we could query DB, but for simplicity assume)
+            is_polish = True
+        
+        if is_polish:
+            # Try Stooq
+            clean_ticker = t.replace('.PL', '').replace('.WA', '').lower()
+            url = f'https://stooq.pl/q/l/?s={clean_ticker}&f=sd2t2ohlcv&h&e=csv'
+            try:
+                import pandas as pd
+                df = pd.read_csv(url)
+                if not df.empty and 'Close' in df.columns:
+                    price = float(df['Close'].iloc[0])
+                    # Optionally save to DB for future use
+                    if price is not None and session:
+                        # Re-open session if needed
+                        if session.is_closed:
+                            session = _get_db_session()
+                        if session:
+                            try:
+                                asset = _get_or_create_asset(session, ticker_symbol)
+                                # Create a new price history entry for today
+                                from datetime import date
+                                today = date.today()
+                                existing = session.query(AssetPriceHistory).filter(
+                                    AssetPriceHistory.asset_id == asset.id,
+                                    AssetPriceHistory.date == today
+                                ).first()
+                                if not existing:
+                                    new_rec = AssetPriceHistory(
+                                        asset_id=asset.id,
+                                        date=today,
+                                        close=price,
+                                        open=price,
+                                        high=price,
+                                        low=price,
+                                        volume=0,
+                                        adjusted_close=price
+                                    )
+                                    session.add(new_rec)
+                                    session.commit()
+                            except Exception as e:
+                                session.rollback()
+                                print(f"Failed to save Stooq price to DB: {e}")
+                            finally:
+                                session.close()
+                    return price
+            except Exception:
+                pass
+        
+        # No price found
+        return None
 
     # Non-database mode
-    # For Polish tickers, try Stooq first
-    if ticker_symbol.endswith('.PL'):
-        clean_ticker = ticker_symbol.replace('.PL', '').lower()
+    # Determine exchange to decide source
+    exchange = None
+    session = _get_caching_session()
+    if session:
+        try:
+            exchange = _get_exchange_for_ticker(session, ticker_symbol)
+        except Exception:
+            pass
+        finally:
+            session.close()
+    
+    # If exchange is NewConnect, use Stooq directly
+    if exchange == 'NewConnect':
+        clean_ticker = ticker_symbol.replace('.PL', '').replace('.WA', '').lower()
+        url = f'https://stooq.pl/q/l/?s={clean_ticker}&f=sd2t2ohlcv&h&e=csv'
+        try:
+            import pandas as pd
+            df = pd.read_csv(url)
+            if not df.empty and 'Close' in df.columns:
+                price = float(df['Close'].iloc[0])
+                return price
+        except Exception:
+            pass  # fallback to YF/Stooq logic below
+    
+    # If exchange is GPW, try YF first, then Stooq
+    if exchange == 'GPW':
+        # Try YF
+        yf_symbol = get_yf_symbol(ticker_symbol)
+        currency = get_currency_for_ticker(yf_symbol)
+        price = None
+        try:
+            api_res = _fetch_quotes_batch_via_api([yf_symbol])
+            if yf_symbol in api_res:
+                price = api_res[yf_symbol]
+        except Exception:
+            pass
+        
+        if price is not None:
+            # Convert to PLN if needed
+            if currency != "PLN":
+                fx_ticker = fx_symbol_to_pln(currency)
+                if fx_ticker:
+                    try:
+                        api_fx = _fetch_quotes_batch_via_api([fx_ticker])
+                        fx_price = api_fx.get(fx_ticker)
+                        if fx_price:
+                            price = float(price) * float(fx_price)
+                    except Exception:
+                        pass
+            return float(price)
+        # YF failed, try Stooq
+        clean_ticker = ticker_symbol.replace('.PL', '').replace('.WA', '').lower()
         url = f'https://stooq.pl/q/l/?s={clean_ticker}&f=sd2t2ohlcv&h&e=csv'
         try:
             import pandas as pd
@@ -610,7 +752,10 @@ def get_current_price(ticker_symbol: str):
                 return price
         except Exception:
             pass
-
+        # Both failed, return None
+        return None
+    
+    # For other exchanges (US, DE, etc.) or unknown exchange, use YF
     yf_symbol = get_yf_symbol(ticker_symbol)
     currency = get_currency_for_ticker(yf_symbol)
     
@@ -774,8 +919,32 @@ def get_current_prices(tickers: List[str], active_tickers: Optional[List[str]] =
             if session:
                 session.close()
 
-    # In database mode, we should NOT fetch from external sources
+    # In database mode, we should NOT fetch from external sources EXCEPT for NewConnect tickers via Stooq
     if _DB_SESSION_FACTORY:
+        # For missing tickers, check if they are NewConnect and try Stooq
+        if tickers_to_fetch:
+            session = _get_db_session()
+            if session:
+                try:
+                    from backend.database import Ticker
+                    # Fetch exchanges for missing tickers
+                    res = session.query(Ticker.ticker, Ticker.exchange).filter(Ticker.ticker.in_(tickers_to_fetch)).all()
+                    exchange_map = {r[0]: r[1] for r in res}
+                    for t in tickers_to_fetch:
+                        if exchange_map.get(t) == 'NewConnect':
+                            clean_ticker = t.replace('.PL', '').replace('.WA', '').lower()
+                            url = f'https://stooq.pl/q/l/?s={clean_ticker}&f=sd2t2ohlcv&h&e=csv'
+                            try:
+                                df = pd.read_csv(url)
+                                if not df.empty and 'Close' in df.columns:
+                                    price = float(df['Close'].iloc[0])
+                                    results[t] = price
+                            except Exception:
+                                pass
+                except Exception as e:
+                    print(f"DB Exchange fetch error: {e}")
+                finally:
+                    session.close()
         return results
     
     if not tickers_to_fetch:
@@ -813,14 +982,20 @@ def get_current_prices(tickers: List[str], active_tickers: Optional[List[str]] =
 
     # 1. Prepare symbols
     yf_symbols_map = {}
+    stooq_tickers = []  # tickers to fetch via Stooq
     
     # Split into known vs unknown exchange
     unknown_exchange_tickers = []
     
     for t in tickers_to_fetch:
         if t in ticker_exchange_map:
-            # Explicit exchange -> Fast path
-            yf_symbols_map[t] = get_yf_symbol_by_exchange(t, ticker_exchange_map[t])
+            exchange = ticker_exchange_map[t]
+            if exchange == 'NewConnect':
+                # Use Stooq directly
+                stooq_tickers.append(t)
+            else:
+                # Use YF with appropriate symbol
+                yf_symbols_map[t] = get_yf_symbol_by_exchange(t, exchange)
         else:
             unknown_exchange_tickers.append(t)
             
@@ -831,6 +1006,18 @@ def get_current_prices(tickers: List[str], active_tickers: Optional[List[str]] =
 
     # Collect final symbols
     yf_symbols = list(set(yf_symbols_map.values()))
+    
+    # Fetch Stooq prices for NewConnect tickers
+    for t in stooq_tickers:
+        clean_ticker = t.replace('.PL', '').replace('.WA', '').lower()
+        url = f'https://stooq.pl/q/l/?s={clean_ticker}&f=sd2t2ohlcv&h&e=csv'
+        try:
+            df = pd.read_csv(url)
+            if not df.empty and 'Close' in df.columns:
+                price = float(df['Close'].iloc[0])
+                results[t] = price  # Stooq prices are in PLN
+        except Exception:
+            pass
     
     raw_prices = {} 
     
@@ -940,6 +1127,86 @@ def get_price_history_from_stooq(ticker_symbol: str, days: int = 90):
     except Exception as e:
         print(f"Stooq download failed for {clean_ticker}: {e}")
         return []
+
+
+def fetch_price_history_with_exchange(ticker: str, days: int = 7) -> pd.DataFrame:
+    """
+    Fetch price history DataFrame (OHLC) for a ticker, respecting exchange.
+    Returns DataFrame with columns Open, High, Low, Close, Volume, index=DatetimeIndex.
+    Prices are converted to PLN.
+    """
+    # Determine exchange
+    exchange = None
+    session = _get_caching_session()
+    if session:
+        try:
+            exchange = _get_exchange_for_ticker(session, ticker)
+        except Exception:
+            pass
+        finally:
+            session.close()
+    
+    # If exchange is NewConnect, use Stooq
+    if exchange == 'NewConnect':
+        clean_ticker = ticker.replace('.PL', '').replace('.WA', '').lower()
+        url = f"https://stooq.pl/q/d/l/?s={clean_ticker}&i=d"
+        try:
+            df = pd.read_csv(url)
+            if df.empty or "Date" not in df.columns:
+                return pd.DataFrame()
+            df["Date"] = pd.to_datetime(df["Date"])
+            start_date = pd.Timestamp.now() - pd.Timedelta(days=days)
+            df = df[df["Date"] >= start_date]
+            if df.empty:
+                return pd.DataFrame()
+            df.set_index("Date", inplace=True)
+            # Stooq prices are in PLN
+            return df[["Open", "High", "Low", "Close", "Volume"]]
+        except Exception as e:
+            print(f"Stooq history failed for {ticker}: {e}")
+            return pd.DataFrame()
+    
+    # If exchange is GPW, try YF first, then Stooq
+    if exchange == 'GPW':
+        yf_symbol = get_yf_symbol(ticker)
+        try:
+            _throttle_yf()
+            df = yf.download(yf_symbol, period=f"{days}d", progress=False, threads=False, auto_adjust=True)
+            if df is not None and not df.empty:
+                # Convert to PLN
+                df = _convert_df_to_pln(df, ticker)
+                return df
+        except Exception:
+            pass
+        # YF failed, try Stooq
+        clean_ticker = ticker.replace('.PL', '').replace('.WA', '').lower()
+        url = f"https://stooq.pl/q/d/l/?s={clean_ticker}&i=d"
+        try:
+            df = pd.read_csv(url)
+            if df.empty or "Date" not in df.columns:
+                return pd.DataFrame()
+            df["Date"] = pd.to_datetime(df["Date"])
+            start_date = pd.Timestamp.now() - pd.Timedelta(days=days)
+            df = df[df["Date"] >= start_date]
+            if df.empty:
+                return pd.DataFrame()
+            df.set_index("Date", inplace=True)
+            return df[["Open", "High", "Low", "Close", "Volume"]]
+        except Exception:
+            return pd.DataFrame()
+    
+    # For other exchanges or unknown, use YF
+    yf_symbol = get_yf_symbol(ticker)
+    try:
+        _throttle_yf()
+        df = yf.download(yf_symbol, period=f"{days}d", progress=False, threads=False, auto_adjust=True)
+        if df is not None and not df.empty:
+            df = _convert_df_to_pln(df, ticker)
+            return df
+    except Exception as e:
+        print(f"YF history failed for {ticker}: {e}")
+    
+    return pd.DataFrame()
 
 def get_price_history(ticker_symbol: str, days: int = 90):
     """Fetches the price history of a ticker, converted to PLN.
