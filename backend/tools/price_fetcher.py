@@ -1092,9 +1092,9 @@ def get_current_prices(tickers: List[str], active_tickers: Optional[List[str]] =
 
 
 def get_price_history_from_stooq(ticker_symbol: str, days: int = 90):
-    """Fetch price history from Stooq for Polish stocks (removes .WA suffix)."""
-    # Stooq uses lowercase usually, and no .WA suffix
-    clean_ticker = ticker_symbol.replace('.WA', '').lower()
+    """Fetch price history from Stooq for Polish stocks (removes .WA and .PL suffixes)."""
+    # Stooq uses lowercase usually, and no .WA or .PL suffix
+    clean_ticker = ticker_symbol.replace('.PL', '').replace('.WA', '').lower()
     url = f"https://stooq.pl/q/d/l/?s={clean_ticker}&i=d"
     
     try:
@@ -1146,20 +1146,63 @@ def fetch_price_history_with_exchange(ticker: str, days: int = 7) -> pd.DataFram
         finally:
             session.close()
     
-    # If exchange is NewConnect, use Stooq
+    # If exchange is NewConnect, try YF first (since YF has .WA data), then Stooq
     if exchange == 'NewConnect':
+        yf_symbol = get_yf_symbol(ticker)
+        print(f"Fetching YF history for NewConnect ticker {ticker} -> {yf_symbol}")
+        try:
+            _throttle_yf()
+            df = yf.download(yf_symbol, period=f"{days}d", progress=False, threads=False, auto_adjust=True)
+            if df is not None and not df.empty:
+                # Convert to PLN
+                df = _convert_df_to_pln(df, ticker)
+                print(f"YF success for {yf_symbol}, rows: {len(df)}")
+                # Flatten MultiIndex columns if present (single ticker case)
+                if isinstance(df.columns, pd.MultiIndex):
+                    # Keep only the first level (Price) or combine
+                    df.columns = df.columns.get_level_values(0)
+                return df
+        except Exception as e:
+            print(f"YF failed for {ticker} ({yf_symbol}): {e}")
+        
+        # YF failed, try Stooq
         clean_ticker = ticker.replace('.PL', '').replace('.WA', '').lower()
         url = f"https://stooq.pl/q/d/l/?s={clean_ticker}&i=d"
+        print(f"Fetching Stooq history for NewConnect ticker {ticker} -> {clean_ticker}")
         try:
             df = pd.read_csv(url)
             if df.empty or "Date" not in df.columns:
+                print(f"Stooq returned empty data for {clean_ticker}")
                 return pd.DataFrame()
             df["Date"] = pd.to_datetime(df["Date"])
             start_date = pd.Timestamp.now() - pd.Timedelta(days=days)
             df = df[df["Date"] >= start_date]
             if df.empty:
+                print(f"Stooq data empty after filtering for {clean_ticker}")
                 return pd.DataFrame()
             df.set_index("Date", inplace=True)
+            print(f"Stooq success for {clean_ticker}, rows: {len(df)}")
+            
+            # Check if we have today's date, if not try to add it
+            today = pd.Timestamp.now().normalize()
+            if today not in df.index:
+                print(f"Today's date ({today.date()}) not in Stooq data, trying live quote...")
+                try:
+                    live_price = get_current_price(ticker)
+                    if live_price is not None:
+                        # Add today's data
+                        today_df = pd.DataFrame({
+                            'Open': [live_price],
+                            'High': [live_price],
+                            'Low': [live_price],
+                            'Close': [live_price],
+                            'Volume': [0]
+                        }, index=[today])
+                        df = pd.concat([df, today_df])
+                        print(f"Added today's price: {live_price}")
+                except Exception as e:
+                    print(f"Failed to add today's price: {e}")
+            
             # Stooq prices are in PLN
             return df[["Open", "High", "Low", "Close", "Volume"]]
         except Exception as e:
@@ -1175,24 +1218,33 @@ def fetch_price_history_with_exchange(ticker: str, days: int = 7) -> pd.DataFram
             if df is not None and not df.empty:
                 # Convert to PLN
                 df = _convert_df_to_pln(df, ticker)
+                # Flatten MultiIndex columns if present
+                if isinstance(df.columns, pd.MultiIndex):
+                    df.columns = df.columns.get_level_values(0)
                 return df
-        except Exception:
+        except Exception as e:
+            print(f"YF failed for {ticker} ({yf_symbol}): {e}")
             pass
         # YF failed, try Stooq
         clean_ticker = ticker.replace('.PL', '').replace('.WA', '').lower()
         url = f"https://stooq.pl/q/d/l/?s={clean_ticker}&i=d"
+        print(f"Trying Stooq for GPW ticker {ticker} -> {clean_ticker}")
         try:
             df = pd.read_csv(url)
             if df.empty or "Date" not in df.columns:
+                print(f"Stooq returned empty data for {clean_ticker}")
                 return pd.DataFrame()
             df["Date"] = pd.to_datetime(df["Date"])
             start_date = pd.Timestamp.now() - pd.Timedelta(days=days)
             df = df[df["Date"] >= start_date]
             if df.empty:
+                print(f"Stooq data empty after filtering for {clean_ticker}")
                 return pd.DataFrame()
             df.set_index("Date", inplace=True)
+            print(f"Stooq success for {clean_ticker}, rows: {len(df)}")
             return df[["Open", "High", "Low", "Close", "Volume"]]
-        except Exception:
+        except Exception as e:
+            print(f"Stooq failed for {clean_ticker}: {e}")
             return pd.DataFrame()
     
     # For other exchanges or unknown, use YF
@@ -1202,6 +1254,9 @@ def fetch_price_history_with_exchange(ticker: str, days: int = 7) -> pd.DataFram
         df = yf.download(yf_symbol, period=f"{days}d", progress=False, threads=False, auto_adjust=True)
         if df is not None and not df.empty:
             df = _convert_df_to_pln(df, ticker)
+            # Flatten MultiIndex columns if present
+            if isinstance(df.columns, pd.MultiIndex):
+                df.columns = df.columns.get_level_values(0)
             return df
     except Exception as e:
         print(f"YF history failed for {ticker}: {e}")
@@ -1215,6 +1270,63 @@ def get_price_history(ticker_symbol: str, days: int = 90):
     - If the requested period is empty, try a longer window via yf.download
     - If still empty, try the full history (period='max')
     """
+    
+    # First, try to determine exchange to use appropriate source
+    exchange = None
+    session = _get_caching_session()
+    if session:
+        try:
+            exchange = _get_exchange_for_ticker(session, ticker_symbol)
+        except Exception:
+            pass
+        finally:
+            if session:
+                session.close()
+    
+    # If exchange is NewConnect, use fetch_price_history_with_exchange which uses Stooq
+    if exchange == 'NewConnect':
+        df = fetch_price_history_with_exchange(ticker_symbol, days)
+        if df is not None and not df.empty:
+            price_data = []
+            for date_idx, row in df.iterrows():
+                price_data.append({
+                    "date": date_idx.strftime("%Y-%m-%d"),
+                    "price": float(row['Close']),
+                    "open": float(row['Open']) if 'Open' in row else float(row['Close']),
+                    "high": float(row['High']) if 'High' in row else float(row['Close']),
+                    "low": float(row['Low']) if 'Low' in row else float(row['Close']),
+                    "close": float(row['Close']),
+                    "volume": int(row['Volume']) if 'Volume' in row else 0
+                })
+            return price_data
+    
+    # If exchange is GPW, try YF first, then Stooq
+    if exchange == 'GPW':
+        yf_symbol = get_yf_symbol(ticker_symbol)
+        try:
+            _throttle_yf()
+            df = yf.download(yf_symbol, period=f"{days}d", progress=False, threads=False, auto_adjust=True)
+            if df is not None and not df.empty:
+                df = _convert_df_to_pln(df, ticker_symbol)
+                price_data = []
+                for date_idx, row in df.iterrows():
+                    price_data.append({
+                        "date": date_idx.strftime("%Y-%m-%d"),
+                        "price": float(row['Close']),
+                        "open": float(row['Open']) if 'Open' in row else float(row['Close']),
+                        "high": float(row['High']) if 'High' in row else float(row['Close']),
+                        "low": float(row['Low']) if 'Low' in row else float(row['Close']),
+                        "close": float(row['Close']),
+                        "volume": int(row['Volume']) if 'Volume' in row else 0
+                    })
+                return price_data
+        except Exception:
+            pass
+        # YF failed, try Stooq
+        stooq_data = get_price_history_from_stooq(yf_symbol, days)
+        if stooq_data:
+            return stooq_data
+        # If both failed, continue to generic logic
     
     # Database Mode or Caching Mode
     forced_session = _get_db_session()

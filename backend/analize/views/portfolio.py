@@ -480,11 +480,17 @@ def update_portfolio_prices():
                 asset = session.query(Asset).filter_by(ticker=ticker).first()
                 if not asset: continue
                 
-                # Use new function that respects exchange
-                df = fetch_price_history_with_exchange(ticker, days=7)
+                # Use new function that respects exchange - increase window to 30 days
+                print(f"  Fetching prices for {ticker}...")
+                df = fetch_price_history_with_exchange(ticker, days=30)
                 
                 if df is not None and not df.empty:
+                    print(f"    Got {len(df)} rows of data")
+                    print(f"    Date range: {df.index[0].date()} to {df.index[-1].date()}")
+                    
                     # Save to DB
+                    rows_added = 0
+                    rows_updated = 0
                     for date_idx, row in df.iterrows():
                         date_val = date_idx.date()
                         existing = session.query(AssetPriceHistory).filter(
@@ -508,6 +514,7 @@ def update_portfolio_prices():
                             if low_val is not None: existing.low = low_val
                             if vol_val is not None: existing.volume = vol_val
                             existing.adjusted_close = close_val
+                            rows_updated += 1
                         else:
                             new_rec = AssetPriceHistory(
                                 asset_id=asset.id,
@@ -520,9 +527,52 @@ def update_portfolio_prices():
                                 adjusted_close=close_val
                             )
                             session.add(new_rec)
+                            rows_added += 1
+                    
+                    print(f"    Added {rows_added} new records, updated {rows_updated} existing")
+                    
+                    # Also try to get today's price using get_current_price for NewConnect tickers
+                    # to ensure we have the latest price even if Stooq history doesn't include today
+                    try:
+                        from backend.tools.price_fetcher import get_current_price, _get_exchange_for_ticker
+                        from datetime import date
+                        
+                        # Check if ticker is NewConnect
+                        exchange = _get_exchange_for_ticker(session, ticker)
+                        print(f"    Exchange for {ticker}: {exchange}")
+                        if exchange == 'NewConnect':
+                            print(f"    Fetching today's price for NewConnect ticker {ticker}...")
+                            today_price = get_current_price(ticker)
+                            print(f"    Today's price: {today_price}")
+                            if today_price is not None:
+                                today = date.today()
+                                existing_today = session.query(AssetPriceHistory).filter(
+                                    AssetPriceHistory.asset_id == asset.id,
+                                    AssetPriceHistory.date == today
+                                ).first()
+                                
+                                if not existing_today:
+                                    new_today_rec = AssetPriceHistory(
+                                        asset_id=asset.id,
+                                        date=today,
+                                        close=today_price,
+                                        open=today_price,
+                                        high=today_price,
+                                        low=today_price,
+                                        volume=0,
+                                        adjusted_close=today_price
+                                    )
+                                    session.add(new_today_rec)
+                                    print(f"    Added today's price for {ticker}: {today_price}")
+                                    rows_added += 1
+                                else:
+                                    print(f"    Today's price already exists for {ticker}")
+                    except Exception as e:
+                        print(f"    Error adding today's price for {ticker}: {e}")
                     
                     updated_count += 1
                     session.commit()
+                    print(f"    Committed changes for {ticker}")
                     
             except Exception as e:
                 print(f"Error updating {ticker}: {e}")

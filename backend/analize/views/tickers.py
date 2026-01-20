@@ -242,45 +242,22 @@ def sync_ticker_prices(ticker):
             if last_record:
                 # Sync from last record minus 1 day to cover overlaps/updates
                 start_date = datetime.combine(last_record.date, datetime.min.time()) - timedelta(days=1)
+                days = (end_date - start_date).days + 1
             else:
                 # Default 5 years history if empty
-                start_date = end_date - timedelta(days=365*5)
+                days = 365 * 5
             
-            # 3. Fetch from YF
-            yf_ticker = get_yf_symbol(ticker)
-            stock = yf.Ticker(yf_ticker)
-            df = stock.history(start=start_date, end=end_date)
-            
-            if df.empty:
-                 # Try downloading max history if 5 years returned nothing (sometimes helps with delisted/old)
-                 if not last_record:
-                     df = stock.history(period="max")
+            # 3. Fetch using fetch_price_history_with_exchange (handles NewConnect/GPW)
+            from backend.tools.price_fetcher import fetch_price_history_with_exchange
+            df = fetch_price_history_with_exchange(ticker, days=days)
             
             if df.empty:
-                 return jsonify({'success': False, 'message': 'No data found'}), 404
+                return jsonify({'success': False, 'message': 'No data found'}), 404
 
-            # 4. Convert to PLN
-            currency = get_currency_for_ticker(yf_ticker)
-            if currency != "PLN":
-                fx_ticker_sym = fx_symbol_to_pln(currency)
-                if fx_ticker_sym:
-                    # Fetch FX series
-                    fx_start = df.index.min().date()
-                    fx_end = df.index.max().date() + timedelta(days=1)
-                    fx_series_map = _fetch_fx_series([currency], fx_start, fx_end)
-                    fx_series = fx_series_map.get(fx_ticker_sym)
-                    
-                    if fx_series is not None and not fx_series.empty:
-                        # Align indexes
-                        if df.index.tz is not None: df.index = df.index.tz_localize(None)
-                        if fx_series.index.tz is not None: fx_series.index = fx_series.index.tz_localize(None)
-                        
-                        aligned_fx = fx_series.reindex(df.index).ffill().bfill()
-                        
-                        for col in ['Open', 'High', 'Low', 'Close', 'Adj Close']:
-                            if col in df.columns:
-                                df[col] = df[col] * aligned_fx.values
-
+            # 4. Filter by start_date if we have last_record (to avoid re-adding old data)
+            if last_record:
+                df = df[df.index >= pd.Timestamp(start_date)]
+            
             # 5. Save to DB
             count = 0
             for date_idx, row in df.iterrows():
