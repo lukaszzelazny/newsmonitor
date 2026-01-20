@@ -489,6 +489,15 @@ def _fetch_fx_series(currencies: List[str], start_date, end_date) -> Dict[str, p
             if session:
                 session.close()
 
+        # In database mode, DO NOT fetch missing FX from YF
+        # If missing, log warning and return partial result
+        if fx_needed:
+            print(f"Warning: Missing FX data in database for {fx_needed}")
+            # Do not attempt to download from YF
+            # Cache what we have (including empty)
+            _FX_SERIES_CACHE[key] = (result, now_ts)
+            return result
+
     if not fx_needed:
         # All found in DB or empty request
         _FX_SERIES_CACHE[key] = (result, now_ts)
@@ -630,64 +639,8 @@ def get_current_price(ticker_symbol: str):
         if price is not None:
             return price
         
-        # Fallback to Stooq for Polish tickers (GPW/NewConnect) even in database mode
-        # This ensures prices for tickers like SCW are available
-        # Determine if ticker is likely Polish
-        is_polish = False
-        t = ticker_symbol.upper()
-        if t.endswith('.PL') or t.endswith('.WA'):
-            is_polish = True
-        elif '.' not in t and len(t) <= 5:  # short ticker without suffix, likely Polish
-            # Check if exchange is GPW (we could query DB, but for simplicity assume)
-            is_polish = True
-        
-        if is_polish:
-            # Try Stooq
-            clean_ticker = t.replace('.PL', '').replace('.WA', '').lower()
-            url = f'https://stooq.pl/q/l/?s={clean_ticker}&f=sd2t2ohlcv&h&e=csv'
-            try:
-                import pandas as pd
-                df = pd.read_csv(url)
-                if not df.empty and 'Close' in df.columns:
-                    price = float(df['Close'].iloc[0])
-                    # Optionally save to DB for future use
-                    if price is not None and session:
-                        # Re-open session if needed
-                        if session.is_closed:
-                            session = _get_db_session()
-                        if session:
-                            try:
-                                asset = _get_or_create_asset(session, ticker_symbol)
-                                # Create a new price history entry for today
-                                from datetime import date
-                                today = date.today()
-                                existing = session.query(AssetPriceHistory).filter(
-                                    AssetPriceHistory.asset_id == asset.id,
-                                    AssetPriceHistory.date == today
-                                ).first()
-                                if not existing:
-                                    new_rec = AssetPriceHistory(
-                                        asset_id=asset.id,
-                                        date=today,
-                                        close=price,
-                                        open=price,
-                                        high=price,
-                                        low=price,
-                                        volume=0,
-                                        adjusted_close=price
-                                    )
-                                    session.add(new_rec)
-                                    session.commit()
-                            except Exception as e:
-                                session.rollback()
-                                print(f"Failed to save Stooq price to DB: {e}")
-                            finally:
-                                session.close()
-                    return price
-            except Exception:
-                pass
-        
-        # No price found
+        # In strict database mode, do NOT fallback to Stooq or YF
+        # Return None to indicate missing data
         return None
 
     # Non-database mode
@@ -919,32 +872,9 @@ def get_current_prices(tickers: List[str], active_tickers: Optional[List[str]] =
             if session:
                 session.close()
 
-    # In database mode, we should NOT fetch from external sources EXCEPT for NewConnect tickers via Stooq
+    # In database mode, we should NOT fetch from external sources
     if _DB_SESSION_FACTORY:
-        # For missing tickers, check if they are NewConnect and try Stooq
-        if tickers_to_fetch:
-            session = _get_db_session()
-            if session:
-                try:
-                    from backend.database import Ticker
-                    # Fetch exchanges for missing tickers
-                    res = session.query(Ticker.ticker, Ticker.exchange).filter(Ticker.ticker.in_(tickers_to_fetch)).all()
-                    exchange_map = {r[0]: r[1] for r in res}
-                    for t in tickers_to_fetch:
-                        if exchange_map.get(t) == 'NewConnect':
-                            clean_ticker = t.replace('.PL', '').replace('.WA', '').lower()
-                            url = f'https://stooq.pl/q/l/?s={clean_ticker}&f=sd2t2ohlcv&h&e=csv'
-                            try:
-                                df = pd.read_csv(url)
-                                if not df.empty and 'Close' in df.columns:
-                                    price = float(df['Close'].iloc[0])
-                                    results[t] = price
-                            except Exception:
-                                pass
-                except Exception as e:
-                    print(f"DB Exchange fetch error: {e}")
-                finally:
-                    session.close()
+        # No fallback to Stooq or YF - return only what we have in DB
         return results
     
     if not tickers_to_fetch:
@@ -1823,13 +1753,10 @@ def get_dividends_for_tickers(tickers, start_date, end_date):
     if not tickers:
         return {}
     
-    # In DB Mode, we probably don't have dividends in DB.
-    # So we continue to use YF or return empty?
-    # Returning empty avoids YF calls if we want to be "offline".
-    # But current request is "replace price fetching".
-    # If I leave it as is, it uses YF.
-    # Given the constraint, I'll let it use YF but maybe throttle/check if enabled?
-    # Let's leave it as is for now.
+    # In DB Mode, we should NOT fetch from external sources
+    if _DB_SESSION_FACTORY:
+        # No dividends in DB, return empty dict
+        return {}
     
     tickers = list(set(tickers))
 

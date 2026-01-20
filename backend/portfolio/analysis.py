@@ -213,6 +213,11 @@ def calculate_roi_over_time(session: Session, portfolio_id: int, excluded_ticker
     # Fetch historical prices
     historical_prices = get_historical_prices_for_tickers(tickers, start_date, end_date, session=session)
 
+    # Validate that we have data for all tickers (if any missing, raise error)
+    missing_tickers = [t for t in tickers if t not in historical_prices or not historical_prices[t]]
+    if missing_tickers:
+        raise ValueError(f"Brak danych historycznych w bazie dla tickerów: {missing_tickers}. Użyj przycisku 'Aktualizuj ceny'.")
+
     # Helper: Get value in PLN
     def get_tx_value_pln(t):
         if t.transaction_type == TransactionType.BUY:
@@ -588,6 +593,11 @@ def calculate_portfolio_overview(session: Session, portfolio_id: int, roi_series
         # Only fetch prices for tickers that are currently held (quantity > 0)
         active_tickers = list(holdings.keys())
         live_prices_map = get_current_prices(tickers, active_tickers=active_tickers)
+        
+        # Validate that we have prices for all active tickers
+        missing_prices = [t for t in active_tickers if t not in live_prices_map or live_prices_map[t] is None]
+        if missing_prices:
+            raise ValueError(f"Brak aktualnych cen w bazie dla tickerów: {missing_prices}. Użyj przycisku 'Aktualizuj ceny'.")
         
         # Fetch company names
         ticker_objs = session.query(Ticker.ticker, Ticker.company_name).filter(Ticker.ticker.in_(tickers)).all()
