@@ -237,6 +237,7 @@ _CRYPTO_MAP = {
     "ETHEREUM": "ETH-USD",
     "XAUUSD=X": "GC=F", # XAUUSD=X broken in yfinance, use Futures
     "XAUUSD": "GC=F",
+    "XAUPLN=X": "GC=F", # XAUPLN=X - złoto w PLN, ale używamy GC=F i konwertujemy
 }
 
 def _throttle_yf():
@@ -587,13 +588,33 @@ def _convert_df_to_pln(df: pd.DataFrame, ticker: str) -> pd.DataFrame:
     # Fetch FX
     fx_ticker = fx_symbol_to_pln(currency)
     if not fx_ticker:
+        print(f"⚠️  No FX ticker for currency {currency} (ticker: {ticker})")
         return df
         
     fx_series_map = _fetch_fx_series([currency], start_date, end_date)
     fx_series = fx_series_map.get(fx_ticker)
     
     if fx_series is None or fx_series.empty:
-        return df
+        # Fallback: try to get current FX rate
+        print(f"⚠️  No FX data for {fx_ticker} in range {start_date} - {end_date} (ticker: {ticker})")
+        
+        # Try to get current FX rate as fallback
+        try:
+            current_fx_rate = _fetch_fx_rate_from_db_or_yf(currency)
+            if current_fx_rate and current_fx_rate != 1.0:
+                print(f"✅ Using current FX rate {current_fx_rate:.4f} for {currency} -> PLN")
+                # Apply constant rate to all rows
+                cols = ['Open', 'High', 'Low', 'Close', 'Adj Close']
+                for col in cols:
+                    if col in df.columns:
+                        df[col] = df[col] * current_fx_rate
+                return df
+            else:
+                print(f"❌ No FX rate available for {currency}, returning unconverted data")
+                return df
+        except Exception as e:
+            print(f"❌ Error in FX fallback: {e}")
+            return df
         
     # Align
     if df.index.tz is not None:
@@ -603,12 +624,39 @@ def _convert_df_to_pln(df: pd.DataFrame, ticker: str) -> pd.DataFrame:
         
     aligned_fx = fx_series.reindex(df.index).ffill().bfill()
     
-    # Convert
+    # Ensure aligned_fx is a Series, not DataFrame
+    if isinstance(aligned_fx, pd.DataFrame):
+        # Take the first column if it's a DataFrame with one column
+        if len(aligned_fx.columns) == 1:
+            aligned_fx = aligned_fx.iloc[:, 0]
+        else:
+            print(f"❌ FX series is DataFrame with {len(aligned_fx.columns)} columns, expected 1")
+            return df
+    
+    # Check if we have any NaN values after alignment
+    if aligned_fx.isna().any():
+        print(f"⚠️  Some dates missing FX rates for {fx_ticker}, filling with last available rate")
+        aligned_fx = aligned_fx.ffill().bfill()
+    
+    # Convert - ensure we multiply by Series values, not DataFrame values
     cols = ['Open', 'High', 'Low', 'Close', 'Adj Close']
     for col in cols:
         if col in df.columns:
-            df[col] = df[col] * aligned_fx.values
+            # Use aligned_fx directly (Series) - pandas will handle alignment by index
+            # Ensure df[col] is a Series, not DataFrame
+            col_data = df[col]
+            if isinstance(col_data, pd.DataFrame):
+                # Take the first column if it's a DataFrame with one column
+                if len(col_data.columns) == 1:
+                    col_data = col_data.iloc[:, 0]
+                else:
+                    print(f"❌ Column {col} is DataFrame with {len(col_data.columns)} columns, expected 1")
+                    continue
             
+            # Multiply and assign back
+            df[col] = col_data * aligned_fx
+            
+    print(f"✅ Converted {ticker} ({currency}) to PLN using {fx_ticker}, {len(df)} rows")
     return df
 
 
