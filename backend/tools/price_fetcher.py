@@ -409,6 +409,26 @@ def get_currency_for_ticker(ticker_symbol: str) -> str:
     # Warsaw uses .WA (or legacy .PL mapped to .WA)
     if t.endswith(".PL") or t.endswith(".WA"):
         return "PLN"
+    
+    # For tickers without suffix, check database for exchange
+    if '.' not in t:
+        session = _get_caching_session()
+        if session:
+            try:
+                exchange = _get_exchange_for_ticker(session, t)
+                if exchange == 'GPW' or exchange == 'NewConnect':
+                    return "PLN"
+                elif exchange == 'US' or exchange == 'NYSE' or exchange == 'NASDAQ':
+                    return "USD"
+                elif exchange == 'XETRA' or exchange == 'DE':
+                    return "EUR"
+                elif exchange == 'LSE':
+                    return "GBP"
+            except Exception:
+                pass
+            finally:
+                session.close()
+    
     # Default: assume US USD when no suffix
     return "USD"
 

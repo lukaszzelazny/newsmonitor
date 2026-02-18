@@ -299,7 +299,7 @@ class PriceSyncService:
         return first_record.date if first_record else None
 
     def fetch_yahoo_data(self, ticker: str, start_date: Optional[datetime], end_date: datetime, suppress_errors: bool = False):
-        """Fetch price data from Yahoo Finance."""
+        """Fetch price data from Yahoo Finance with fallback to Stooq for Polish stocks."""
         yf_logger = logging.getLogger('yfinance')
         original_level = yf_logger.level
         
@@ -324,29 +324,68 @@ class PriceSyncService:
             delay = random.uniform(1.0, 3.0)
             time.sleep(delay)
 
-            # Create custom session
-            # session = create_yf_session()
+            # Try to use fetch_price_history_with_exchange from price_fetcher for better fallback logic
+            try:
+                from backend.tools.price_fetcher import fetch_price_history_with_exchange, _get_exchange_for_ticker
+                
+                # Check if this is a GPW or NewConnect stock that might need Stooq fallback
+                session = self.session
+                exchange = _get_exchange_for_ticker(session, ticker) if session else None
+                
+                if exchange in ['GPW', 'NewConnect']:
+                    # Calculate days needed
+                    days_needed = (end_date - start_date).days + 1
+                    if days_needed > 0:
+                        logger.info(f"Using fetch_price_history_with_exchange for {ticker} (exchange: {exchange})")
+                        df = fetch_price_history_with_exchange(ticker, days=min(days_needed, 365))
+                        
+                        if df is not None and not df.empty:
+                            # Filter to requested date range
+                            df = df[(df.index >= pd.Timestamp(start_date)) & (df.index <= pd.Timestamp(end_date))]
+                            if not df.empty:
+                                logger.info(f"✓ Retrieved {len(df)} records for {ticker} from Stooq")
+                                return df
+                            else:
+                                logger.info(f"No data in requested range for {ticker} from Stooq")
+                        else:
+                            logger.info(f"No data from fetch_price_history_with_exchange for {ticker}")
+            except Exception as e:
+                logger.info(f"Fallback fetch failed for {ticker}: {e}, trying yfinance...")
 
-            # Download data from Yahoo Finance with custom session
-            ticker_obj = yf.Ticker(yf_ticker) # , session=session)
-            df = ticker_obj.history(start=start_date, end=end_date)
+            # Fallback to original yfinance logic
+            try:
+                # Create custom session
+                # session = create_yf_session()
 
-            if df.empty:
-                msg = f"No data returned for {yf_ticker} - ticker may be delisted or invalid"
+                # Download data from Yahoo Finance with custom session
+                ticker_obj = yf.Ticker(yf_ticker) # , session=session)
+                df = ticker_obj.history(start=start_date, end=end_date)
+
+                if df.empty:
+                    msg = f"No data returned for {yf_ticker} - ticker may be delisted or invalid"
+                    if suppress_errors:
+                        logger.info(f"Note: {msg} (Expected for history gap fill)")
+                    else:
+                        logger.warning(msg)
+                    return None
+
+                logger.info(f"✓ Retrieved {len(df)} records for {yf_ticker}")
+                return df
+
+            except Exception as e:
                 if suppress_errors:
-                    logger.info(f"Note: {msg} (Expected for history gap fill)")
+                    logger.info(f"Could not fetch data for {ticker} (YF: {yf_ticker}): {str(e)}. This is likely because the asset did not exist yet.")
                 else:
-                    logger.warning(msg)
+                    logger.error(f"Error fetching data for {ticker} (YF: {yf_ticker}): {str(e)}")
+                    # Add longer delay after error
+                    time.sleep(5)
                 return None
-
-            logger.info(f"✓ Retrieved {len(df)} records for {yf_ticker}")
-            return df
-
+                
         except Exception as e:
             if suppress_errors:
-                logger.info(f"Could not fetch data for {ticker} (YF: {yf_ticker}): {str(e)}. This is likely because the asset did not exist yet.")
+                logger.info(f"Could not fetch data for {ticker}: {str(e)}. This is likely because the asset did not exist yet.")
             else:
-                logger.error(f"Error fetching data for {ticker} (YF: {yf_ticker}): {str(e)}")
+                logger.error(f"Error fetching data for {ticker}: {str(e)}")
                 # Add longer delay after error
                 time.sleep(5)
             return None

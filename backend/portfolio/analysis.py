@@ -492,6 +492,10 @@ def calculate_portfolio_overview(session: Session, portfolio_id: int, roi_series
             if t.purchase_value_pln is not None:
                 return float(t.purchase_value_pln)
             return float(t.quantity)
+        elif t.transaction_type == TransactionType.DIVIDEND:
+            if t.sale_value_pln is not None:
+                return float(t.sale_value_pln)
+            return float(t.price) if t.price else 0.0
         return 0.0
 
     # Calculate Cash Balance
@@ -506,9 +510,7 @@ def calculate_portfolio_overview(session: Session, portfolio_id: int, roi_series
         elif t.transaction_type == TransactionType.SELL:
             cash_balance += val
         elif t.transaction_type == TransactionType.DIVIDEND:
-            val_div = val
-            if val_div == 0 and t.price: val_div = float(t.price) # Fallback
-            cash_balance += val_div
+            cash_balance += val
         elif t.transaction_type == TransactionType.DEPOSIT:
             cash_balance += val
         elif t.transaction_type == TransactionType.WITHDRAWAL:
