@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 
-export default function AddTransactionModal({ isOpen, onClose, onAdded, holdings = [] }) {
+export default function AddTransactionModal({ isOpen, onClose, onAdded, holdings = [], portfolioId = null }) {
     const [isManualTicker, setIsManualTicker] = useState(false);
 
     const [formData, setFormData] = useState({
@@ -88,7 +88,8 @@ export default function AddTransactionModal({ isOpen, onClose, onAdded, holdings
                 ticker: tickerToSend,
                 quantity: qty,
                 price: price,
-                currency: currencyToSend
+                currency: currencyToSend,
+                ...(portfolioId ? { portfolio_id: portfolioId } : {})
             };
 
             const res = await fetch('/api/portfolio/transaction', {

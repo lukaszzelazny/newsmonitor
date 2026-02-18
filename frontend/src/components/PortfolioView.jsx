@@ -29,6 +29,64 @@ export default function PortfolioView({ days, onTickerSelect }) {
 
     const fmt = (n, digits = 2) => (n === null || n === undefined ? '-' : Number(n).toFixed(digits));
 
+    // Multi-portfolio state
+    const [portfolios, setPortfolios] = useState([]);
+    const [selectedPortfolio, setSelectedPortfolio] = useState(null); // full portfolio object
+    const [showNewPortfolioForm, setShowNewPortfolioForm] = useState(false);
+    const [newPortfolioName, setNewPortfolioName] = useState('');
+    const [newPortfolioBroker, setNewPortfolioBroker] = useState('');
+    const [creatingPortfolio, setCreatingPortfolio] = useState(false);
+
+    // Load portfolios on mount
+    useEffect(() => {
+        const loadPortfolios = async () => {
+            try {
+                const res = await fetch('/api/portfolios');
+                const data = await res.json();
+                if (Array.isArray(data) && data.length > 0) {
+                    setPortfolios(data);
+                    // Restore last selected portfolio from localStorage
+                    const saved = localStorage.getItem('selectedPortfolioName');
+                    const match = data.find(p => p.name === saved);
+                    setSelectedPortfolio(match || data[0]);
+                }
+            } catch (e) {
+                console.error('Failed to load portfolios:', e);
+            }
+        };
+        loadPortfolios();
+    }, []);
+
+    const handleSelectPortfolio = (portfolio) => {
+        setSelectedPortfolio(portfolio);
+        localStorage.setItem('selectedPortfolioName', portfolio.name);
+    };
+
+    const handleCreatePortfolio = async (e) => {
+        e.preventDefault();
+        if (!newPortfolioName.trim()) return;
+        setCreatingPortfolio(true);
+        try {
+            const res = await fetch('/api/portfolios', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ name: newPortfolioName.trim(), broker: newPortfolioBroker.trim() })
+            });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error || 'Błąd tworzenia portfela');
+            setPortfolios(prev => [...prev, data]);
+            setSelectedPortfolio(data);
+            localStorage.setItem('selectedPortfolioName', data.name);
+            setShowNewPortfolioForm(false);
+            setNewPortfolioName('');
+            setNewPortfolioBroker('');
+        } catch (err) {
+            alert(err.message);
+        } finally {
+            setCreatingPortfolio(false);
+        }
+    };
+
     // Load config on mount
     useEffect(() => {
         const loadConfig = async () => {
@@ -66,19 +124,23 @@ export default function PortfolioView({ days, onTickerSelect }) {
 
     const fetchData = useCallback(async () => {
         if (!configLoaded) return;
+        if (!selectedPortfolio) return;
 
         setLoading(true);
         setError(null);
         try {
             const excludedStr = Array.from(excludedTickers).join(',');
-            const query = excludedStr ? `?excluded_tickers=${excludedStr}` : '';
+            const nameParam = `name=${encodeURIComponent(selectedPortfolio.name)}`;
+            const query = excludedStr
+                ? `?${nameParam}&excluded_tickers=${excludedStr}`
+                : `?${nameParam}`;
 
             const [ovrRes, roiRes, monthlyRes, histRes, txRes] = await Promise.all([
                 fetch(`/api/portfolio/overview${query}`),
                 fetch(`/api/portfolio/roi${query}`),
                 fetch(`/api/portfolio/monthly_profit${query}`),
-                fetch('/api/portfolio/all_assets_summary'),
-                fetch('/api/portfolio/transactions')
+                fetch(`/api/portfolio/all_assets_summary?${nameParam}`),
+                fetch(`/api/portfolio/transactions?${nameParam}`)
             ]);
             const ovr = await ovrRes.json();
             const roi = await roiRes.json();
@@ -99,7 +161,7 @@ export default function PortfolioView({ days, onTickerSelect }) {
         } finally {
             setLoading(false);
         }
-    }, [excludedTickers, configLoaded]);
+    }, [excludedTickers, configLoaded, selectedPortfolio]);
 
     useEffect(() => {
         fetchData();
@@ -163,14 +225,13 @@ export default function PortfolioView({ days, onTickerSelect }) {
     const handleUpdatePrices = async () => {
         setLoading(true);
         try {
+            const body = selectedPortfolio ? { name: selectedPortfolio.name } : {};
             const res = await fetch('/api/portfolio/update_prices', { 
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({}) 
+                body: JSON.stringify(body)
             });
             if (!res.ok) throw new Error('Update failed');
-            const data = await res.json();
-            // alert(data.message); // Opcjonalne powiadomienie
             fetchData();
         } catch (e) {
             console.error('Error updating prices:', e);
@@ -429,10 +490,84 @@ export default function PortfolioView({ days, onTickerSelect }) {
                 onClose={() => setIsAddModalOpen(false)} 
                 onAdded={fetchData}
                 holdings={overview?.assets || []}
+                portfolioId={selectedPortfolio?.id || null}
             />
+
+            {/* Portfolio Switcher */}
+            <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-3">
+                <div className="flex flex-wrap items-center gap-2">
+                    <span className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mr-1">Portfel:</span>
+                    {portfolios.map(p => (
+                        <button
+                            key={p.id}
+                            onClick={() => handleSelectPortfolio(p)}
+                            className={`px-3 py-1.5 rounded-full text-sm font-medium transition-colors ${
+                                selectedPortfolio?.id === p.id
+                                    ? 'bg-blue-600 text-white shadow'
+                                    : 'bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600'
+                            }`}
+                            title={p.broker ? `Broker: ${p.broker}` : p.name}
+                        >
+                            {p.name}
+                            <span className="ml-1.5 text-xs opacity-70">({p.transaction_count})</span>
+                        </button>
+                    ))}
+                    <button
+                        onClick={() => setShowNewPortfolioForm(v => !v)}
+                        className="px-3 py-1.5 rounded-full text-sm font-medium bg-gray-100 dark:bg-gray-700 text-gray-500 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors"
+                        title="Utwórz nowy portfel"
+                    >
+                        + Nowy
+                    </button>
+                </div>
+                {showNewPortfolioForm && (
+                    <form onSubmit={handleCreatePortfolio} className="mt-3 flex flex-wrap gap-2 items-end border-t border-gray-200 dark:border-gray-700 pt-3">
+                        <div>
+                            <label className="block text-xs text-gray-500 dark:text-gray-400 mb-1">Nazwa portfela *</label>
+                            <input
+                                type="text"
+                                value={newPortfolioName}
+                                onChange={e => setNewPortfolioName(e.target.value)}
+                                placeholder="np. Złoto fizyczne"
+                                className="px-3 py-1.5 border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white rounded text-sm focus:outline-none focus:ring-1 focus:ring-blue-500"
+                                required
+                            />
+                        </div>
+                        <div>
+                            <label className="block text-xs text-gray-500 dark:text-gray-400 mb-1">Broker (opcjonalnie)</label>
+                            <input
+                                type="text"
+                                value={newPortfolioBroker}
+                                onChange={e => setNewPortfolioBroker(e.target.value)}
+                                placeholder="np. Mennica"
+                                className="px-3 py-1.5 border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white rounded text-sm focus:outline-none focus:ring-1 focus:ring-blue-500"
+                            />
+                        </div>
+                        <button
+                            type="submit"
+                            disabled={creatingPortfolio}
+                            className="px-4 py-1.5 bg-blue-600 text-white rounded text-sm hover:bg-blue-700 disabled:opacity-50 transition-colors"
+                        >
+                            {creatingPortfolio ? 'Tworzenie...' : 'Utwórz'}
+                        </button>
+                        <button
+                            type="button"
+                            onClick={() => setShowNewPortfolioForm(false)}
+                            className="px-3 py-1.5 bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded text-sm hover:bg-gray-300 dark:hover:bg-gray-600 transition-colors"
+                        >
+                            Anuluj
+                        </button>
+                    </form>
+                )}
+            </div>
             
             <div className="flex justify-between items-center">
-                <h2 className="text-xl font-bold text-gray-800 dark:text-white">Moje Portfolio</h2>
+                <h2 className="text-xl font-bold text-gray-800 dark:text-white">
+                    {selectedPortfolio ? selectedPortfolio.name : 'Moje Portfolio'}
+                    {selectedPortfolio?.broker && (
+                        <span className="ml-2 text-sm font-normal text-gray-500 dark:text-gray-400">({selectedPortfolio.broker})</span>
+                    )}
+                </h2>
                 <div className="flex gap-2">
                     <button 
                         onClick={handleUpdatePrices}

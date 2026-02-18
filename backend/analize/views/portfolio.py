@@ -48,6 +48,73 @@ def get_config():
     })
 
 
+@portfolio_bp.route('/api/portfolios', methods=['GET'])
+def list_portfolios():
+    """
+    Zwraca listę wszystkich portfeli.
+    """
+    db = Database()
+    session = db.Session()
+    try:
+        portfolios = session.query(Portfolio).order_by(Portfolio.id).all()
+        result = []
+        for p in portfolios:
+            tx_count = session.query(Transaction).filter_by(portfolio_id=p.id).count()
+            result.append({
+                'id': p.id,
+                'name': p.name,
+                'broker': p.broker,
+                'description': p.description,
+                'transaction_count': tx_count,
+            })
+        return jsonify(result)
+    except Exception as e:
+        print(f"Error in /api/portfolios: {e}")
+        return jsonify({'error': str(e)}), 500
+    finally:
+        session.close()
+
+
+@portfolio_bp.route('/api/portfolios', methods=['POST'])
+def create_portfolio():
+    """
+    Tworzy nowy portfel.
+    Payload: { 'name': str, 'broker': str (opcjonalne), 'description': str (opcjonalne) }
+    """
+    db = Database()
+    session = db.Session()
+    try:
+        data = request.json or {}
+        name = data.get('name', '').strip()
+        if not name:
+            return jsonify({'error': 'Nazwa portfela jest wymagana'}), 400
+
+        existing = session.query(Portfolio).filter_by(name=name).first()
+        if existing:
+            return jsonify({'error': f'Portfel o nazwie "{name}" już istnieje'}), 409
+
+        portfolio = Portfolio(
+            name=name,
+            broker=data.get('broker', '').strip() or None,
+            description=data.get('description', '').strip() or None,
+        )
+        session.add(portfolio)
+        session.commit()
+        return jsonify({
+            'id': portfolio.id,
+            'name': portfolio.name,
+            'broker': portfolio.broker,
+            'description': portfolio.description,
+            'transaction_count': 0,
+        }), 201
+    except Exception as e:
+        session.rollback()
+        print(f"Error in POST /api/portfolios: {e}")
+        return jsonify({'error': str(e)}), 500
+    finally:
+        session.close()
+
+
 @portfolio_bp.route('/api/portfolio/overview')
 def portfolio_overview():
     """
@@ -229,27 +296,36 @@ def portfolio_transactions():
     """
     Zwraca listę transakcji.
     Parametry:
+      - name: (opcjonalny) nazwa portfela
       - ticker: (opcjonalny) symbol tickera
     """
     ticker = request.args.get('ticker', default=None, type=str)
-    
+    name = request.args.get('name', default=None, type=str)
+
     db = Database()
     session = db.Session()
     try:
         rows = []
         if ticker:
-            # --- ZMODYFIKOWANA LOGIKA FILTROWANIA ---
             base_pl = f'{ticker}.PL'
             base_us = f'{ticker}.US'
             filter_conditions = (Asset.ticker == ticker) | (Asset.ticker == base_pl) | (Asset.ticker == base_us)
-
-            # Stosujemy zdefiniowany warunek filtrowania
-            rows = session.query(Transaction).join(Asset).filter(
-                filter_conditions).order_by(Transaction.transaction_date.desc()).all()
-            # --- KONIEC ZMODYFIKOWANEJ LOGIKI FILTROWANIA ---
+            query = session.query(Transaction).join(Asset).filter(filter_conditions)
+            if name:
+                portfolio = _get_portfolio(session, name)
+                if portfolio:
+                    query = query.filter(Transaction.portfolio_id == portfolio.id)
+            rows = query.order_by(Transaction.transaction_date.desc()).all()
         else:
-            # Return latest 200 transactions if no ticker specified
-            rows = session.query(Transaction).order_by(Transaction.transaction_date.desc(), Transaction.id.desc()).limit(200).all()
+            portfolio = _get_portfolio(session, name)
+            if portfolio:
+                rows = session.query(Transaction).filter_by(
+                    portfolio_id=portfolio.id
+                ).order_by(Transaction.transaction_date.desc(), Transaction.id.desc()).limit(200).all()
+            else:
+                rows = session.query(Transaction).order_by(
+                    Transaction.transaction_date.desc(), Transaction.id.desc()
+                ).limit(200).all()
 
         result = []
         for t in rows:
@@ -264,7 +340,6 @@ def portfolio_transactions():
                 'transaction_date': t.transaction_date.strftime('%Y-%m-%d') if hasattr(
                     t.transaction_date, 'strftime') else str(t.transaction_date),
             })
-        # Clean NaN values before returning JSON (though unlikely in transactions, we do it for consistency)
         return jsonify(clean_nan_in_data(result))
     except Exception as e:
         print(f"Error in /api/portfolio/transactions: {e}")
