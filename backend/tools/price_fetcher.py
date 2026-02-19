@@ -680,7 +680,7 @@ def _convert_df_to_pln(df: pd.DataFrame, ticker: str) -> pd.DataFrame:
     return df
 
 
-@lru_cache(maxsize=1000)
+# @lru_cache(maxsize=1000) - REMOVED to avoid stale prices
 def get_current_price(ticker_symbol: str):
     """Fetches the current price of a ticker, converted to PLN."""
     
@@ -712,29 +712,44 @@ def get_current_price(ticker_symbol: str):
         return None
 
     # Non-database mode
+    
+    # Check simple in-memory cache first (TTL-based)
+    now_ts = time.time()
+    if ticker_symbol in _QUOTE_CACHE:
+        val, ts = _QUOTE_CACHE[ticker_symbol]
+        if now_ts - ts < _QUOTE_TTL_SECONDS:
+            return val
+            
     # Determine exchange to decide source
     exchange = None
-    session = _get_caching_session()
+    session = _get_caching_session() or _get_db_session()
     if session:
         try:
             exchange = _get_exchange_for_ticker(session, ticker_symbol)
         except Exception:
             pass
         finally:
-            session.close()
+            if not _DB_SESSION_FACTORY:
+                session.close()
+    
+    price_found = None
     
     # If exchange is NewConnect, use Stooq directly
     if exchange == 'NewConnect':
         clean_ticker = ticker_symbol.replace('.PL', '').replace('.WA', '').lower()
-        url = f'https://stooq.pl/q/l/?s={clean_ticker}&f=sd2t2ohlcv&h&e=csv'
+        # Add random param to avoid caching
+        url = f'https://stooq.pl/q/l/?s={clean_ticker}&f=sd2t2ohlcv&h&e=csv&r={int(time.time())}'
         try:
             import pandas as pd
             df = pd.read_csv(url)
             if not df.empty and 'Close' in df.columns:
-                price = float(df['Close'].iloc[0])
-                return price
+                price_found = float(df['Close'].iloc[0])
         except Exception:
             pass  # fallback to YF/Stooq logic below
+    
+    if price_found is not None:
+        _QUOTE_CACHE[ticker_symbol] = (price_found, now_ts)
+        return price_found
     
     # If exchange is GPW, try YF first, then Stooq
     if exchange == 'GPW':
@@ -761,16 +776,22 @@ def get_current_price(ticker_symbol: str):
                             price = float(price) * float(fx_price)
                     except Exception:
                         pass
-            return float(price)
+            
+            val_to_cache = float(price)
+            _QUOTE_CACHE[ticker_symbol] = (val_to_cache, now_ts)
+            return val_to_cache
+            
         # YF failed, try Stooq
         clean_ticker = ticker_symbol.replace('.PL', '').replace('.WA', '').lower()
-        url = f'https://stooq.pl/q/l/?s={clean_ticker}&f=sd2t2ohlcv&h&e=csv'
+        url = f'https://stooq.pl/q/l/?s={clean_ticker}&f=sd2t2ohlcv&h&e=csv&r={int(time.time())}'
         try:
             import pandas as pd
             df = pd.read_csv(url)
             if not df.empty and 'Close' in df.columns:
-                price = float(df['Close'].iloc[0])
-                return price
+                price_found = float(df['Close'].iloc[0])
+                if price_found is not None:
+                    _QUOTE_CACHE[ticker_symbol] = (price_found, now_ts)
+                    return price_found
         except Exception:
             pass
         # Both failed, return None
@@ -798,6 +819,8 @@ def get_current_price(ticker_symbol: str):
     if price is None:
         return None
 
+    val_to_return = float(price)
+
     # Convert to PLN if needed (FX via quote API only; avoid yfinance history endpoints)
     if currency != "PLN":
         fx_ticker = fx_symbol_to_pln(currency)
@@ -806,11 +829,12 @@ def get_current_price(ticker_symbol: str):
                 api_fx = _fetch_quotes_batch_via_api([fx_ticker])
                 fx_price = api_fx.get(fx_ticker)
                 if fx_price:
-                    return float(price) * float(fx_price)
+                    val_to_return = float(price) * float(fx_price)
             except Exception:
                 pass
-                
-    return float(price)
+    
+    _QUOTE_CACHE[ticker_symbol] = (val_to_return, now_ts)
+    return val_to_return
 
 
 def _fetch_quotes_batch_via_api(yf_symbols: List[str]) -> Dict[str, float]:
@@ -1105,6 +1129,13 @@ def _normalize_stooq_columns(df: pd.DataFrame) -> pd.DataFrame:
     return df.rename(columns=_STOOQ_COL_MAP)
 
 
+def _extract_scalar(val):
+    """Helper to extract scalar from single-element Series/DataFrame to avoid FutureWarning."""
+    if hasattr(val, 'iloc'):
+        return val.iloc[0]
+    return val
+
+
 def get_price_history_from_stooq(ticker_symbol: str, days: int = 90):
     """Fetch price history from Stooq for Polish stocks (removes .WA and .PL suffixes)."""
     # Stooq uses lowercase usually, and no .WA or .PL suffix
@@ -1128,12 +1159,12 @@ def get_price_history_from_stooq(ticker_symbol: str, days: int = 90):
             try:
                 price_data.append({
                     "date": row["Date"].strftime("%Y-%m-%d"),
-                    "price": float(row["Close"]),
-                    "open": float(row["Open"]),
-                    "high": float(row["High"]),
-                    "low": float(row["Low"]),
-                    "close": float(row["Close"]),
-                    "volume": int(row["Volume"])
+                    "price": float(_extract_scalar(row["Close"])),
+                    "open": float(_extract_scalar(row["Open"])),
+                    "high": float(_extract_scalar(row["High"])),
+                    "low": float(_extract_scalar(row["Low"])),
+                    "close": float(_extract_scalar(row["Close"])),
+                    "volume": int(_extract_scalar(row["Volume"]))
                 })
             except (ValueError, TypeError):
                 continue
@@ -1152,19 +1183,21 @@ def fetch_price_history_with_exchange(ticker: str, days: int = 7) -> pd.DataFram
     """
     # Determine exchange
     exchange = None
-    session = _get_caching_session()
+    session = _get_caching_session() or _get_db_session()
     if session:
         try:
             exchange = _get_exchange_for_ticker(session, ticker)
         except Exception:
             pass
         finally:
-            session.close()
+            if not _DB_SESSION_FACTORY:
+                session.close()
     
     # If exchange is NewConnect, use Stooq directly (YF has delayed data for NewConnect)
     if exchange == 'NewConnect':
         clean_ticker = ticker.replace('.PL', '').replace('.WA', '').lower()
-        url = f"https://stooq.pl/q/d/l/?s={clean_ticker}&i=d"
+        # Add random param to bypass caching
+        url = f"https://stooq.pl/q/d/l/?s={clean_ticker}&i=d&r={int(time.time())}"
         print(f"Fetching Stooq history for NewConnect ticker {ticker} -> {clean_ticker}")
         try:
             df = pd.read_csv(url)
@@ -1272,14 +1305,14 @@ def get_price_history(ticker_symbol: str, days: int = 90):
     
     # First, try to determine exchange to use appropriate source
     exchange = None
-    session = _get_caching_session()
+    session = _get_caching_session() or _get_db_session()
     if session:
         try:
             exchange = _get_exchange_for_ticker(session, ticker_symbol)
         except Exception:
             pass
         finally:
-            if session:
+            if not _DB_SESSION_FACTORY and session:
                 session.close()
     
     # If exchange is NewConnect, use fetch_price_history_with_exchange which uses Stooq
@@ -1290,12 +1323,12 @@ def get_price_history(ticker_symbol: str, days: int = 90):
             for date_idx, row in df.iterrows():
                 price_data.append({
                     "date": date_idx.strftime("%Y-%m-%d"),
-                    "price": float(row['Close']),
-                    "open": float(row['Open']) if 'Open' in row else float(row['Close']),
-                    "high": float(row['High']) if 'High' in row else float(row['Close']),
-                    "low": float(row['Low']) if 'Low' in row else float(row['Close']),
-                    "close": float(row['Close']),
-                    "volume": int(row['Volume']) if 'Volume' in row else 0
+                    "price": float(_extract_scalar(row['Close'])),
+                    "open": float(_extract_scalar(row['Open'])) if 'Open' in row else float(_extract_scalar(row['Close'])),
+                    "high": float(_extract_scalar(row['High'])) if 'High' in row else float(_extract_scalar(row['Close'])),
+                    "low": float(_extract_scalar(row['Low'])) if 'Low' in row else float(_extract_scalar(row['Close'])),
+                    "close": float(_extract_scalar(row['Close'])),
+                    "volume": int(_extract_scalar(row['Volume'])) if 'Volume' in row else 0
                 })
             return price_data
     
@@ -1311,12 +1344,12 @@ def get_price_history(ticker_symbol: str, days: int = 90):
                 for date_idx, row in df.iterrows():
                     price_data.append({
                         "date": date_idx.strftime("%Y-%m-%d"),
-                        "price": float(row['Close']),
-                        "open": float(row['Open']) if 'Open' in row else float(row['Close']),
-                        "high": float(row['High']) if 'High' in row else float(row['Close']),
-                        "low": float(row['Low']) if 'Low' in row else float(row['Close']),
-                        "close": float(row['Close']),
-                        "volume": int(row['Volume']) if 'Volume' in row else 0
+                        "price": float(_extract_scalar(row['Close'])),
+                        "open": float(_extract_scalar(row['Open'])) if 'Open' in row else float(_extract_scalar(row['Close'])),
+                        "high": float(_extract_scalar(row['High'])) if 'High' in row else float(_extract_scalar(row['Close'])),
+                        "low": float(_extract_scalar(row['Low'])) if 'Low' in row else float(_extract_scalar(row['Close'])),
+                        "close": float(_extract_scalar(row['Close'])),
+                        "volume": int(_extract_scalar(row['Volume'])) if 'Volume' in row else 0
                     })
                 return price_data
         except Exception:
