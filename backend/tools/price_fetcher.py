@@ -1031,7 +1031,8 @@ def get_current_prices(tickers: List[str], active_tickers: Optional[List[str]] =
         pass
     
     # If API batch missed many, use yf.download for missing
-    missing_symbols = [yf_symbols_map[t] for t in tickers_to_fetch if t not in raw_prices]
+    # Only include tickers that are in yf_symbols_map (Stooq tickers are NOT in yf_symbols_map)
+    missing_symbols = [yf_symbols_map[t] for t in tickers_to_fetch if t not in raw_prices and t in yf_symbols_map]
     missing_symbols = list(set(missing_symbols))
     
     if missing_symbols:
@@ -1089,6 +1090,21 @@ def get_current_prices(tickers: List[str], active_tickers: Optional[List[str]] =
     return results
 
 
+# Stooq history endpoint returns Polish column names - map them to English
+_STOOQ_COL_MAP = {
+    'Data': 'Date',
+    'Otwarcie': 'Open',
+    'Najwyzszy': 'High',
+    'Najnizszy': 'Low',
+    'Zamkniecie': 'Close',
+    'Wolumen': 'Volume',
+}
+
+def _normalize_stooq_columns(df: pd.DataFrame) -> pd.DataFrame:
+    """Rename Polish Stooq column names to English equivalents."""
+    return df.rename(columns=_STOOQ_COL_MAP)
+
+
 def get_price_history_from_stooq(ticker_symbol: str, days: int = 90):
     """Fetch price history from Stooq for Polish stocks (removes .WA and .PL suffixes)."""
     # Stooq uses lowercase usually, and no .WA or .PL suffix
@@ -1098,6 +1114,7 @@ def get_price_history_from_stooq(ticker_symbol: str, days: int = 90):
     try:
         # Use pandas to read CSV directly
         df = pd.read_csv(url)
+        df = _normalize_stooq_columns(df)
         
         if df.empty or "Date" not in df.columns:
             return []
@@ -1144,31 +1161,14 @@ def fetch_price_history_with_exchange(ticker: str, days: int = 7) -> pd.DataFram
         finally:
             session.close()
     
-    # If exchange is NewConnect, try YF first (since YF has .WA data), then Stooq
+    # If exchange is NewConnect, use Stooq directly (YF has delayed data for NewConnect)
     if exchange == 'NewConnect':
-        yf_symbol = get_yf_symbol(ticker)
-        print(f"Fetching YF history for NewConnect ticker {ticker} -> {yf_symbol}")
-        try:
-            _throttle_yf()
-            df = yf.download(yf_symbol, period=f"{days}d", progress=False, threads=False, auto_adjust=True)
-            if df is not None and not df.empty:
-                # Convert to PLN
-                df = _convert_df_to_pln(df, ticker)
-                print(f"YF success for {yf_symbol}, rows: {len(df)}")
-                # Flatten MultiIndex columns if present (single ticker case)
-                if isinstance(df.columns, pd.MultiIndex):
-                    # Keep only the first level (Price) or combine
-                    df.columns = df.columns.get_level_values(0)
-                return df
-        except Exception as e:
-            print(f"YF failed for {ticker} ({yf_symbol}): {e}")
-        
-        # YF failed, try Stooq
         clean_ticker = ticker.replace('.PL', '').replace('.WA', '').lower()
         url = f"https://stooq.pl/q/d/l/?s={clean_ticker}&i=d"
         print(f"Fetching Stooq history for NewConnect ticker {ticker} -> {clean_ticker}")
         try:
             df = pd.read_csv(url)
+            df = _normalize_stooq_columns(df)
             if df.empty or "Date" not in df.columns:
                 print(f"Stooq returned empty data for {clean_ticker}")
                 return pd.DataFrame()
@@ -1229,6 +1229,7 @@ def fetch_price_history_with_exchange(ticker: str, days: int = 7) -> pd.DataFram
         print(f"Trying Stooq for GPW ticker {ticker} -> {clean_ticker}")
         try:
             df = pd.read_csv(url)
+            df = _normalize_stooq_columns(df)
             if df.empty or "Date" not in df.columns:
                 print(f"Stooq returned empty data for {clean_ticker}")
                 return pd.DataFrame()

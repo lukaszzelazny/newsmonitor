@@ -203,7 +203,7 @@ def calculate_roi_over_time(session: Session, portfolio_id: int, excluded_ticker
     tickers = []
     for asset_id in asset_ids:
         ticker = session.query(Asset.ticker).filter_by(id=asset_id[0]).scalar()
-        if ticker and ticker != 'PLN':
+        if ticker and ticker != 'PLN' and ticker not in excluded_tickers:
             tickers.append(ticker)
 
     if not tickers:
@@ -213,10 +213,12 @@ def calculate_roi_over_time(session: Session, portfolio_id: int, excluded_ticker
     # Fetch historical prices
     historical_prices = get_historical_prices_for_tickers(tickers, start_date, end_date, session=session)
 
-    # Validate that we have data for all tickers (if any missing, raise error)
+    # Warn about missing tickers but don't crash – just skip them
     missing_tickers = [t for t in tickers if t not in historical_prices or not historical_prices[t]]
     if missing_tickers:
-        raise ValueError(f"Brak danych historycznych w bazie dla tickerów: {missing_tickers}. Użyj przycisku 'Aktualizuj ceny'.")
+        print(f"Warning: Brak danych historycznych dla tickerów: {missing_tickers}. Zostaną pominięte w obliczeniach ROI.")
+        # Remove missing tickers from the active list so they are treated as zero-value
+        tickers = [t for t in tickers if t not in missing_tickers]
 
     # Helper: Get value in PLN
     def get_tx_value_pln(t):
@@ -596,10 +598,13 @@ def calculate_portfolio_overview(session: Session, portfolio_id: int, roi_series
         active_tickers = list(holdings.keys())
         live_prices_map = get_current_prices(tickers, active_tickers=active_tickers)
         
-        # Validate that we have prices for all active tickers
+        # Warn about missing prices but don't crash – skip those tickers
         missing_prices = [t for t in active_tickers if t not in live_prices_map or live_prices_map[t] is None]
         if missing_prices:
-            raise ValueError(f"Brak aktualnych cen w bazie dla tickerów: {missing_prices}. Użyj przycisku 'Aktualizuj ceny'.")
+            print(f"Warning: Brak aktualnych cen dla tickerów: {missing_prices}. Zostaną pominięte w overview.")
+            # Remove from holdings so they don't appear in assets list
+            for t in missing_prices:
+                holdings.pop(t, None)
         
         # Fetch company names
         ticker_objs = session.query(Ticker.ticker, Ticker.company_name).filter(Ticker.ticker.in_(tickers)).all()
@@ -792,13 +797,16 @@ def calculate_portfolio_overview(session: Session, portfolio_id: int, roi_series
     }
 
 
-def calculate_portfolio_value_over_time(session: Session, portfolio_id: int):
+def calculate_portfolio_value_over_time(session: Session, portfolio_id: int, excluded_tickers=None):
     """
     Oblicza historyczną wartość portfela w czasie.
     """
-    transactions = session.query(Transaction).filter_by(
+    if excluded_tickers is None:
+        excluded_tickers = set()
+    all_transactions = session.query(Transaction).filter_by(
         portfolio_id=portfolio_id
     ).order_by(Transaction.transaction_date).all()
+    transactions = [t for t in all_transactions if t.asset.ticker not in excluded_tickers]
 
     if not transactions:
         return []
@@ -811,8 +819,8 @@ def calculate_portfolio_value_over_time(session: Session, portfolio_id: int):
     ).distinct().all()
     tickers = [session.query(Asset.ticker).filter_by(id=asset_id[0]).scalar() for asset_id in asset_ids if session.query(Asset.ticker).filter_by(id=asset_id[0]).scalar()]
     
-    # Filter out PLN from price fetching
-    tickers = [t for t in tickers if t != 'PLN']
+    # Filter out PLN and excluded tickers from price fetching
+    tickers = [t for t in tickers if t != 'PLN' and t not in excluded_tickers]
 
     try:
         currency_by_ticker = {t: get_currency_for_ticker(t) for t in tickers}

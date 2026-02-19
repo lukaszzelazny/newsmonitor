@@ -333,15 +333,17 @@ class PriceSyncService:
                 exchange = _get_exchange_for_ticker(session, ticker) if session else None
                 
                 if exchange in ['GPW', 'NewConnect']:
-                    # Calculate days needed
-                    days_needed = (end_date - start_date).days + 1
+                    # Calculate days needed - normalize both to date to avoid datetime/date mismatch
+                    end_date_d = end_date.date() if isinstance(end_date, datetime) else end_date
+                    start_date_d = start_date.date() if isinstance(start_date, datetime) else start_date
+                    days_needed = (end_date_d - start_date_d).days + 1
                     if days_needed > 0:
                         logger.info(f"Using fetch_price_history_with_exchange for {ticker} (exchange: {exchange})")
                         df = fetch_price_history_with_exchange(ticker, days=min(days_needed, 365))
                         
                         if df is not None and not df.empty:
                             # Filter to requested date range
-                            df = df[(df.index >= pd.Timestamp(start_date)) & (df.index <= pd.Timestamp(end_date))]
+                            df = df[(df.index >= pd.Timestamp(start_date_d)) & (df.index <= pd.Timestamp(end_date_d))]
                             if not df.empty:
                                 logger.info(f"✓ Retrieved {len(df)} records for {ticker} from Stooq")
                                 return df
@@ -349,6 +351,11 @@ class PriceSyncService:
                                 logger.info(f"No data in requested range for {ticker} from Stooq")
                         else:
                             logger.info(f"No data from fetch_price_history_with_exchange for {ticker}")
+                        
+                        # For NewConnect, do NOT fall through to YF (YF has no data for NewConnect)
+                        if exchange == 'NewConnect':
+                            logger.warning(f"Stooq returned no data for NewConnect ticker {ticker}, skipping YF")
+                            return None
             except Exception as e:
                 logger.info(f"Fallback fetch failed for {ticker}: {e}, trying yfinance...")
 
