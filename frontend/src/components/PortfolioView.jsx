@@ -13,6 +13,10 @@ export default function PortfolioView({ days, onTickerSelect }) {
     const [excludedTickers, setExcludedTickers] = useState(new Set());
     const [fullRoiSeries, setFullRoiSeries] = useState([]);
     const [roiSeries, setRoiSeries] = useState([]);
+    const [fullPortfolioValueSeries, setFullPortfolioValueSeries] = useState([]);
+    const [portfolioValueSeries, setPortfolioValueSeries] = useState([]);
+    const [fullDepositSeries, setFullDepositSeries] = useState([]);
+    const [depositSeries, setDepositSeries] = useState([]);
     const [monthlyProfits, setMonthlyProfits] = useState([]);
     const [historicalAssets, setHistoricalAssets] = useState([]);
     const [transactions, setTransactions] = useState([]);
@@ -135,15 +139,19 @@ export default function PortfolioView({ days, onTickerSelect }) {
                 ? `?${nameParam}&excluded_tickers=${excludedStr}`
                 : `?${nameParam}`;
 
-            const [ovrRes, roiRes, monthlyRes, histRes, txRes] = await Promise.all([
+            const [ovrRes, roiRes, valueRes, depositRes, monthlyRes, histRes, txRes] = await Promise.all([
                 fetch(`/api/portfolio/overview${query}`),
                 fetch(`/api/portfolio/roi${query}`),
+                fetch(`/api/portfolio/value_over_time${query}`),
+                fetch(`/api/portfolio/deposit_history${query}`),
                 fetch(`/api/portfolio/monthly_profit${query}`),
                 fetch(`/api/portfolio/all_assets_summary?${nameParam}`),
                 fetch(`/api/portfolio/transactions?${nameParam}`)
             ]);
             const ovr = await ovrRes.json();
             const roi = await roiRes.json();
+            const valueSeries = await valueRes.json();
+            const depositSeries = await depositRes.json();
             const monthly = await monthlyRes.json();
             const hist = await histRes.json();
             const txs = await txRes.json();
@@ -152,9 +160,13 @@ export default function PortfolioView({ days, onTickerSelect }) {
             setMonthlyProfits(Array.isArray(monthly) ? monthly : []);
             const series = Array.isArray(roi) ? roi : [];
             setFullRoiSeries(series);
+            setFullPortfolioValueSeries(Array.isArray(valueSeries) ? valueSeries : []);
+            setFullDepositSeries(Array.isArray(depositSeries) ? depositSeries : []);
             setHistoricalAssets(Array.isArray(hist) ? hist : []);
             setTransactions(Array.isArray(txs) ? txs : []);
             filterData(series, 'ALL');
+            filterPortfolioValueData(valueSeries, 'ALL');
+            filterDepositData(depositSeries, 'ALL');
         } catch (e) {
             console.error('Error fetching portfolio data:', e);
             setError('Błąd pobierania danych portfela');
@@ -203,6 +215,54 @@ export default function PortfolioView({ days, onTickerSelect }) {
         
         // Disable rebasing to show absolute ROI as calculated by backend
         setRoiSeries(rawFiltered);
+    };
+
+    const filterPortfolioValueData = (data, range) => {
+        if (!data || data.length === 0) {
+            setPortfolioValueSeries([]);
+            return;
+        }
+
+        const now = new Date();
+        let cutoffDate = new Date(data[0].date); 
+
+        if (range === '1M') cutoffDate = new Date(now.setMonth(now.getMonth() - 1));
+        else if (range === '3M') cutoffDate = new Date(now.setMonth(now.getMonth() - 3));
+        else if (range === '6M') cutoffDate = new Date(now.setMonth(now.getMonth() - 6));
+        else if (range === '1Y') cutoffDate = new Date(now.setFullYear(now.getFullYear() - 1));
+        
+        const startIndex = data.findIndex(d => new Date(d.date) >= cutoffDate);
+        if (startIndex === -1) {
+             setPortfolioValueSeries([]);
+             return;
+        }
+
+        const rawFiltered = data.slice(startIndex);
+        setPortfolioValueSeries(rawFiltered);
+    };
+
+    const filterDepositData = (data, range) => {
+        if (!data || data.length === 0) {
+            setDepositSeries([]);
+            return;
+        }
+
+        const now = new Date();
+        let cutoffDate = new Date(data[0].date); 
+
+        if (range === '1M') cutoffDate = new Date(now.setMonth(now.getMonth() - 1));
+        else if (range === '3M') cutoffDate = new Date(now.setMonth(now.getMonth() - 3));
+        else if (range === '6M') cutoffDate = new Date(now.setMonth(now.getMonth() - 6));
+        else if (range === '1Y') cutoffDate = new Date(now.setFullYear(now.getFullYear() - 1));
+        
+        const startIndex = data.findIndex(d => new Date(d.date) >= cutoffDate);
+        if (startIndex === -1) {
+             setDepositSeries([]);
+             return;
+        }
+
+        const rawFiltered = data.slice(startIndex);
+        setDepositSeries(rawFiltered);
     };
 
     const handleTimeRangeChange = (range) => {
@@ -483,6 +543,91 @@ export default function PortfolioView({ days, onTickerSelect }) {
         );
     };
 
+    // Portfolio Value and Deposit Chart Component
+    const PortfolioValueDepositChart = ({ portfolioValueSeries, depositSeries, theme }) => {
+        const chartContainerRef = useRef(null);
+        const chartRef = useRef(null);
+
+        useEffect(() => {
+            if (!chartContainerRef.current || !portfolioValueSeries || portfolioValueSeries.length === 0) return;
+
+            if (chartRef.current) {
+                try {
+                    chartRef.current.remove();
+                } catch (e) {
+                    console.debug('Error removing previous chart (maybe disposed):', e);
+                }
+                chartRef.current = null;
+            }
+            chartContainerRef.current.innerHTML = ''; // Clear container
+
+            const isDark = theme === 'dark';
+            const chart = createChart(chartContainerRef.current, {
+                layout: {
+                    background: { type: ColorType.Solid, color: isDark ? '#1f2937' : 'white' },
+                    textColor: isDark ? '#f3f4f6' : '#1f2937',
+                },
+                width: chartContainerRef.current.clientWidth,
+                height: 300,
+                grid: {
+                    vertLines: { color: isDark ? '#374151' : '#f0f0f0' },
+                    horzLines: { color: isDark ? '#374151' : '#f0f0f0' },
+                },
+                rightPriceScale: {
+                    borderColor: isDark ? '#4b5563' : '#d1d4dc',
+                },
+                timeScale: {
+                    borderColor: isDark ? '#4b5563' : '#d1d4dc',
+                },
+            });
+            chartRef.current = chart;
+
+            // Portfolio Value Series (Line)
+            const portfolioValueLineSeries = chart.addLineSeries({
+                color: '#3b82f6', // Blue
+                lineWidth: 2,
+            });
+
+            const portfolioValueData = portfolioValueSeries
+                .map(d => ({ time: d.date, value: d.value }))
+                .sort((a, b) => new Date(a.time) - new Date(b.time));
+            portfolioValueLineSeries.setData(portfolioValueData);
+
+            // Deposit Series (Line)
+            if (depositSeries && depositSeries.length > 0) {
+                const depositLineSeries = chart.addLineSeries({
+                    color: '#10b981', // Green
+                    lineWidth: 2,
+                });
+
+                const depositData = depositSeries
+                    .map(d => ({ time: d.date, value: d.value }))
+                    .sort((a, b) => new Date(a.time) - new Date(b.time));
+                depositLineSeries.setData(depositData);
+            }
+
+            chart.timeScale().fitContent();
+
+            const handleResize = () => {
+                if (chartContainerRef.current) {
+                    chart.applyOptions({ width: chartContainerRef.current.clientWidth });
+                }
+            };
+            window.addEventListener('resize', handleResize);
+
+            return () => {
+                window.removeEventListener('resize', handleResize);
+                try {
+                    if (chart && typeof chart.remove === 'function') chart.remove();
+                } catch (e) {
+                    console.debug('Error removing chart (already disposed?):', e);
+                }
+            };
+        }, [portfolioValueSeries, depositSeries, theme]);
+
+        return <div ref={chartContainerRef} key={`value-deposit-chart-${theme}`} className="w-full h-[300px]" />;
+    };
+
     return (
         <div className="space-y-4">
             <AddTransactionModal 
@@ -667,6 +812,51 @@ export default function PortfolioView({ days, onTickerSelect }) {
                 </div>
                 
                 <div ref={chartContainerRef} key={`chart-${theme}`} className="w-full h-[300px]" />
+            </div>
+
+            {/* New Portfolio Value and Deposit History Chart */}
+            <div className="bg-white dark:bg-gray-800 rounded-lg shadow-lg p-6 relative">
+                <div className="flex items-center justify-between mb-4">
+                    <div>
+                        <h3 className="text-xl font-bold text-gray-900 dark:text-white">Wartość portfela i depozytów w czasie</h3>
+                        <p className="text-sm text-gray-600 dark:text-gray-400">
+                            {portfolioValueSeries.length > 0 ? `${portfolioValueSeries.length} punktów` : 'Brak danych'}
+                        </p>
+                    </div>
+                    <div className="flex items-center gap-4">
+                        <div className="flex items-center gap-2">
+                            <div className="w-3 h-3 rounded-full bg-blue-500"></div>
+                            <span className="text-sm text-gray-600 dark:text-gray-400">Wartość portfela</span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                            <div className="w-3 h-3 rounded-full bg-green-500"></div>
+                            <span className="text-sm text-gray-600 dark:text-gray-400">Depozyty (cumulative)</span>
+                        </div>
+                        <div className="flex bg-gray-100 dark:bg-gray-700 rounded-lg p-1">
+                            {['1M', '3M', '6M', '1Y', 'ALL'].map(range => (
+                                <button
+                                    key={range}
+                                    onClick={() => {
+                                        setTimeRange(range);
+                                        filterPortfolioValueData(fullPortfolioValueSeries, range);
+                                        filterDepositData(fullDepositSeries, range);
+                                    }}
+                                    className={`px-3 py-1 text-xs font-semibold rounded-md transition-colors ${
+                                        timeRange === range ? 'bg-white dark:bg-gray-600 text-blue-600 dark:text-blue-300 shadow' : 'text-gray-500 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-600'
+                                    }`}
+                                >
+                                    {range}
+                                </button>
+                            ))}
+                        </div>
+                    </div>
+                </div>
+                
+                <PortfolioValueDepositChart 
+                    portfolioValueSeries={portfolioValueSeries}
+                    depositSeries={depositSeries}
+                    theme={theme}
+                />
             </div>
                 </>
             )}

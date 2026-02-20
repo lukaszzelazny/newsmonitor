@@ -1290,3 +1290,78 @@ def calculate_dividend_stats(session: Session, portfolio_id: int, excluded_ticke
         'table_data': table_data,
         'all_months': sorted_months
     }
+
+
+def calculate_deposit_history(session: Session, portfolio_id: int, excluded_tickers=None):
+    """
+    Calculates cumulative deposit history over time.
+    
+    Returns:
+        List of dicts: [{'date': 'YYYY-MM-DD', 'value': float}, ...]
+        where value is cumulative deposits (deposits - withdrawals) up to that date.
+    """
+    if excluded_tickers is None:
+        excluded_tickers = set()
+    
+    all_transactions = session.query(Transaction).filter_by(
+        portfolio_id=portfolio_id
+    ).order_by(Transaction.transaction_date).all()
+    
+    transactions = [t for t in all_transactions if t.asset.ticker not in excluded_tickers]
+    
+    if not transactions:
+        return []
+    
+    start_date = transactions[0].transaction_date
+    end_date = pd.Timestamp.today().date()
+    
+    # Helper to get transaction value in PLN
+    def get_tx_value_pln(t):
+        if t.transaction_type == TransactionType.BUY:
+            if t.purchase_value_pln is not None and float(t.purchase_value_pln) > 0:
+                return float(t.purchase_value_pln)
+            else:
+                return float(t.quantity) * float(t.price) + float(t.commission or 0.0)
+        elif t.transaction_type == TransactionType.SELL:
+            if t.sale_value_pln is not None and float(t.sale_value_pln) > 0:
+                return float(t.sale_value_pln)
+            else:
+                return float(t.quantity) * float(t.price) - float(t.commission or 0.0)
+        elif t.transaction_type in [TransactionType.DEPOSIT, TransactionType.WITHDRAWAL]:
+            if t.purchase_value_pln is not None:
+                return float(t.purchase_value_pln)
+            return float(t.quantity)
+        elif t.transaction_type == TransactionType.DIVIDEND:
+            if t.sale_value_pln is not None:
+                return float(t.sale_value_pln)
+            return float(t.price) if t.price else 0.0
+        return 0.0
+    
+    date_range = pd.date_range(start=start_date, end=end_date, freq='D')
+    cumulative_deposits = 0.0
+    results = []
+    
+    for date in date_range:
+        date_obj = date.date()
+        
+        # Process transactions for this day
+        day_transactions = [tr for tr in transactions if tr.transaction_date == date_obj]
+        
+        for t in day_transactions:
+            val = get_tx_value_pln(t)
+            
+            if t.transaction_type == TransactionType.DEPOSIT:
+                cumulative_deposits += val
+            elif t.transaction_type == TransactionType.WITHDRAWAL:
+                cumulative_deposits -= val
+        
+        results.append({
+            'date': date.strftime('%Y-%m-%d'),
+            'value': cumulative_deposits
+        })
+    
+    # Forward fill to ensure we have values for all days
+    df = pd.DataFrame(results)
+    df['value'] = df['value'].ffill().fillna(0)
+    
+    return df.to_dict('records')

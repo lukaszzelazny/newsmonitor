@@ -2,7 +2,7 @@ from datetime import datetime
 from flask import Blueprint, jsonify, request
 import os
 from backend.database import Database, Portfolio, Asset, Transaction, TransactionType
-from backend.portfolio.analysis import calculate_portfolio_overview, calculate_roi_over_time, calculate_portfolio_value_over_time, calculate_monthly_profit, calculate_dividend_stats
+from backend.portfolio.analysis import calculate_portfolio_overview, calculate_roi_over_time, calculate_portfolio_value_over_time, calculate_monthly_profit, calculate_dividend_stats, calculate_deposit_history
 from backend.utils import clean_nan_in_data
 from backend.database import AssetPriceHistory
 from backend.tools.price_fetcher import get_yf_symbol, get_currency_for_ticker, fx_symbol_to_pln, _fetch_fx_series, fetch_price_history_with_exchange
@@ -174,6 +174,36 @@ def portfolio_value_over_time():
         return jsonify(clean_nan_in_data(series))
     except Exception as e:
         print(f"Error in /api/portfolio/value_over_time: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+    finally:
+        session.close()
+
+
+@portfolio_bp.route('/api/portfolio/deposit_history')
+def portfolio_deposit_history():
+    """
+    Zwraca historyczną serię depozytów (cumulative deposits - withdrawals) z calculate_deposit_history.
+    Parametry (opcjonalne):
+      - name: nazwa portfela (jeśli brak, wybierany jest pierwszy z bazy)
+      - excluded_tickers: lista tickerów do wykluczenia
+    """
+    db = Database()
+    session = db.Session()
+    try:
+        name = request.args.get('name', default=None, type=str)
+        excluded = _get_excluded_tickers(request)
+        
+        portfolio = _get_portfolio(session, name)
+        if not portfolio:
+            return jsonify([])
+
+        series = calculate_deposit_history(session, portfolio.id, excluded_tickers=excluded) or []
+        # Clean NaN values before returning JSON
+        return jsonify(clean_nan_in_data(series))
+    except Exception as e:
+        print(f"Error in /api/portfolio/deposit_history: {e}")
         import traceback
         traceback.print_exc()
         return jsonify({'error': str(e)}), 500
