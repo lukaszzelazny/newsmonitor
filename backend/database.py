@@ -64,9 +64,14 @@ class Ticker(Base):
     is_favorite = Column(Boolean, default=False, nullable=True) # Observed tickers
     exchange = Column(String(50), default='GPW', nullable=False)
     scrape_url = Column(String(500), nullable=True) # Custom scraping URL
+    # If set, this ticker has been replaced by the ticker in deprecated_by (e.g. CCC -> MDV)
+    deprecated_by = Column(String(32), ForeignKey('tickers.ticker', ondelete='SET NULL'), nullable=True)
+
+    # Relationship: points to the successor Ticker object
+    successor = relationship('Ticker', foreign_keys=[deprecated_by], remote_side='Ticker.ticker')
 
     def __repr__(self):
-        return f"<Ticker(ticker='{self.ticker}')>"
+        return f"<Ticker(ticker='{self.ticker}', deprecated_by='{self.deprecated_by}')>"
 
 
 class TickerNote(Base):

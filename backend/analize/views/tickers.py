@@ -346,10 +346,13 @@ def get_tickers():
         tot.last_mention,
         COALESCE(t.in_portfolio, 0) as in_portfolio,
         COALESCE(t.is_favorite, false) as is_favorite,
-        t.scrape_url
+        t.scrape_url,
+        t.deprecated_by
     FROM {schema}.tickers t
     LEFT JOIN period_stats p ON t.ticker = p.ticker
     LEFT JOIN total_stats tot ON t.ticker = tot.ticker
+    -- Hide deprecated tickers unless they are still actively held or marked favorite
+    WHERE (t.deprecated_by IS NULL OR t.in_portfolio = 1 OR t.is_favorite = true)
     ORDER BY COALESCE(tot.mentions, 0) DESC, t.ticker
     """)
 
@@ -367,7 +370,8 @@ def get_tickers():
                 'last_mention': row[6].strftime('%Y-%m-%d') if row[6] else None,
                 'in_portfolio': bool(row[7]) if row[7] else False,
                 'is_favorite': bool(row[8]) if row[8] else False,
-                'scrape_url': row[9]
+                'scrape_url': row[9],
+                'deprecated_by': row[10],  # new ticker if this one was renamed, else null
             })
 
     return jsonify(tickers_data)
@@ -529,9 +533,11 @@ def get_brokerage_analyses(ticker):
 
 @tickers_bp.route('/api/all_tickers')
 def get_all_tickers():
-    """Endpoint zwracający listę wszystkich dostępnych tickerów"""
+    """Endpoint zwracający listę wszystkich dostępnych (aktywnych) tickerów"""
     query = text(f"""
-    SELECT ticker, company_name FROM {schema}.tickers ORDER BY ticker
+    SELECT ticker, company_name FROM {schema}.tickers
+    WHERE deprecated_by IS NULL
+    ORDER BY ticker
     """)
     with engine.connect() as conn:
         result = conn.execute(query)

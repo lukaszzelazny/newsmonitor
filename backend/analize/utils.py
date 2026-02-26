@@ -250,24 +250,37 @@ def format_summary(summary_json):
 def resolve_db_ticker(engine, schema, ticker_symbol):
     """
     Resolves ticker symbol to the one present in DB (e.g. PZU -> PZU.PL).
+    If the ticker has been deprecated (deprecated_by IS NOT NULL), follows
+    the chain to the current active ticker (e.g. CCC -> MDV after rebranding).
     """
     from sqlalchemy import text
+
+    def _lookup(conn, t):
+        """Return (ticker, deprecated_by) or None."""
+        return conn.execute(
+            text(f"SELECT ticker, deprecated_by FROM {schema}.tickers WHERE ticker = :t"),
+            {'t': t}
+        ).fetchone()
+
     with engine.connect() as conn:
-        # 1. Exact
-        res = conn.execute(text(f"SELECT ticker FROM {schema}.tickers WHERE ticker = :t"), {'t': ticker_symbol}).fetchone()
-        if res: return res[0]
-        
-        # 2. Suffixes
+        # 1. Exact match
+        res = _lookup(conn, ticker_symbol)
+        if res:
+            return res[1] if res[1] else res[0]  # follow deprecated_by if set
+
+        # 2. Try common suffixes
         if '.' not in ticker_symbol:
             for suffix in ['.PL', '.WA', '.US']:
                 candidate = f"{ticker_symbol}{suffix}"
-                res = conn.execute(text(f"SELECT ticker FROM {schema}.tickers WHERE ticker = :t"), {'t': candidate}).fetchone()
-                if res: return res[0]
-                
+                res = _lookup(conn, candidate)
+                if res:
+                    return res[1] if res[1] else res[0]
+
         # 3. .WA -> .PL
         if ticker_symbol.endswith('.WA'):
-             candidate = ticker_symbol.replace('.WA', '.PL')
-             res = conn.execute(text(f"SELECT ticker FROM {schema}.tickers WHERE ticker = :t"), {'t': candidate}).fetchone()
-             if res: return res[0]
-             
-    return ticker_symbol # Fallback to original
+            candidate = ticker_symbol.replace('.WA', '.PL')
+            res = _lookup(conn, candidate)
+            if res:
+                return res[1] if res[1] else res[0]
+
+    return ticker_symbol  # Fallback to original
