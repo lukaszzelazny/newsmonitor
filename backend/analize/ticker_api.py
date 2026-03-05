@@ -11,6 +11,7 @@ from backend.analize.views.tickers import tickers_bp
 from backend.analize.views.calendar import calendar_bp
 from backend.analize.views.rejected import rejected_bp
 from backend.analize.views.portfolio import portfolio_bp
+from backend.analize.views.portfolio_raw_data import portfolio_raw_bp
 from backend.analize.views.recommendations import recommendations_bp
 
 
@@ -22,6 +23,7 @@ app.register_blueprint(tickers_bp)
 app.register_blueprint(calendar_bp)
 app.register_blueprint(rejected_bp)
 app.register_blueprint(portfolio_bp)
+app.register_blueprint(portfolio_raw_bp)
 app.register_blueprint(recommendations_bp)
 
 @app.route('/api/price_history/<ticker>')
