@@ -57,3 +57,5 @@ Thumbs.db
 
 
 /node_modules/
+/ligthgbm_scrapers/raw_data/
+espi_2020_01.json
