@@ -1,3 +1,4 @@
+import argparse
 import json
 import os
 import time
@@ -14,6 +15,19 @@ AUTH_PATH = RAW_DATA_DIR / 'authorization'
 OUTPUT_DIR = RAW_DATA_DIR / 'indicators'
 
 API_URL = 'https://web.gieldowyradar.pl/gieldowyradar_app/api/'
+
+def parse_args():
+    parser = argparse.ArgumentParser(
+        description='Fetch indicators from GieldowyRadar API'
+    )
+    parser.add_argument(
+        '--ticker',
+        type=str,
+        default=None,
+        help='Ticker symbol to fetch/refresh (e.g. PKN, CDR). If not provided, fetches all companies.'
+    )
+    return parser.parse_args()
+
 
 def main():
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
@@ -44,7 +58,20 @@ def main():
     else:
         indicator_ids = list(range(147))
 
+    args = parse_args()
+    target_ticker = args.ticker.upper() if args.ticker else None
+
     companies = data.get('result', [])
+
+    if target_ticker:
+        companies = [c for c in companies if c.get('shortName', '').upper() == target_ticker]
+        if not companies:
+            print(f"ERROR: Ticker '{target_ticker}' not found in company_list.json")
+            return
+        print(f"Mode: single ticker '{target_ticker}' — will refresh data unconditionally.")
+    else:
+        print(f"Mode: all companies ({len(companies)} total).")
+
     total_companies = len(companies)
 
     for i, company in enumerate(companies, 1):
@@ -55,8 +82,8 @@ def main():
             
         output_file = OUTPUT_DIR / f"{company_id}.json"
         
-        # Skip if already downloaded correctly
-        if output_file.exists():
+        # Skip if already downloaded correctly (only in all-companies mode)
+        if not target_ticker and output_file.exists():
             try:
                 with open(output_file, 'r', encoding='utf-8') as f:
                     cdata = json.load(f)
@@ -149,3 +176,7 @@ if __name__ == "__main__":
         print("Indicators fetching finished.")
     except KeyboardInterrupt:
         print("\nProcess interrupted by user.")
+
+# Użycie:
+#   python fetch_indicators.py                  # pobiera wszystkie spółki (pomija już pobrane)
+#   python fetch_indicators.py --ticker PKN      # odświeża dane tylko dla PKN Orlen

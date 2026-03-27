@@ -1,3 +1,4 @@
+import argparse
 import json
 import os
 import glob
@@ -122,7 +123,152 @@ def ms_to_date(ms):
     return datetime.fromtimestamp(ms/1000.0).date()
 
 
+def parse_args():
+    parser = argparse.ArgumentParser(
+        description='Import financial data from JSON files into PostgreSQL (lgbm schema)'
+    )
+    parser.add_argument(
+        '--ticker',
+        type=str,
+        default=None,
+        help='Ticker symbol to import/refresh (e.g. PKN, CDR). If not provided, runs the full import.'
+    )
+    return parser.parse_args()
+
+
+def resolve_company_id(ticker: str) -> int | None:
+    """Find company_id for a given ticker symbol in company_list.json."""
+    path = os.path.join(RAW_DATA_DIR, 'company_list.json')
+    try:
+        with open(path, 'r') as f:
+            data = json.load(f)
+        for c in data.get('result', []):
+            if c.get('shortName', '').upper() == ticker.upper():
+                return c['id']
+    except FileNotFoundError:
+        pass
+    return None
+
+
+def import_findata_for_company(session, cid: int):
+    """Import/update finData for a single company. Uses on_conflict_do_update to refresh rows."""
+    ff = os.path.join(RAW_DATA_DIR, 'finData', f'{cid}.json')
+    if not os.path.exists(ff):
+        print(f"  -> finData file not found: {ff}")
+        return
+
+    try:
+        with open(ff, 'r') as f:
+            fdata = json.load(f)
+    except Exception as e:
+        print(f"  -> Error loading {ff}: {e}")
+        return
+
+    items = fdata if isinstance(fdata, list) else [fdata]
+    insert_dicts = []
+    seen_keys = set()
+
+    for item in items:
+        result = item.get('result', {})
+        periods = result.get('periods', [])
+        entries = result.get('entries', [])
+        for ent in entries:
+            eid = ent['entryId']
+            vals = ent['values']
+            for i, val in enumerate(vals):
+                if val is not None and i < len(periods):
+                    year = periods[i].get('year')
+                    quarter = periods[i].get('quarter')
+                    if year is not None and quarter is not None:
+                        key = (cid, year, quarter, eid)
+                        if key not in seen_keys:
+                            seen_keys.add(key)
+                            insert_dicts.append({
+                                'company_id': cid, 'year': year,
+                                'quarter': quarter, 'entry_id': eid, 'value': val
+                            })
+
+    if insert_dicts:
+        stmt = pg_insert(FinData).values(insert_dicts)
+        stmt = stmt.on_conflict_do_update(
+            index_elements=['company_id', 'year', 'quarter', 'entry_id'],
+            set_={'value': stmt.excluded.value}
+        )
+        session.execute(stmt)
+        session.commit()
+        print(f"  -> Upserted {len(insert_dicts)} finData rows for company {cid}")
+
+
+def import_indicators_for_company(session, cid: int):
+    """Import/update indicators for a single company. Uses on_conflict_do_update to refresh rows."""
+    inf = os.path.join(RAW_DATA_DIR, 'indicators', f'{cid}.json')
+    if not os.path.exists(inf):
+        print(f"  -> indicators file not found: {inf}")
+        return
+
+    try:
+        with open(inf, 'r') as f:
+            idata = json.load(f)
+    except Exception as e:
+        print(f"  -> Error loading {inf}: {e}")
+        return
+
+    items = idata if isinstance(idata, list) else [idata]
+    insert_dicts = []
+    seen_keys = set()
+
+    for item in items:
+        res = item.get('result', {})
+        periods = res.get('periods', [])
+        indicators = res.get('indicators', [])
+        for ind in indicators:
+            iid = ind.get('indicatorId')
+            vals = ind.get('values', [])
+            for i, val in enumerate(vals):
+                if val is not None and i < len(periods):
+                    year = periods[i].get('year')
+                    quarter = periods[i].get('quarter')
+                    if year is not None and quarter is not None:
+                        key = (cid, year, quarter, iid)
+                        if key not in seen_keys:
+                            seen_keys.add(key)
+                            insert_dicts.append({
+                                'company_id': cid, 'year': year,
+                                'quarter': quarter, 'indicator_id': iid, 'value': val
+                            })
+
+    if insert_dicts:
+        stmt = pg_insert(Indicator).values(insert_dicts)
+        stmt = stmt.on_conflict_do_update(
+            index_elements=['company_id', 'year', 'quarter', 'indicator_id'],
+            set_={'value': stmt.excluded.value}
+        )
+        session.execute(stmt)
+        session.commit()
+        print(f"  -> Upserted {len(insert_dicts)} indicator rows for company {cid}")
+
+
 def main():
+    args = parse_args()
+    target_ticker = args.ticker.upper() if args.ticker else None
+
+    # --- Tryb: jeden ticker ---
+    if target_ticker:
+        cid = resolve_company_id(target_ticker)
+        if cid is None:
+            print(f"ERROR: Ticker '{target_ticker}' not found in company_list.json")
+            return
+        print(f"Mode: single ticker '{target_ticker}' (company_id={cid}) — upserting finData & indicators.")
+        Session = sessionmaker(bind=engine)
+        session = Session()
+        import_findata_for_company(session, cid)
+        import_indicators_for_company(session, cid)
+        session.close()
+        print("Single-ticker import finished.")
+        return
+
+    # --- Tryb: pełny import ---
+    print("Mode: full import.")
     print("Creating tables if they don't exist...")
     # Base.metadata.drop_all(engine) # Zakończono z ciągłym kasowaniem bazy
     Base.metadata.create_all(engine)
@@ -363,3 +509,6 @@ def main():
 if __name__ == '__main__':
     main()
 
+# Użycie:
+#   python import_to_postgres.py                  # pełny import wszystkich danych
+#   python import_to_postgres.py --ticker PKN      # upsert finData + indicators tylko dla PKN Orlen
