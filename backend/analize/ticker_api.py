@@ -14,6 +14,7 @@ from backend.analize.views.portfolio import portfolio_bp
 from backend.analize.views.portfolio_raw_data import portfolio_raw_bp
 from backend.analize.views.recommendations import recommendations_bp
 from backend.analize.views.momentum import momentum_bp
+from backend.analize.views.assessment import assessment_bp
 
 
 app = Flask(__name__)
@@ -27,6 +28,7 @@ app.register_blueprint(portfolio_bp)
 app.register_blueprint(portfolio_raw_bp)
 app.register_blueprint(recommendations_bp)
 app.register_blueprint(momentum_bp)
+app.register_blueprint(assessment_bp)
 
 @app.route('/api/price_history/<ticker>')
 def get_price_history_endpoint(ticker):
